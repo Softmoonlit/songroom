@@ -25,6 +25,7 @@ Label: wayfinder:map
 
 - [确认网易云接口能力与账号风险](issues/01-confirm-netease-api-capabilities-and-account-risk.md)：Enhanced 覆盖登录、搜索及云端歌单增删排序，但属于无稳定合同的非官方接口，房主选择接受主账号风险。
 - [确认能否远程控制官方客户端播放队列](issues/02-confirm-remote-official-client-queue-control.md)：没有可从服务端可靠控制指定桌面客户端当前队列的 API，因此播放控制不进入产品边界。
+- [验证点歌歌单写入语义](issues/03-verify-playlist-write-semantics.md)：真实账号实测确认完整序列写入与回读校验可可靠维护 200 首点歌歌单，但子集排序、重复添加和动态限流要求串行化及按最终云端状态判定成功。
 
 ## Not yet specified
 
