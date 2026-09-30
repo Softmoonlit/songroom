@@ -1,7 +1,8 @@
 # 决定 MVP 点歌歌单容量策略
 
 Type: grilling
-Status: open
+Status: wontfix
+Replaced by: ../../multi-room-song-request/issues/03-decide-import-and-song-request-semantics.md
 Blocked by: 03
 
 ## Question

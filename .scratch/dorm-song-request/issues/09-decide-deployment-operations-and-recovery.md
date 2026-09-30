@@ -1,7 +1,8 @@
 # 确定部署运维与故障恢复方案
 
 Type: grilling
-Status: open
+Status: wontfix
+Replaced by: ../../multi-room-song-request/issues/06-decide-security-deployment-and-operations.md
 Blocked by: 06, 07
 
 ## Question

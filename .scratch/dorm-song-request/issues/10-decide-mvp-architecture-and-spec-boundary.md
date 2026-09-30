@@ -1,8 +1,9 @@
 # 确定 MVP 系统架构与规格边界
 
 Type: grilling
-Status: open
-Blocked by: 03, 04, 05, 06, 07, 08, 09, 11
+Status: wontfix
+Replaced by: ../../multi-room-song-request/issues/08-decide-mvp-architecture-and-spec.md
+Blocked by: 03, 04, 05, 06, 07, 08, 09, 11, 12
 
 ## Question
 
@@ -15,3 +16,9 @@ Blocked by: 03, 04, 05, 06, 07, 08, 09, 11
 ### 外部同步规则与接口调查入口
 
 [确定外部歌单变更的协调规则](05-decide-external-playlist-reconciliation.md#解决评论最终规则已确认) 已解决；具体调度、页面更新契约、完整歌曲 ID 序列校验及 Enhanced 调用方式须落实其最终规则。缓存与条件写入的源码依据保存在该票据“调查证据：条件写入与读取缓存边界”，在选择模块直调或 HTTP 服务调用方式前须查阅。
+
+### 安全边界与客户端并存验收
+
+[确定公网房间与网易云授权安全边界](06-decide-public-room-and-auth-security.md#解决评论最终安全规则已确认) 已解决。具体身份 Cookie、密码散列、令牌摘要、扫码会话绑定、凭据加密与邀请防泄露实现须落实其规则；网易云授权不等同于点歌台房主身份，同一时间仅绑定一个账号和歌单，但需提供退出及更换能力。
+
+[验证扫码授权与官方电脑客户端共存](12-verify-qr-and-desktop-session-coexistence.md) 是新增 HITL 实测前置。用户要求双方同时可用，覆盖首次扫码、重新授权及官方客户端重新登录的双向影响。不得将源码 PC 默认参数或之前歌单写入实测当作并存证明；未通过时阻止上线，若改授权方式则须重新验证完整链路及必要的歌单访问能力。
