@@ -25,6 +25,7 @@ Status: open
 - [确定公共与个人歌单权限及生命周期](issues/02-decide-playlist-permissions-and-lifecycle.md#解决评论歌单权限与生命周期规则已确认)：授权后选账号建房，歌单按需主动配置，房主可共用已有或只读收藏歌单；离开与删房清理专用云端歌单，已有歌单仅解除绑定。
 - [确定文本导入与公共点歌语义](issues/03-decide-import-and-song-request-semantics.md#解决评论文本导入与公共点歌规则已确认)：采用百行、五候选与一次确认的简单导入；公共点歌核对自己的当前来源，成功须确认云端歌曲与本人标签。
 - [验证授权复用、账号隔离与官方客户端共存](issues/04-verify-auth-reuse-and-client-coexistence.md#解决评论固定基线的小量实测通过)：固定 PC 基线与账号隔离原型通过小量复用及双向共存实测，收藏可由 API 列举，专用歌单清理已完成；生产与长期边界仍须复验。
+- [确定多歌单并发、同步与失败恢复](issues/05-decide-concurrency-sync-and-recovery.md#解决评论并发同步与恢复规则已确认)：账号串行与按需共享快照，逐首写后同步、未知结果只补查，正常成功路径简化，授权恢复与专用清理隔离，首版逐调用进程隔离。
 
 ## Not yet specified
 
