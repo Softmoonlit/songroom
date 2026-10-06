@@ -23,9 +23,13 @@ describe("业务命令契约", () => {
     expect(inspectCommand({ ...command, accountId: v7({ msecs: now }) }, "async", receipt)).toEqual({ kind: "new", status: 202 });
   });
 
-  it("相同 UUID 的大小写形式归一化，不能绕过防重", () => {
+  it("命令定域接受 Better Auth 原生账号标识", () => {
+    expect(prepareCommand("NativeAuthUserID", v7({ msecs: now }), "createRoom", {}, now).accountId).toBe("NativeAuthUserID");
+  });
+
+  it("相同操作 UUID 的大小写形式归一化，不能绕过防重", () => {
     const key = v7({ msecs: now });
-    expect(prepareCommand(actor.toUpperCase(), key.toUpperCase(), "rename-room", {}, now))
+    expect(prepareCommand(actor, key.toUpperCase(), "rename-room", {}, now))
       .toEqual(prepareCommand(actor, key, "rename-room", {}, now));
   });
 
@@ -33,7 +37,7 @@ describe("业务命令契约", () => {
     for (const timestamp of [now - 86_400_001, now + 60_001]) {
       expect(() => prepareCommand(actor, v7({ msecs: timestamp }), "rename-room", { name: "A" }, now)).toThrowError("IDEMPOTENCY_KEY_EXPIRED");
     }
-    expect(() => prepareCommand(actor, v7({ msecs: now - 86_400_000 }), "rename-room", {}, now)).not.toThrow();
+    expect(() => prepareCommand(actor, v7({ msecs: now - 86_400_000 }), "rename-room", {}, now)).toThrowError("IDEMPOTENCY_KEY_EXPIRED");
     expect(() => prepareCommand(actor, "not-a-uuid", "rename-room", {}, now)).toThrowError("INVALID_ID");
     expect(() => prepareCommand(actor, v7({ msecs: now }), "rename-room", { missing: undefined }, now)).toThrow();
   });

@@ -70,21 +70,44 @@ export const neteaseAuthorization = sqliteTable("netease_authorization", {
   check("netease_authorization_account_valid", sql`length(${table.accountId}) > 0`)
 ]);
 
-export const qrCommandReceipt = sqliteTable("qr_command_receipt", {
+export const commandReceipt = sqliteTable("command_receipt", {
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   key: text("key").notNull(),
-  kind: text("kind", { enum: ["start", "confirm"] }).notNull(),
   digest: text("digest").notNull(),
-  sessionId: text("session_id").notNull(),
-  flowId: text("flow_id").notNull(),
+  resourceId: text("resource_id").notNull(),
   expiresAt: integer("expires_at").notNull()
+}, table => [primaryKey({ columns: [table.userId, table.key] })]);
+
+export const room = sqliteTable("room", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  ownerUserId: text("owner_user_id").notNull().references(() => user.id),
+  version: integer("version").notNull().default(1)
+}, table => [check("room_version_valid", sql`${table.version} > 0`)]);
+
+export const roomMembership = sqliteTable("room_membership", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id),
+  nickname: text("nickname").notNull()
 }, table => [
-  primaryKey({ columns: [table.userId, table.key] }),
-  check("qr_command_receipt_kind_valid", sql`${table.kind} IN ('start', 'confirm')`)
+  uniqueIndex("room_membership_user_unique").on(table.roomId, table.userId),
+  uniqueIndex("room_membership_nickname_unique").on(table.roomId, table.nickname),
+  check("room_membership_nickname_valid", sql`length(${table.nickname}) BETWEEN 1 AND 12`)
+]);
+
+export const roomInvite = sqliteTable("room_invite", {
+  roomId: text("room_id").primaryKey().references(() => room.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
+  generation: integer("generation").notNull().default(1)
+}, table => [
+  uniqueIndex("room_invite_code_unique").on(table.code),
+  check("room_invite_code_valid", sql`length(${table.code}) = 10 AND ${table.code} NOT GLOB '*[^A-Za-z0-9_-]*'`),
+  check("room_invite_generation_valid", sql`${table.generation} > 0`)
 ]);
 
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, qrCommandReceipt };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

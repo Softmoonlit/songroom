@@ -1,20 +1,21 @@
 import { randomBytes } from "node:crypto";
-import { v7, parse } from "uuid";
-import { and, eq, gt, lte } from "drizzle-orm";
+import { v7 } from "uuid";
+import { and, eq, gt } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { neteaseAuthorization, qrCommandReceipt, session } from "../db/schema.js";
-import { canonicalDigest } from "../commands/commands.js";
+import { neteaseAuthorization, session } from "../db/schema.js";
+import { canonicalDigest, validateCommandKey } from "../commands/commands.js";
+import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import { BusinessError } from "../shared/errors.js";
 import type { NeteaseBindingView, QrFlowView } from "../shared/netease-contracts.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "./protocol.js";
 import { CredentialVault } from "./credentials.js";
 
-export type QrPrincipal = { userId: string; sessionId: string };
+import type { SessionPrincipal } from "../auth.js";
 const FLOW_LIFETIME_MS = 5 * 60_000;
 type Authorization = typeof neteaseAuthorization.$inferSelect;
 type Flow = {
   id: string;
-  principal: QrPrincipal;
+  principal: SessionPrincipal;
   generation: number;
   expiresAt: number;
   status: QrFlowView["status"];
@@ -59,7 +60,7 @@ export class NeteaseBinding {
     this.#flows.delete(userId);
   }
 
-  #assertSession(principal: QrPrincipal): void {
+  #assertSession(principal: SessionPrincipal): void {
     if (this.#stopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
     const active = this.database.select({ id: session.id }).from(session).where(and(eq(session.id, principal.sessionId), eq(session.userId, principal.userId), gt(session.expiresAt, new Date(this.now())))).get();
     if (!active) {
@@ -69,39 +70,48 @@ export class NeteaseBinding {
     }
   }
 
-  #validateKey(key: string): void {
-    const timestamp = parse(key).slice(0, 6).reduce((time, byte) => time * 256 + byte, 0);
-    if (timestamp <= this.now() - 86_400_000 || timestamp > this.now() + 60_000) {
-      throw new BusinessError(409, "IDEMPOTENCY_KEY_EXPIRED", "操作标识已过期或来自未来，请重新提交");
-    }
-  }
-
-  #acceptCommand(principal: QrPrincipal, key: string, kind: "start" | "confirm", flowId?: string) {
-    const digest = canonicalDigest({ intent: kind, sessionId: principal.sessionId, ...(kind === "confirm" ? { flowId } : {}) });
+  #acceptCommand(principal: SessionPrincipal, key: string, kind: "start" | "confirm", flowId?: string) {
+    const command = { accountId: principal.userId, key,
+      digest: canonicalDigest({ intent: kind, sessionId: principal.sessionId, ...(kind === "confirm" ? { flowId } : {}) }) };
     return this.database.transaction(tx => {
       this.#assertSession(principal);
-      tx.delete(qrCommandReceipt).where(lte(qrCommandReceipt.expiresAt, this.now())).run();
-      const receipt = tx.select().from(qrCommandReceipt).where(and(eq(qrCommandReceipt.userId, principal.userId), eq(qrCommandReceipt.key, key))).get();
-      if (receipt) {
-        if (receipt.digest !== digest) throw new BusinessError(409, "IDEMPOTENCY_CONFLICT", "操作标识已用于其他内容或会话");
-        return { flowId: receipt.flowId, replay: true };
-      }
+      const existing = readCommandResource(tx, command, this.now());
+      if (existing) return { flowId: existing, replay: true };
       if (kind === "start" && this.#authorization(principal.userId)) throw new BusinessError(409, "NETEASE_ALREADY_BOUND", "已绑定网易云账号，本页仅提供首次绑定");
-      const id = flowId ?? v7();
-      const issuedAt = parse(key).slice(0, 6).reduce((time, byte) => time * 256 + byte, 0);
-      tx.insert(qrCommandReceipt).values({ userId: principal.userId, sessionId: principal.sessionId, key, kind, digest, flowId: id, expiresAt: issuedAt + 86_400_000 }).run();
-      return { flowId: id, replay: false };
+      const receipt = recordCommandResource(tx, command, flowId ?? v7(), this.now());
+      return { flowId: receipt.resourceId, replay: receipt.replay };
     });
   }
 
-  readBinding(principal: QrPrincipal): NeteaseBindingView {
+  readBinding(principal: SessionPrincipal): NeteaseBindingView {
     this.#assertSession(principal);
     const row = this.#authorization(principal.userId);
     return row ? { binding: { id: row.id, identity: { accountId: row.accountId, nickname: row.nickname }, status: "active" }, allowedActions: [] }
       : { binding: null, allowedActions: ["startQr"] };
   }
 
-  #current(principal: QrPrincipal, id: string): Flow {
+  assertAuthorization(principal: SessionPrincipal, authorizationId: string, version?: string): void {
+    this.#assertSession(principal);
+    const row = this.#authorization(principal.userId);
+    if (!row) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
+    if (row.id !== authorizationId || (version !== undefined && version !== this.#authorizationVersion(principal.userId))) {
+      throw new BusinessError(409, "AUTHORIZATION_CHANGED", "网易云授权已变化，请重新确认身份");
+    }
+  }
+
+  async verifyAuthorization(principal: SessionPrincipal, authorizationId: string): Promise<string> {
+    this.assertAuthorization(principal, authorizationId);
+    const row = this.#authorization(principal.userId)!;
+    const version = this.#authorizationVersion(principal.userId);
+    const cookie = this.vault.decrypt(row.credentials, { authorizationId: row.id, accountId: row.accountId, generation: row.generation });
+    const result = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId });
+    this.assertAuthorization(principal, authorizationId, version);
+    if (!result.ok) throw new BusinessError(502, result.error.code, "无法核实当前网易云授权，请检查授权后再建房");
+    if (result.data.accountId !== row.accountId) throw new BusinessError(409, "ACCOUNT_MISMATCH", "网易云账号与当前绑定不一致，请重新确认授权");
+    return version;
+  }
+
+  #current(principal: SessionPrincipal, id: string): Flow {
     this.#assertSession(principal);
     const flow = this.#flows.get(principal.userId);
     if (!flow || flow.id !== id || flow.principal.sessionId !== principal.sessionId) {
@@ -128,7 +138,7 @@ export class NeteaseBinding {
       allowedActions: flow.status === "awaitingConfirmation" ? ["confirm"] : flow.status === "completed" ? [] : ["check"] };
   }
 
-  readFlow(principal: QrPrincipal, id: string): QrFlowView {
+  readFlow(principal: SessionPrincipal, id: string): QrFlowView {
     return this.#view(this.#current(principal, id));
   }
 
@@ -138,9 +148,9 @@ export class NeteaseBinding {
     return result.data;
   }
 
-  async start(principal: QrPrincipal, key: string): Promise<QrFlowView> {
+  async start(principal: SessionPrincipal, key: string): Promise<QrFlowView> {
     this.#assertSession(principal);
-    this.#validateKey(key);
+    validateCommandKey(key, this.now());
     const command = this.#acceptCommand(principal, key, "start");
     if (command.replay) return this.readFlow(principal, command.flowId);
     const flow: Flow = { id: command.flowId, principal, generation: ++this.#generation, expiresAt: this.now() + FLOW_LIFETIME_MS, status: "waiting", qrImage: null, identity: null,
@@ -165,7 +175,7 @@ export class NeteaseBinding {
     } finally { flow.busy = false; }
   }
 
-  async check(principal: QrPrincipal, id: string): Promise<QrFlowView> {
+  async check(principal: SessionPrincipal, id: string): Promise<QrFlowView> {
     const flow = this.#current(principal, id);
     if (flow.status === "completed") throw new BusinessError(409, "QR_FLOW_USED", "扫码流程已完成");
     if (flow.status === "awaitingConfirmation") return this.#view(flow);
@@ -198,9 +208,9 @@ export class NeteaseBinding {
     } finally { flow.busy = false; }
   }
 
-  async confirm(principal: QrPrincipal, id: string, key: string): Promise<NeteaseBindingView> {
+  async confirm(principal: SessionPrincipal, id: string, key: string): Promise<NeteaseBindingView> {
     const flow = this.#current(principal, id);
-    this.#validateKey(key);
+    validateCommandKey(key, this.now());
     this.#acceptCommand(principal, key, "confirm", id);
     if (flow.status === "completed") {
       if (flow.confirmationKey === key) return this.readBinding(principal);

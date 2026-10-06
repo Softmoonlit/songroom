@@ -4,20 +4,24 @@ import { BusinessError } from "../shared/errors.js";
 import { parse } from "uuid";
 import { z } from "zod";
 
-const preparedCommand = z.object({ accountId: uuidv7, key: uuidv7, digest: z.string() });
+const accountIdSchema = z.string().min(1);
+const preparedCommand = z.object({ accountId: accountIdSchema, key: uuidv7, digest: z.string() });
 export type PreparedCommand = z.infer<typeof preparedCommand>;
 
-export function prepareCommand(accountId: string, key: string, intent: string, content: unknown, now = Date.now()): PreparedCommand {
-  const validatedAccount = uuidv7.safeParse(accountId);
+export function validateCommandKey(key: string, now = Date.now()): { key: string; issuedAt: number } {
   const validatedKey = uuidv7.safeParse(key);
-  if (!validatedAccount.success || !validatedKey.success) {
-    throw new BusinessError(400, "INVALID_ID", "标识必须为 UUIDv7");
-  }
+  if (!validatedKey.success) throw new BusinessError(400, "INVALID_ID", "操作标识必须为 UUIDv7");
   const issuedAt = parse(validatedKey.data).slice(0, 6).reduce((timestamp, byte) => timestamp * 256 + byte, 0);
-  if (issuedAt < now - 86_400_000 || issuedAt > now + 60_000) {
+  if (issuedAt <= now - 86_400_000 || issuedAt > now + 60_000) {
     throw new BusinessError(409, "IDEMPOTENCY_KEY_EXPIRED", "操作标识已过期或来自未来，请重新提交");
   }
-  return { accountId: validatedAccount.data, key: validatedKey.data, digest: canonicalDigest({ intent, content }) };
+  return { key: validatedKey.data, issuedAt };
+}
+
+export function prepareCommand(accountId: string, key: string, intent: string, content: unknown, now = Date.now()): PreparedCommand {
+  const validatedAccount = accountIdSchema.safeParse(accountId);
+  if (!validatedAccount.success) throw new BusinessError(400, "INVALID_ID", "账号标识不能为空");
+  return { accountId: validatedAccount.data, key: validateCommandKey(key, now).key, digest: canonicalDigest({ intent, content }) };
 }
 
 export function inspectCommand<Result>(command: PreparedCommand, kind: "local" | "async", receipt?: PreparedCommand & { result: Result }):

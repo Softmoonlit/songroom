@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { initializeDatabase } from "../src/db/database.js";
 import { createApp, type SongRoomApp } from "../src/http/app.js";
 import type { AppConfig } from "../src/config.js";
+import { ScriptedNeteaseAdapter } from "./netease/scripted-adapter.js";
 
 const port = 3210;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -44,7 +45,7 @@ process.on("exit", () => {
 
 try {
   initializeDatabase(dbPath);
-  app = await createApp(config);
+  app = await createApp(config, { neteaseAdapter: new ScriptedNeteaseAdapter() });
   await app.listen();
 } catch (error) {
   await cleanup();

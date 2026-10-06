@@ -15,6 +15,8 @@ import { CredentialVault } from "../netease/credentials.js";
 import { NeteaseBinding } from "../netease/binding.js";
 import { createNeteaseAdapter } from "../netease/adapter.js";
 import type { NeteaseAdapter } from "../netease/protocol.js";
+import { Rooms } from "../rooms/rooms.js";
+import { registerRoomRoutes } from "./rooms.js";
 
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 
@@ -129,6 +131,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     };
     fastify.route({ method: ["GET", "POST"], url: "/api/auth/*", handler: authRequest });
     registerNeteaseRoutes(fastify, auth, binding);
+    registerRoomRoutes(fastify, auth, new Rooms(database, binding, dependencies.now));
 
     const readStatus = () => ({ status: state, service: "songroom" as const, schemaVersion: CURRENT_SCHEMA_VERSION });
     typed.get("/healthz", { schema: { response: { 200: healthResponse, 503: healthResponse } } }, async (_request, reply) => {

@@ -29,6 +29,13 @@
       "when": 1791266114814,
       "tag": "0003_netease_authorization",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791268690710,
+      "tag": "0004_rooms",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,25 @@
+import type { FastifyInstance } from "fastify";
+import type { SongRoomAuth } from "../auth.js";
+import type { Rooms } from "../rooms/rooms.js";
+import { roomListView, roomCreateView, roomCreateCommand, roomSummary, roomParams, roomShellView, roomMembersView } from "../shared/room-contracts.js";
+import type { ZodProvider } from "./zod.js";
+import { requireSession } from "./session.js";
+
+export function registerRoomRoutes(app: FastifyInstance, auth: SongRoomAuth, rooms: Rooms): void {
+  const typed = app.withTypeProvider<ZodProvider>();
+  typed.get("/api/rooms", { schema: { response: { 200: roomListView } } }, async (request, reply) => {
+    return rooms.readList((await requireSession(auth, request, reply)).userId);
+  });
+  typed.get("/api/rooms/create-view", { schema: { response: { 200: roomCreateView } } }, async (request, reply) => {
+    return rooms.readCreateView(await requireSession(auth, request, reply));
+  });
+  typed.post("/api/rooms", { schema: { body: roomCreateCommand, response: { 200: roomSummary } } }, async (request, reply) => {
+    return rooms.create(await requireSession(auth, request, reply), request.body);
+  });
+  typed.get("/api/rooms/:roomId", { schema: { params: roomParams, response: { 200: roomShellView } } }, async (request, reply) => {
+    return rooms.readShell((await requireSession(auth, request, reply)).userId, request.params.roomId);
+  });
+  typed.get("/api/rooms/:roomId/members", { schema: { params: roomParams, response: { 200: roomMembersView } } }, async (request, reply) => {
+    return rooms.readMembers((await requireSession(auth, request, reply)).userId, request.params.roomId);
+  });
+}

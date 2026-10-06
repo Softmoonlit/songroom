@@ -5,6 +5,9 @@ import { ArrowLeft, CircleAlert, CircleCheck, LogOut, Music2, UserRound } from "
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router";
 import { healthResponse, type HealthResponse } from "../shared/contracts";
 import { NeteaseBinding } from "./NeteaseBinding";
+import { RoomsPage } from "./Rooms";
+import { RoomCreatePage } from "./RoomCreatePage";
+import { RoomPage } from "./RoomWorkspace";
 
 type SessionData = {
   session: { id: string; expiresAt: string };
@@ -155,10 +158,12 @@ export function App() {
             path="/rooms"
             element={
               <Protected {...protection}>
-                <RoomsPage user={sessionQuery.data?.user} />
+                {sessionQuery.data && <RoomsPage key={sessionQuery.data.session.id} sessionId={sessionQuery.data.session.id} accountName={sessionQuery.data.user.name} />}
               </Protected>
             }
           />
+          <Route path="/rooms/new" element={<Protected {...protection}>{sessionQuery.data && <RoomCreatePage key={sessionQuery.data.session.id} sessionId={sessionQuery.data.session.id} />}</Protected>} />
+          <Route path="/rooms/:roomId" element={<Protected {...protection}>{sessionQuery.data && <RoomPage sessionId={sessionQuery.data.session.id} />}</Protected>} />
           <Route
             path="/account"
             element={
@@ -406,27 +411,6 @@ function Protected({ pending, failed, retrying, session, onRetry, children }: {
   }
   if (!session) return <Navigate to="/login" replace />;
   return <>{children}</>;
-}
-
-function RoomsPage({ user }: { user?: SessionData["user"] }) {
-  return (
-    <section className="rooms-page" aria-labelledby="rooms-heading">
-      <div className="page-heading">
-        <p className="eyebrow">
-          <Music2 size={16} aria-hidden="true" />
-          点歌台账号
-        </p>
-        <h1 id="rooms-heading">{user?.name} 的房间</h1>
-        <p>你的房间会显示在这里。创建或加入房间后，就可以和室友一起点歌。</p>
-      </div>
-      <div className="empty-card">
-        <Music2 size={27} aria-hidden="true" />
-        <h2>还没有房间</h2>
-        <p>房间功能即将开放，请先在账号设置中确认你的账号称呼。</p>
-        <Link className="secondary-button inline-button" to="/account">查看账号设置</Link>
-      </div>
-    </section>
-  );
 }
 
 function AccountPage({ session }: { session?: SessionData | null }) {

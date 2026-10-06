@@ -6,6 +6,9 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, describe, expect, it } from "vitest";
+import { v7 } from "uuid";
+import { canonicalDigest } from "../commands/commands.js";
+import { readCommandResource } from "../commands/receipts.js";
 import {
   CURRENT_SCHEMA_VERSION,
   checkDatabase,
@@ -28,7 +31,7 @@ function temporaryDatabasePath(): string {
   return path.join(directory, "songroom.sqlite");
 }
 
-function createOldDatabase(filePath: string): void {
+function createOldDatabase(filePath: string, versions = 1): void {
   const fixtureFolder = path.join(path.dirname(filePath), "old-migrations");
   const migrationFolder = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
   const journal = JSON.parse(fs.readFileSync(path.join(migrationFolder, "meta/_journal.json"), "utf8")) as {
@@ -36,10 +39,12 @@ function createOldDatabase(filePath: string): void {
     dialect: string;
     entries: Array<{ tag: string }>;
   };
-  journal.entries = journal.entries.slice(0, 1);
+  journal.entries = journal.entries.slice(0, versions);
   fs.mkdirSync(path.join(fixtureFolder, "meta"), { recursive: true });
   fs.writeFileSync(path.join(fixtureFolder, "meta/_journal.json"), JSON.stringify(journal));
-  fs.copyFileSync(path.join(migrationFolder, `${journal.entries[0].tag}.sql`), path.join(fixtureFolder, `${journal.entries[0].tag}.sql`));
+  for (const entry of journal.entries) {
+    fs.copyFileSync(path.join(migrationFolder, `${entry.tag}.sql`), path.join(fixtureFolder, `${entry.tag}.sql`));
+  }
   const oldClient = new Database(filePath);
   oldClient.pragma("foreign_keys = ON");
   oldClient.pragma("busy_timeout = 5000");
@@ -62,8 +67,11 @@ describe("database lifecycle", () => {
     expect(database.$client.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").pluck().all()).toEqual([
       "__drizzle_migrations",
       "account",
+      "command_receipt",
       "netease_authorization",
-      "qr_command_receipt",
+      "room",
+      "room_invite",
+      "room_membership",
       "schema_meta",
       "session",
       "user",
@@ -71,6 +79,26 @@ describe("database lifecycle", () => {
     ]);
     expect(database.$client.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").pluck().get()).toBe(String(CURRENT_SCHEMA_VERSION));
     database.$client.close();
+  });
+
+  it("显式房间迁移保留已有扫码防重标识，旧命令表清除后仍不会重放", () => {
+    const filePath = temporaryDatabasePath();
+    createOldDatabase(filePath, 4);
+    const now = Date.now();
+    const key = v7({ msecs: now });
+    const resourceId = v7();
+    const digest = canonicalDigest({ intent: "start", sessionId: "previous-session" });
+    const old = new Database(filePath, { fileMustExist: true });
+    old.prepare("INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)").run("previous-user", "迁移测试", "migration@example.com", now, now);
+    old.prepare("INSERT INTO qr_command_receipt (user_id, key, kind, digest, session_id, flow_id, expires_at) VALUES (?, ?, 'start', ?, ?, ?, ?)").run("previous-user", key, digest, "previous-session", resourceId, now + 86_400_000);
+    old.close();
+    migrateDatabase(filePath);
+    const current = openDatabase(filePath);
+    try {
+      expect(readCommandResource(current, { accountId: "previous-user", key, digest }, now)).toBe(resourceId);
+      expect(() => readCommandResource(current, { accountId: "previous-user", key, digest: canonicalDigest({ intent: "createRoom" }) }, now)).toThrowError("IDEMPOTENCY_CONFLICT");
+      expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'qr_command_receipt'").get()).toBeUndefined();
+    } finally { current.$client.close(); }
   });
 
   it("does not change an existing non-WAL journal mode when opening", () => {
@@ -102,7 +130,7 @@ describe("database lifecycle", () => {
     expect(checkDatabase(filePath)).toEqual({
       ok: true,
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      migrationHashes: [expect.any(String), expect.any(String), expect.any(String), expect.any(String)],
+      migrationHashes: [expect.any(String), expect.any(String), expect.any(String), expect.any(String), expect.any(String)],
       journalMode: "wal",
       foreignKeys: true,
       integrity: "ok"
