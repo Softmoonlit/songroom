@@ -68,7 +68,9 @@ describe("database lifecycle", () => {
       "__drizzle_migrations",
       "account",
       "command_receipt",
+      "join_application",
       "netease_authorization",
+      "retired_room_invite",
       "room",
       "room_invite",
       "room_membership",
@@ -130,7 +132,7 @@ describe("database lifecycle", () => {
     expect(checkDatabase(filePath)).toEqual({
       ok: true,
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      migrationHashes: [expect.any(String), expect.any(String), expect.any(String), expect.any(String), expect.any(String)],
+      migrationHashes: Array.from({ length: CURRENT_SCHEMA_VERSION }, () => expect.any(String)),
       journalMode: "wal",
       foreignKeys: true,
       integrity: "ok"

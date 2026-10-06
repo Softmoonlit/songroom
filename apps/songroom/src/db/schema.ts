@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const schemaMeta = sqliteTable("schema_meta", {
   key: text("key").primaryKey(),
@@ -106,8 +106,33 @@ export const roomInvite = sqliteTable("room_invite", {
   check("room_invite_generation_valid", sql`${table.generation} > 0`)
 ]);
 
+// 只保存已退役邀请码的摘要；房间删除后同时移除失效识别记录。
+export const retiredRoomInvite = sqliteTable("retired_room_invite", {
+  digest: text("digest").primaryKey(),
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" })
+}, table => [
+  index("retired_room_invite_room_index").on(table.roomId),
+  check("retired_room_invite_digest_valid", sql`length(${table.digest}) = 64 AND ${table.digest} NOT GLOB '*[^0-9a-f]*'`)
+]);
+
+export const joinApplication = sqliteTable("join_application", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  nickname: text("nickname").notNull(),
+  inviteGeneration: integer("invite_generation").notNull(),
+  status: text("status", { enum: ["pending", "withdrawn", "cancelled"] }).notNull().default("pending")
+}, table => [
+  uniqueIndex("join_application_pending_user_room_unique").on(table.roomId, table.userId).where(sql`${table.status} = 'pending'`),
+  index("join_application_user_status_index").on(table.userId, table.status),
+  index("join_application_room_status_index").on(table.roomId, table.status),
+  check("join_application_nickname_valid", sql`length(${table.nickname}) BETWEEN 1 AND 12`),
+  check("join_application_generation_valid", sql`${table.inviteGeneration} > 0`),
+  check("join_application_status_valid", sql`${table.status} IN ('pending', 'withdrawn', 'cancelled')`)
+]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

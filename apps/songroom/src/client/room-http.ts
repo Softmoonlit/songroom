@@ -24,13 +24,22 @@ export function errorMessage(error: unknown) {
     ? errorMessages[error.code]
     : "暂时无法完成房间请求，请稍后重试。";
 }
-export async function request<T>(
+export function request<T>(
   path: string,
   schema: z.ZodType<T>,
   signal?: AbortSignal,
   body?: unknown
 ): Promise<T> {
-  const response = await fetch(`/api/rooms${path}`, {
+  return apiRequest(`/rooms${path}`, schema, signal, body);
+}
+
+export async function apiRequest<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  signal?: AbortSignal,
+  body?: unknown
+): Promise<T> {
+  const response = await fetch(`/api${path}`, {
     method: body === undefined ? "GET" : "POST",
     headers:
       body === undefined

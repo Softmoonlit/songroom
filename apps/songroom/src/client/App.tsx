@@ -8,6 +8,9 @@ import { NeteaseBinding } from "./NeteaseBinding";
 import { RoomsPage } from "./Rooms";
 import { RoomCreatePage } from "./RoomCreatePage";
 import { RoomPage } from "./RoomWorkspace";
+import { InviteProvider, JoinEntry, useInviteContext } from "./InviteContext";
+import { JoinPage } from "./JoinPage";
+import { ApplicationPage } from "./ApplicationPage";
 
 type SessionData = {
   session: { id: string; expiresAt: string };
@@ -89,6 +92,10 @@ async function authAction(path: string, body: unknown): Promise<ActionResult> {
 }
 
 export function App() {
+  return <InviteProvider><AppContent /></InviteProvider>;
+}
+
+function AppContent() {
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
@@ -162,6 +169,8 @@ export function App() {
               </Protected>
             }
           />
+          <Route path="/join" element={<JoinEntry><Protected {...protection}>{sessionQuery.data && <JoinPage key={sessionQuery.data.session.id} sessionId={sessionQuery.data.session.id} />}</Protected></JoinEntry>} />
+          <Route path="/application/:applicationId" element={<Protected {...protection}>{sessionQuery.data && <ApplicationPage sessionId={sessionQuery.data.session.id} />}</Protected>} />
           <Route path="/rooms/new" element={<Protected {...protection}>{sessionQuery.data && <RoomCreatePage key={sessionQuery.data.session.id} sessionId={sessionQuery.data.session.id} />}</Protected>} />
           <Route path="/rooms/:roomId" element={<Protected {...protection}>{sessionQuery.data && <RoomPage sessionId={sessionQuery.data.session.id} />}</Protected>} />
           <Route
@@ -273,6 +282,7 @@ function AuthPage({ mode, onAuthenticated, compact = false }: {
   compact?: boolean;
 }) {
   const navigate = useNavigate();
+  const { returningToJoin } = useInviteContext();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -294,7 +304,7 @@ function AuthPage({ mode, onAuthenticated, compact = false }: {
         return;
       }
       await onAuthenticated();
-      navigate("/rooms");
+      navigate(returningToJoin ? "/join" : "/rooms");
     } catch {
       setMessage("认证已成功，但暂时无法读取账号会话，请稍后重试。");
     } finally {
@@ -316,7 +326,7 @@ function AuthPage({ mode, onAuthenticated, compact = false }: {
           点歌台账号
         </p>
         <h1 id="auth-heading">{signingUp ? "创建点歌台账号" : "登录点歌台"}</h1>
-        <p>{signingUp ? "注册后会自动登录并进入你的房间列表。" : "使用注册时的邮箱和密码继续。"}</p>
+        <p>{returningToJoin ? "认证后继续填写房间加入申请。" : signingUp ? "注册后会自动登录并进入你的房间列表。" : "使用注册时的邮箱和密码继续。"}</p>
       </div>
       <form className="auth-form" onSubmit={submit} noValidate>
         {signingUp && (
@@ -364,7 +374,7 @@ function AuthPage({ mode, onAuthenticated, compact = false }: {
           </p>
         )}
         <button className="primary-button" type="submit" disabled={pending}>
-          {pending ? "提交中…" : signingUp ? "注册并进入房间列表" : "登录"}
+          {pending ? "提交中…" : returningToJoin ? signingUp ? "注册并继续申请" : "登录并继续申请" : signingUp ? "注册并进入房间列表" : "登录"}
         </button>
       </form>
       <div className="auth-links">

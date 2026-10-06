@@ -7,6 +7,7 @@ import { queryOptions, request } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
 import { useVirtualKeyboard } from "./useVirtualKeyboard";
+import { InvitePane } from "./InvitePane";
 
 export function RoomPage({ sessionId }: { sessionId: string }) {
   const { roomId } = useParams();
@@ -90,7 +91,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           </div>
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
-          <MembersPane sessionId={sessionId} roomId={roomId} active={active === "members"} />
+          <MembersPane sessionId={sessionId} roomId={roomId} active={active === "members"} isOwner={room.role === "owner"} />
         </section>
         <section hidden={active !== "settings"} aria-label="房间设置">
           <h2>房间设置</h2>
@@ -113,7 +114,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     </section>
   );
 }
-function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
+function MembersPane({ sessionId, roomId, active, isOwner }: { sessionId: string; roomId: string; active: boolean; isOwner: boolean }) {
   const query = useQuery({
     queryKey: ["room-members", sessionId, roomId],
     queryFn: ({ signal }) => request(`/${roomId}/members`, roomMembersView, signal),
@@ -177,6 +178,7 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
           </li>
         ))}
       </ul>
+      {active && isOwner && <InvitePane sessionId={sessionId} roomId={roomId} />}
     </>
   );
 }

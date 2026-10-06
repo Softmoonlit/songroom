@@ -17,6 +17,8 @@
   "dependencies": {
     "@fastify/helmet": "13.0.2",
     "@fastify/static": "8.2.0",
+    "@radix-ui/react-alert-dialog": "1.1.24",
+    "@songroom/netease-vendor": "workspace:*",
     "@tanstack/react-query": "5.104.1",
     "better-auth": "1.7.7",
     "better-sqlite3": "13.0.3",
@@ -28,8 +30,7 @@
     "react-dom": "19.3.0",
     "react-router": "8.4.0",
     "uuid": "14.0.2",
-    "zod": "4.6.5",
-    "@songroom/netease-vendor": "workspace:*"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

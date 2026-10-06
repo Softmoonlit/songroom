@@ -40,6 +40,17 @@ async function signedIn(page: Page) {
       })
     })
   );
+  await page.route(`**/api/rooms/${roomId}/invite`, route =>
+    route.fulfill({
+      json: {
+        code: "InviteCode",
+        generation: 1,
+        version: 1,
+        pendingCount: 0,
+        allowedActions: ["copyInvite", "resetInvite"]
+      }
+    })
+  );
 }
 
 test("确认本地网易云身份后建房，进入公共歌单而不创建云端歌单", async ({ page }) => {

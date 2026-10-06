@@ -1,0 +1,19 @@
+import { z } from "zod";
+import { uuidv7 } from "./contracts.js";
+import { roomName, roomNickname } from "./room-contracts.js";
+
+export const inviteCode = z.string().regex(/^[A-Za-z0-9_-]{10}$/, "邀请码必须为 10 个字母、数字、下划线或短横线");
+export const inviteView = z.object({ code: inviteCode, generation: z.number().int().positive(), version: z.number().int().positive(), pendingCount: z.number().int().nonnegative(), allowedActions: z.array(z.enum(["copyInvite", "resetInvite"])) });
+export const inviteResetCommand = z.strictObject({ idempotencyKey: uuidv7, version: z.number().int().positive() });
+export const inviteInspectCommand = z.strictObject({ code: inviteCode });
+export const joinApplicationStatus = z.enum(["pending", "withdrawn", "cancelled"]);
+export const joinApplicationView = z.object({ id: uuidv7, room: z.object({ id: uuidv7, name: roomName }), nickname: roomNickname, status: joinApplicationStatus, allowedActions: z.array(z.literal("withdrawApplication")) });
+export const joinApplicationList = z.object({ applications: z.array(joinApplicationView) });
+export const inviteInspectView = z.object({ room: z.object({ id: uuidv7, name: roomName }), application: joinApplicationView.nullable(), isMember: z.boolean() });
+export const joinApplicationCommand = z.strictObject({ idempotencyKey: uuidv7, code: inviteCode, nickname: roomNickname });
+export const joinApplicationParams = z.strictObject({ applicationId: uuidv7 });
+export const withdrawApplicationCommand = z.strictObject({ idempotencyKey: uuidv7 });
+export type InviteView = z.infer<typeof inviteView>;
+export type JoinApplicationView = z.infer<typeof joinApplicationView>;
+export type InviteResetCommand = z.infer<typeof inviteResetCommand>;
+export type JoinApplicationCommand = z.infer<typeof joinApplicationCommand>;

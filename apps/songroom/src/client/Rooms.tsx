@@ -5,6 +5,9 @@ import { roomListView } from "../shared/room-contracts";
 import { queryOptions, request } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
+import { joinApplicationList } from "../shared/invite-contracts";
+import { inviteRequest } from "./invite-http";
+import { InviteError } from "./InviteError";
 
 export function RoomsPage({ sessionId, accountName }: { sessionId: string; accountName: string }) {
   const query = useQuery({
@@ -25,6 +28,7 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
       <Link className="primary-button inline-button" to="/rooms/new">
         创建房间
       </Link>
+      <Link className="secondary-button inline-button" to="/join">通过邀请码申请加入</Link>
       {query.isPending ? (
         <p role="status">正在读取房间列表…</p>
       ) : query.isError ? (
@@ -56,6 +60,25 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
           <p>绑定网易云账号后可以创建自己的房间。</p>
         </div>
       )}
+      <PendingApplications sessionId={sessionId} />
     </section>
   );
+}
+
+function PendingApplications({ sessionId }: { sessionId: string }) {
+  const query = useQuery({
+    queryKey: ["join-applications", sessionId],
+    queryFn: ({ signal }) => inviteRequest("/join-applications", joinApplicationList, signal),
+    ...queryOptions
+  });
+  return <section className="pending-applications" aria-labelledby="pending-applications-heading">
+    <h2 id="pending-applications-heading">待处理加入申请</h2>
+    <p>等待房主批准后才能进入房间。</p>
+    {query.isPending ? <p role="status">正在读取加入申请…</p> : query.isError ? <InviteError error={query.error} retry={() => void query.refetch()} retrying={query.isFetching} /> : query.data.applications.length ? <ul className="room-list">
+      {query.data.applications.map(application => <li className="room-list-card" key={application.id}>
+        <div><h3>{application.room.name}</h3><p>拟用昵称：{application.nickname} · 等待审批</p></div>
+        <Link className="secondary-button inline-button" to={`/application/${application.id}`} aria-label={`查看申请：${application.room.name}`}>查看申请</Link>
+      </li>)}
+    </ul> : <p>暂无待处理加入申请。</p>}
+  </section>;
 }
