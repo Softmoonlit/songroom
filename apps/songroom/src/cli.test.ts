@@ -36,7 +36,8 @@ function config(port: number, dbPath: string): AppConfig {
     port,
     baseUrl: `http://127.0.0.1:${port}`,
     dbPath,
-    staticRoot: path.join(path.dirname(dbPath), "static")
+    staticRoot: path.join(path.dirname(dbPath), "static"),
+    authSecret: "test-secret-with-at-least-32-characters"
   };
 }
 

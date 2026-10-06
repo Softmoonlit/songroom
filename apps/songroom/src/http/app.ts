@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import Fastify, { LogController, type FastifyInstance } from "fastify";
+import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import fastifyStatic from "@fastify/static";
+import { createAuth, type SongRoomAuth } from "../auth.js";
 import { errorResponse, healthResponse } from "../shared/contracts.js";
 import { BusinessError } from "../shared/errors.js";
 import { configSchema, type AppConfig } from "../config.js";
@@ -14,6 +15,7 @@ export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 export interface SongRoomApp {
   fastify: FastifyInstance;
   database: AppDatabase;
+  auth: SongRoomAuth;
   getState: () => RuntimeState;
   listen: () => Promise<string>;
   drain: () => void;
@@ -31,6 +33,7 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
   const html = await fs.readFile(path.join(staticRoot, "index.html"), "utf8");
   await fs.access(path.join(staticRoot, "assets"));
   const database = openDatabase(config.dbPath);
+  const auth = createAuth(database, config);
   let state: RuntimeState = "starting";
   let closing: Promise<void> | undefined;
 
@@ -77,6 +80,32 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
       request.log.info({ route: request.routeOptions.url, status: reply.statusCode, elapsedMs: reply.elapsedTime }, "request completed");
     });
 
+    const authRequest = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(request.headers as Record<string, string | string[] | undefined>)) {
+        if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+      }
+      const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== undefined && request.body !== null;
+      if (!hasBody) {
+        headers.delete("content-type");
+        headers.delete("content-length");
+      }
+      const response = await auth.handler(new Request(new URL(request.url, config.baseUrl), {
+        method: request.method,
+        headers,
+        body: hasBody ? JSON.stringify(request.body) : undefined
+      }));
+      response.headers.forEach((value, name) => {
+        if (name !== "set-cookie") reply.header(name, value);
+      });
+      const cookies = response.headers.getSetCookie?.() ?? [];
+      if (cookies.length > 0) reply.header("set-cookie", cookies);
+      reply.code(response.status);
+      if (!response.body) return reply.send();
+      return reply.send(Buffer.from(await response.arrayBuffer()));
+    };
+    fastify.route({ method: ["GET", "POST"], url: "/api/auth/*", handler: authRequest });
+
     const readStatus = () => ({ status: state, service: "songroom" as const, schemaVersion: CURRENT_SCHEMA_VERSION });
     typed.get("/healthz", { schema: { response: { 200: healthResponse, 503: healthResponse } } }, async (_request, reply) => {
       return reply.code(state === "ready" ? 200 : 503).send(readStatus());
@@ -118,5 +147,5 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
     })();
     return closing;
   };
-  return { fastify, database, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
+  return { fastify, database, auth, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
 }

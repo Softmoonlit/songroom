@@ -16,7 +16,8 @@ const config: AppConfig = {
   port,
   baseUrl,
   dbPath,
-  staticRoot: path.resolve("dist/client")
+  staticRoot: path.resolve("dist/client"),
+  authSecret: "test-secret-with-at-least-32-characters"
 };
 
 let app: SongRoomApp | undefined;

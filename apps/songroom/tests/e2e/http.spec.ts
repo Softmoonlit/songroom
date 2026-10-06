@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const expectedHealth = {
   service: "songroom",
-  schemaVersion: 2
+  schemaVersion: 3
 };
 
 test.describe("公开 HTTP 边界", () => {

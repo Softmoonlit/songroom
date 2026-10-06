@@ -8,7 +8,8 @@ const configFields = z.strictObject({
   port: z.number().int().min(1).max(65535),
   baseUrl: z.url(),
   dbPath: z.string().min(1),
-  staticRoot: z.string().min(1)
+  staticRoot: z.string().min(1),
+  authSecret: z.string().min(32)
 });
 
 export const configSchema = configFields.superRefine((config, ctx) => {
@@ -41,7 +42,8 @@ export function loadConfig(filePath = process.env.SONGROOM_CONFIG ?? "/etc/songr
   return configSchema.parse({
     ...parsed,
     dbPath: path.resolve(path.dirname(filePath), parsed.dbPath),
-    staticRoot: path.resolve(path.dirname(filePath), parsed.staticRoot)
+    staticRoot: path.resolve(path.dirname(filePath), parsed.staticRoot),
+    authSecret: parsed.authSecret
   });
 }
 
