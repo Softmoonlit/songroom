@@ -5,5 +5,6 @@
   "baseUrl": "http://127.0.0.1:3000",
   "dbPath": "data/songroom.sqlite",
   "staticRoot": "apps/songroom/dist/client",
-  "authSecret": "replace-with-output-of-openssl-rand-base64-32"
+  "authSecret": "replace-with-output-of-openssl-rand-base64-32",
+  "credentialKeyPath": "private/netease-credentials.key"
 }

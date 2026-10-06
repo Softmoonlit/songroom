@@ -33,7 +33,9 @@ async function fixture(nodeEnv: AppConfig["nodeEnv"] = "test"): Promise<AppConfi
   await new Promise<void>(resolve => socket.close(() => resolve()));
   const dbPath = path.join(root, "songroom.sqlite");
   initializeDatabase(dbPath);
-  return { nodeEnv, host: "127.0.0.1", port, baseUrl: nodeEnv === "production" ? "https://songs.example" : `http://127.0.0.1:${port}`, dbPath, staticRoot, authSecret: secret };
+  const credentialKeyPath = path.join(root, "netease.key");
+  await fs.writeFile(credentialKeyPath, Buffer.alloc(32, 1), { mode: 0o600 });
+  return { nodeEnv, host: "127.0.0.1", port, baseUrl: nodeEnv === "production" ? "https://songs.example" : `http://127.0.0.1:${port}`, dbPath, staticRoot, authSecret: secret, credentialKeyPath };
 }
 
 async function create(nodeEnv: AppConfig["nodeEnv"] = "test"): Promise<{ app: SongRoomApp; config: AppConfig }> {

@@ -9,11 +9,9 @@ export const MAX_ACCOUNTS = 100;
 export const SESSION_EXPIRES_IN_SECONDS = 7 * 24 * 60 * 60;
 export const SESSION_UPDATE_AGE_SECONDS = 24 * 60 * 60;
 
-export type SongRoomAuth = {
-  handler: (request: Request) => Promise<Response>;
-};
+export type SongRoomAuth = ReturnType<typeof createAuth>;
 
-export function createAuth(database: AppDatabase, config: AppConfig): SongRoomAuth {
+export function createAuth(database: AppDatabase, config: AppConfig) {
   return betterAuth({
     appName: "SongRoom",
     baseURL: config.baseUrl,

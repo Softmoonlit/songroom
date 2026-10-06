@@ -62,6 +62,8 @@ describe("database lifecycle", () => {
     expect(database.$client.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").pluck().all()).toEqual([
       "__drizzle_migrations",
       "account",
+      "netease_authorization",
+      "qr_command_receipt",
       "schema_meta",
       "session",
       "user",
@@ -100,7 +102,7 @@ describe("database lifecycle", () => {
     expect(checkDatabase(filePath)).toEqual({
       ok: true,
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      migrationHashes: [expect.any(String), expect.any(String), expect.any(String)],
+      migrationHashes: [expect.any(String), expect.any(String), expect.any(String), expect.any(String)],
       journalMode: "wal",
       foreignKeys: true,
       integrity: "ok"
@@ -114,7 +116,7 @@ describe("database lifecycle", () => {
     expect(() => checkDatabase(filePath)).toThrow(/schema version/);
     migrateDatabase(filePath);
 
-    expect(checkDatabase(filePath).schemaVersion).toBe(3);
+    expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it.each(["DELETE FROM schema_meta", "DROP TABLE schema_meta"])("缺少版本事实时，迁移在写入前拒绝并保留原库：%s", sql => {

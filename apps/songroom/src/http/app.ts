@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import fastifyStatic from "@fastify/static";
@@ -9,6 +10,11 @@ import { BusinessError } from "../shared/errors.js";
 import { configSchema, type AppConfig } from "../config.js";
 import { CURRENT_SCHEMA_VERSION, openDatabase, type AppDatabase } from "../db/database.js";
 import { installZod, type ZodProvider } from "./zod.js";
+import { registerNeteaseRoutes } from "./netease.js";
+import { CredentialVault } from "../netease/credentials.js";
+import { NeteaseBinding } from "../netease/binding.js";
+import { createNeteaseAdapter } from "../netease/adapter.js";
+import type { NeteaseAdapter } from "../netease/protocol.js";
 
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 
@@ -22,7 +28,7 @@ export interface SongRoomApp {
   close: () => Promise<void>;
 }
 
-export async function createApp(input: AppConfig): Promise<SongRoomApp> {
+export async function createApp(input: AppConfig, dependencies: { neteaseAdapter?: NeteaseAdapter; now?: () => number } = {}): Promise<SongRoomApp> {
   const config = configSchema.parse(input);
   // 构建产物与数据库都先校验；缺失时不得提供空白页面或修复持久状态。
   const staticRoot = await fs.realpath(config.staticRoot);
@@ -32,7 +38,24 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
   }
   const html = await fs.readFile(path.join(staticRoot, "index.html"), "utf8");
   await fs.access(path.join(staticRoot, "assets"));
+  const credentialKeyPath = await fs.realpath(config.credentialKeyPath);
+  const runtimeDir = await fs.realpath(os.tmpdir());
+  for (const privatePath of [credentialKeyPath, runtimeDir]) {
+    if (privatePath === staticRoot || privatePath.startsWith(staticRoot + path.sep)) throw new Error("凭据密钥与运行临时目录必须位于静态资源目录之外");
+  }
+  if (credentialKeyPath === databasePath) throw new Error("凭据密钥必须与数据库分开保存");
+  const vault = new CredentialVault(config.credentialKeyPath);
   const database = openDatabase(config.dbPath);
+  const adapter = dependencies.neteaseAdapter ?? createNeteaseAdapter({ runtimeDir });
+  let binding: NeteaseBinding;
+  try {
+    await adapter.assertVendorIntegrity();
+    binding = new NeteaseBinding(database, adapter, vault, dependencies.now);
+  } catch (error) {
+    await adapter.dispose();
+    database.$client.close();
+    throw error;
+  }
   const auth = createAuth(database, config);
   let state: RuntimeState = "starting";
   let closing: Promise<void> | undefined;
@@ -105,6 +128,7 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
       return reply.send(Buffer.from(await response.arrayBuffer()));
     };
     fastify.route({ method: ["GET", "POST"], url: "/api/auth/*", handler: authRequest });
+    registerNeteaseRoutes(fastify, auth, binding);
 
     const readStatus = () => ({ status: state, service: "songroom" as const, schemaVersion: CURRENT_SCHEMA_VERSION });
     typed.get("/healthz", { schema: { response: { 200: healthResponse, 503: healthResponse } } }, async (_request, reply) => {
@@ -125,6 +149,8 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
     await fastify.ready();
   } catch (error) {
     await fastify.close();
+    binding.clear();
+    await adapter.dispose();
     database.$client.close();
     throw error;
   }
@@ -132,6 +158,7 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
   const drain = (): void => {
     if (state !== "stopped" && state !== "draining") {
       state = "draining";
+      binding.clear();
       fastify.log.info({ state }, "application lifecycle");
     }
   };
@@ -140,6 +167,8 @@ export async function createApp(input: AppConfig): Promise<SongRoomApp> {
       drain();
       try { await fastify.close(); }
       finally {
+        binding.clear();
+        await adapter.dispose();
         database.$client.close();
         state = "stopped";
         fastify.log.info({ state }, "application lifecycle");

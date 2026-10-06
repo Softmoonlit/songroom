@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { rmSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { initializeDatabase } from "../src/db/database.js";
 import { createApp, type SongRoomApp } from "../src/http/app.js";
 import type { AppConfig } from "../src/config.js";
@@ -10,6 +10,8 @@ const port = 3210;
 const baseUrl = `http://127.0.0.1:${port}`;
 const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "songroom-e2e-"));
 const dbPath = path.join(temporaryDirectory, "songroom.sqlite");
+const credentialKeyPath = path.join(temporaryDirectory, "netease.key");
+await writeFile(credentialKeyPath, Buffer.alloc(32, 1), { mode: 0o600 });
 const config: AppConfig = {
   nodeEnv: "test",
   host: "127.0.0.1",
@@ -17,7 +19,8 @@ const config: AppConfig = {
   baseUrl,
   dbPath,
   staticRoot: path.resolve("dist/client"),
-  authSecret: "test-secret-with-at-least-32-characters"
+  authSecret: "test-secret-with-at-least-32-characters",
+  credentialKeyPath
 };
 
 let app: SongRoomApp | undefined;

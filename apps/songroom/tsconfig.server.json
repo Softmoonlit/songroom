@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
@@ -13,8 +15,21 @@
     "declaration": true,
     "sourceMap": true,
     "noEmit": false,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/server.ts", "src/cli.ts", "src/config.ts", "src/db", "src/http", "src/shared", "src/commands"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": [
+    "src/server.ts",
+    "src/cli.ts",
+    "src/config.ts",
+    "src/db",
+    "src/http",
+    "src/shared",
+    "src/commands",
+    "src/netease"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
 }

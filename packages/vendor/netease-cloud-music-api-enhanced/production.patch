@@ -1,0 +1,234 @@
+--- a/module/login_qr_check.js
++++ b/module/login_qr_check.js
+@@ -20,10 +20,6 @@
+     }
+     return result
+   } catch (error) {
+-    return {
+-      status: 200,
+-      body: {},
+-      cookie: result.cookie,
+-    }
++    throw error
+   }
+ }
+--- a/module/playlist_tracks.js
++++ b/module/playlist_tracks.js
+@@ -1,45 +1,10 @@
+-// 收藏单曲到歌单 从歌单删除歌曲
+-
++// SongRoom: one business step sends at most one write, including code 512.
+ const createOption = require('../util/option.js')
+ module.exports = async (query, request) => {
+-  //
+   const tracks = query.tracks.split(',')
+-  const data = {
+-    op: query.op, // del,add
+-    pid: query.pid, // 歌单id
+-    trackIds: JSON.stringify(tracks), // 歌曲id
+-    imme: 'true',
+-  }
+-
+-  try {
+-    const res = await request(
+-      `/api/playlist/manipulate/tracks`,
+-      data,
+-      createOption(query),
+-    )
+-    return {
+-      status: 200,
+-      body: {
+-        ...res,
+-      },
+-    }
+-  } catch (error) {
+-    if (error.body.code === 512) {
+-      return request(
+-        `/api/playlist/manipulate/tracks`,
+-        {
+-          op: query.op, // del,add
+-          pid: query.pid, // 歌单id
+-          trackIds: JSON.stringify([...tracks, ...tracks]),
+-          imme: 'true',
+-        },
+-        createOption(query),
+-      )
+-    } else {
+-      return {
+-        status: 200,
+-        body: error.body,
+-      }
+-    }
+-  }
++  return request(
++    '/api/playlist/manipulate/tracks',
++    { op: query.op, pid: query.pid, trackIds: JSON.stringify(tracks), imme: 'true' },
++    createOption(query),
++  )
+ }
+--- a/util/crypto.js
++++ b/util/crypto.js
+@@ -112,7 +112,7 @@
+       return JSON.parse(decrypted.toString(CryptoJS.enc.Utf8))
+     }
+   } catch (error) {
+-    console.log(`eapiResDecrypt error:`, error)
++    // SongRoom: never print decrypted responses or errors.
+     return null
+   }
+ }
+--- a/util/logger.js
++++ b/util/logger.js
+@@ -1,42 +1,3 @@
+-// ANSI 颜色代码
+-const colors = {
+-  reset: '\x1b[0m',
+-  bright: '\x1b[1m',
+-  dim: '\x1b[2m',
+-  black: '\x1b[30m',
+-  red: '\x1b[31m',
+-  green: '\x1b[32m',
+-  yellow: '\x1b[33m',
+-  blue: '\x1b[34m',
+-  magenta: '\x1b[35m',
+-  cyan: '\x1b[36m',
+-  white: '\x1b[37m',
+-  bgRed: '\x1b[41m',
+-  bgGreen: '\x1b[42m',
+-  bgYellow: '\x1b[43m',
+-}
+-
+-const logger = {
+-  debug: (msg, ...args) =>
+-    console.info(`${colors.cyan}[DEBUG]${colors.reset}`, msg, ...args),
+-  info: (msg, ...args) =>
+-    console.info(`${colors.green}[INFO]${colors.reset}`, msg, ...args),
+-  warn: (msg, ...args) =>
+-    console.info(`${colors.yellow}[WARN]${colors.reset}`, msg, ...args),
+-  error: (msg, ...args) =>
+-    console.error(`${colors.red}[ERROR]${colors.reset}`, msg, ...args),
+-  success: (msg, ...args) =>
+-    console.log(
+-      `${colors.bright}${colors.green}[SUCCESS]${colors.reset}`,
+-      msg,
+-      ...args,
+-    ),
+-  critical: (msg, ...args) =>
+-    console.error(
+-      `${colors.bright}${colors.bgRed}[CRITICAL]${colors.reset}`,
+-      msg,
+-      ...args,
+-    ),
+-}
+-
+-module.exports = logger
++// SongRoom: vendor diagnostics never emit raw upstream or credential data.
++const silent = () => {}
++module.exports = { debug: silent, info: silent, warn: silent, error: silent, success: silent, critical: silent }
+--- a/util/option.js
++++ b/util/option.js
+@@ -1,7 +1,7 @@
+ const createOption = (query, crypto = '', checkToken = false) => {
+   return {
+     crypto: query.crypto || crypto || '',
+-    cookie: query.cookie || process.env.NETEASE_COOKIE,
++    cookie: query.cookie,
+     ua: query.ua || '',
+     proxy: query.proxy,
+     realIP: query.realIP,
+--- a/util/request.js
++++ b/util/request.js
+@@ -39,7 +39,7 @@
+         fs.readFileSync(xeapiPublicKeyPath, 'utf-8'),
+       )
+     } catch (error) {
+-      console.log('[ERR]', error)
++      // SongRoom: no raw error output.
+     }
+   }
+   return xeapi_public_key
+@@ -152,7 +152,7 @@
+     WNMCID: cookie.WNMCID || WNMCID,
+     WEVNSM: cookie.WEVNSM || '1.0.0',
+     osver: cookie.osver || os.osver,
+-    deviceId: cookie.deviceId || global.deviceId,
++    deviceId: cookie.deviceId,
+     os: cookie.os || os.os,
+     channel: cookie.channel || os.channel,
+     appver: cookie.appver || os.appver,
+@@ -364,12 +364,14 @@
+         break
+ 
+       default:
+-        console.log('[ERR]', 'Unknown Crypto:', crypto)
++        // SongRoom: no raw configuration output.
+         break
+     }
+     // settings创建
+     let settings = {
+       method: 'POST',
++      // SongRoom: redirects can repeat a write; never follow them.
++      maxRedirects: 0,
+       url: url,
+       headers: headers,
+       data: new URLSearchParams(encryptData).toString(),
+@@ -415,10 +417,10 @@
+             settings.httpAgent = agent
+             settings.proxy = false
+           } else {
+-            console.error('代理配置无效,不使用代理')
++            // SongRoom: no raw proxy output.
+           }
+         } catch (e) {
+-          console.error('代理URL解析失败:', e.message)
++          // SongRoom: no raw proxy output.
+         }
+       }
+     } else {
+@@ -427,6 +429,7 @@
+     // console.log(settings.headers);
+     axios(settings)
+       .then((res) => {
++        answer.httpStatus = res.status
+         const body = res.data
+         const setCookies = res.headers['set-cookie'] || []
+ 
+@@ -492,7 +495,8 @@
+             answer.status = 200
+           }
+         } catch (e) {
+-          answer.body = body
++          answer.body = { code: 502 }
++          answer.parseError = true
+           answer.status = res.status
+         }
+ 
+@@ -502,14 +506,25 @@
+         if (answer.status === 200) {
+           resolve(answer)
+         } else {
+-          console.log('[ERR]', answer)
++          // SongRoom: only the worker's validated category crosses IPC.
+           reject(answer)
+         }
+       })
+       .catch((err) => {
+         answer.status = 502
+-        answer.body = { code: 502, msg: err.message || err }
+-        console.log('[ERR]', answer)
++        if (err.response) {
++          answer.httpStatus = err.response.status
++          if (err.response.data && typeof err.response.data === 'object') {
++            answer.body = err.response.data
++          } else {
++            answer.body = { code: 502 }
++            answer.parseError = true
++          }
++        } else {
++          answer.networkError = true
++          answer.body = { code: 502 }
++        }
++        // SongRoom: no raw error output.
+         reject(answer)
+       })
+   })

@@ -9,7 +9,8 @@ const configFields = z.strictObject({
   baseUrl: z.url(),
   dbPath: z.string().min(1),
   staticRoot: z.string().min(1),
-  authSecret: z.string().min(32)
+  authSecret: z.string().min(32),
+  credentialKeyPath: z.string().min(1)
 });
 
 export const configSchema = configFields.superRefine((config, ctx) => {
@@ -25,8 +26,14 @@ export const configSchema = configFields.superRefine((config, ctx) => {
   }
   const root = path.resolve(config.staticRoot);
   const database = path.resolve(config.dbPath);
-  if (database === root || database.startsWith(root + path.sep)) {
-    ctx.addIssue({ code: "custom", message: "数据库必须位于静态资源目录之外" });
+  for (const privatePath of [config.dbPath, config.credentialKeyPath]) {
+    const resolved = path.resolve(privatePath);
+    if (resolved === root || resolved.startsWith(root + path.sep)) {
+      ctx.addIssue({ code: "custom", message: "数据库与凭据密钥必须位于静态资源目录之外" });
+    }
+  }
+  if (path.resolve(config.credentialKeyPath) === database) {
+    ctx.addIssue({ code: "custom", message: "凭据主密钥必须与数据库分开保存" });
   }
 });
 
@@ -43,6 +50,7 @@ export function loadConfig(filePath = process.env.SONGROOM_CONFIG ?? "/etc/songr
     ...parsed,
     dbPath: path.resolve(path.dirname(filePath), parsed.dbPath),
     staticRoot: path.resolve(path.dirname(filePath), parsed.staticRoot),
+    credentialKeyPath: path.resolve(path.dirname(filePath), parsed.credentialKeyPath),
     authSecret: parsed.authSecret
   });
 }

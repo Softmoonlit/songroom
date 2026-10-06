@@ -4,6 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import { ArrowLeft, CircleAlert, CircleCheck, LogOut, Music2, UserRound } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router";
 import { healthResponse, type HealthResponse } from "../shared/contracts";
+import { NeteaseBinding } from "./NeteaseBinding";
 
 type SessionData = {
   session: { id: string; expiresAt: string };
@@ -534,6 +535,7 @@ function AccountPage({ session }: { session?: SessionData | null }) {
           <button className="primary-button" type="submit" disabled={pending}>更新密码</button>
         </form>
       </div>
+      <NeteaseBinding key={session.session.id} sessionId={session.session.id} />
       {message && (
         <p
           className={`form-message account-message ${messageError ? "error" : ""}`}

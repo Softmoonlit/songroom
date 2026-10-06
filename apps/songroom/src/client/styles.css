@@ -797,3 +797,69 @@ h1 {
     width: 100%;
   }
 }
+
+.netease-binding {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.netease-binding p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.netease-binding button {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.netease-flow {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.netease-qr {
+  display: block;
+  width: 220px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid #dce2ec;
+  border-radius: 10px;
+  background: white;
+  image-rendering: pixelated;
+}
+
+.netease-status {
+  color: #176748;
+  font-weight: 750;
+}
+
+.netease-identity {
+  display: grid;
+  width: 100%;
+  gap: 12px;
+  margin: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: #f5f7fb;
+}
+
+.netease-identity dt {
+  color: #687588;
+  font-size: .84rem;
+}
+
+.netease-identity dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}

@@ -25,7 +25,9 @@ async function fixture(): Promise<AppConfig> {
   const port = (socket.address() as { port: number }).port;
   await new Promise<void>(resolve => socket.close(() => resolve()));
   const dbPath = path.join(root, "songroom.sqlite"); initializeDatabase(dbPath);
-  return { nodeEnv: "test", host: "127.0.0.1", port, baseUrl: `http://127.0.0.1:${port}`, dbPath, staticRoot, authSecret: "test-secret-with-at-least-32-characters" };
+  const credentialKeyPath = path.join(root, "netease.key");
+  await fs.writeFile(credentialKeyPath, Buffer.alloc(32, 1), { mode: 0o600 });
+  return { nodeEnv: "test", host: "127.0.0.1", port, baseUrl: `http://127.0.0.1:${port}`, dbPath, staticRoot, authSecret: "test-secret-with-at-least-32-characters", credentialKeyPath };
 }
 
 async function start(config: AppConfig): Promise<SongRoomApp> {

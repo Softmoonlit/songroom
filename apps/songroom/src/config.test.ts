@@ -6,7 +6,7 @@ import { configSchema, loadConfig } from "./config.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.map(root => fs.rm(root, { recursive: true, force: true }))); roots.length = 0; });
-const settings = { nodeEnv: "production", host: "127.0.0.1", port: 3000, baseUrl: "https://songs.example", dbPath: "./data/songroom.sqlite", staticRoot: "./dist/client", authSecret: "test-secret-with-at-least-32-characters" };
+const settings = { nodeEnv: "production", host: "127.0.0.1", port: 3000, baseUrl: "https://songs.example", dbPath: "./data/songroom.sqlite", staticRoot: "./dist/client", authSecret: "test-secret-with-at-least-32-characters", credentialKeyPath: "./private/netease.key" };
 
 describe("应用启动配置", () => {
   it("缺失或无效私有配置拒绝，配置文件相对路径以文件目录解析", async () => {
@@ -21,7 +21,7 @@ describe("应用启动配置", () => {
   it("拒绝生产明文入口、非回环监听、非精确origin及静态目录中的数据库", () => {
     for (const change of [
       { baseUrl: "http://songs.example" }, { host: "0.0.0.0" }, { baseUrl: "https://songs.example/" },
-      { baseUrl: "https://songs.example?secret=x" }, { dbPath: "./dist/client/songroom.sqlite" }
+      { baseUrl: "https://songs.example?secret=x" }, { dbPath: "./dist/client/songroom.sqlite" }, { credentialKeyPath: "./dist/client/key" }, { credentialKeyPath: "./data/songroom.sqlite" }
     ]) expect(configSchema.safeParse({ ...settings, ...change }).success).toBe(false);
   });
 

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm build && tsx watch src/server.ts",
-    "build": "node scripts/clean.mjs && vite build && tsc -p tsconfig.server.json && node scripts/copy-migrations.mjs",
+    "build": "node scripts/clean.mjs && vite build && tsc -p tsconfig.server.json && node scripts/copy-migrations.mjs && node scripts/copy-netease-vendor.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -28,7 +28,8 @@
     "react-dom": "19.3.0",
     "react-router": "8.4.0",
     "uuid": "14.0.2",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@songroom/netease-vendor": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

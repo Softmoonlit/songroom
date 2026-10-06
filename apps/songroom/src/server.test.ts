@@ -24,7 +24,8 @@ async function fixture() {
   const listener = createServer(); listener.listen(0, "127.0.0.1"); await once(listener, "listening");
   const port = (listener.address() as { port: number }).port;
   await new Promise<void>(resolve => listener.close(() => resolve()));
-  const settings = { nodeEnv: "development", host: "127.0.0.1", port, baseUrl: `http://127.0.0.1:${port}`, dbPath: "songroom.sqlite", staticRoot: "client", authSecret: "test-secret-with-at-least-32-characters" };
+  await fs.writeFile(path.join(root, "netease.key"), Buffer.alloc(32, 1), { mode: 0o600 });
+  const settings = { nodeEnv: "development", host: "127.0.0.1", port, baseUrl: `http://127.0.0.1:${port}`, dbPath: "songroom.sqlite", staticRoot: "client", authSecret: "test-secret-with-at-least-32-characters", credentialKeyPath: "netease.key" };
   const config = path.join(root, "config.json"); await fs.writeFile(config, JSON.stringify(settings), { mode: 0o600 });
   initializeDatabase(path.join(root, settings.dbPath));
   return { config, root, origin: settings.baseUrl };
