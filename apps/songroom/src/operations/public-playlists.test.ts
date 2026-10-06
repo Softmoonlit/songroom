@@ -152,22 +152,33 @@ it("风控暂停同一真实账号的全部目标，重启不能恢复且新受�
 it("目标权限只阻塞当前房间，待确认创建不阻挡其他目标且不重发", async () => {
   vi.useFakeTimers();
   const f = fixture(); const service = f.module(); const second = extraRoom(f); const third = extraRoom(f);
-  let identities = 0;
-  f.adapter.identity = async () => ++identities === 1
+  f.adapter.create = async input => input.name.includes("宿舍")
     ? { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed" } }
-    : { ok: true, data: { accountId: "cloud-owner", name: "房主" } };
-  f.adapter.create = async input => input.name.includes("其他目标")
-    ? { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } }
-    : { ok: true, data: { playlistId: "success" } };
+    : { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } };
   service.create("owner", f.roomId, { idempotencyKey: v7() });
   service.create("owner", second, { idempotencyKey: v7() });
   service.start(); await vi.runAllTimersAsync(); await service.settle();
-  expect(service.read("owner", f.roomId)).toMatchObject({ disabledReason: "TARGET_BLOCKED", operation: { status: "needsAdministrator", errorCode: "TARGET_PERMISSION" } });
+  expect(service.read("owner", f.roomId)).toMatchObject({ disabledReason: "TARGET_BLOCKED", operation: { status: "awaitingConfirmation", errorCode: "TARGET_PERMISSION" } });
   expect(service.read("owner", second).operation).toMatchObject({ status: "awaitingConfirmation", errorCode: "NETWORK_ERROR" });
   f.database.update(room).set({ name: "成功目标" }).where(eq(room.id, third)).run();
+  f.adapter.create = async () => ({ ok: true, data: { playlistId: "success" } });
   service.create("owner", third, { idempotencyKey: v7() }); await vi.runAllTimersAsync(); await service.settle();
   expect(service.read("owner", third).operation?.status).toBe("succeeded");
   expect(service.create("owner", second, { idempotencyKey: v7() }).replay).toBe(true);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(3);
+});
+
+it("两个创建返回同一规范化账号歌单 ID 时不覆盖绑定，冲突证据保留且不重发", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module(); const second = extraRoom(f);
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.create("owner", second, { idempotencyKey: v7() });
+  service.start(); await vi.runAllTimersAsync(); await service.settle();
+  expect(service.read("owner", f.roomId)).toMatchObject({ playlist: { id: "cloud-playlist" }, operation: { status: "succeeded" } });
+  expect(service.read("owner", second)).toMatchObject({ playlist: null, operation: { status: "needsAdministrator" } });
+  service.stop(); const restarted = f.module(); restarted.start(); await vi.runAllTimersAsync(); await restarted.settle();
+  expect(restarted.read("owner", f.roomId).playlist?.id).toBe("cloud-playlist");
+  expect(restarted.read("owner", second).operation?.status).toBe("needsAdministrator");
   expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(2);
 });
 
