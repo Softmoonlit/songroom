@@ -1,0 +1,46 @@
+{
+  "name": "@songroom/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm build && tsx watch src/server.ts",
+    "build": "node scripts/clean.mjs && vite build && tsc -p tsconfig.server.json && node scripts/copy-migrations.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "db:init": "tsx src/cli.ts db init",
+    "db:migrate": "tsx src/cli.ts db migrate",
+    "db:check": "tsx src/cli.ts db check",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@fastify/helmet": "13.0.2",
+    "@fastify/static": "8.2.0",
+    "@tanstack/react-query": "5.104.1",
+    "better-auth": "1.7.7",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.3",
+    "fastify": "5.12.5",
+    "lucide-react": "1.52.0",
+    "pino": "10.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router": "8.4.0",
+    "uuid": "14.0.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.6",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "drizzle-kit": "0.31.11",
+    "tsx": "4.20.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  }
+}

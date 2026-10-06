@@ -1,0 +1,47 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "365e8678-d7b3-4861-85e2-8f282952c5ba",
+  "prevId": "3445eb61-ed93-4f6d-9da4-5ed5ef906b80",
+  "tables": {
+    "schema_meta": {
+      "name": "schema_meta",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "schema_version_valid": {
+          "name": "schema_version_valid",
+          "value": "\"schema_meta\".\"key\" = 'schema_version' AND CAST(\"schema_meta\".\"value\" AS INTEGER) > 0 AND CAST(CAST(\"schema_meta\".\"value\" AS INTEGER) AS TEXT) = \"schema_meta\".\"value\""
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

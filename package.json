@@ -1,0 +1,17 @@
+{
+  "name": "songroom",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "engines": { "node": "24.21.0" },
+  "scripts": {
+    "dev": "pnpm --filter @songroom/app dev",
+    "build": "pnpm --filter @songroom/app build",
+    "typecheck": "pnpm --filter @songroom/app typecheck",
+    "test": "pnpm --filter @songroom/app test",
+    "test:e2e": "pnpm --filter @songroom/app test:e2e",
+    "db:init": "pnpm --filter @songroom/app db:init",
+    "db:migrate": "pnpm --filter @songroom/app db:migrate",
+    "db:check": "pnpm --filter @songroom/app db:check",
+    "start": "pnpm --filter @songroom/app start"
+  }
+}

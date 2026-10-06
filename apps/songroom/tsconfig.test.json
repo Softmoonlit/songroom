@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.server.json",
+  "compilerOptions": { "noEmit": true, "rootDir": ".", "lib": ["ES2022", "DOM"], "jsx": "react-jsx" },
+  "include": ["src/**/*.test.ts", "tests", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "drizzle.config.ts"],
+  "exclude": []
+}
