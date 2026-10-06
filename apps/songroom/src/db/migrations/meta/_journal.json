@@ -50,6 +50,13 @@
       "when": 1791286843120,
       "tag": "0006_member_approval",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791301321319,
+      "tag": "0007_public_playlist_creation",
+      "breakpoints": true
     }
   ]
 }

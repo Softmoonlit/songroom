@@ -131,8 +131,53 @@ export const joinApplication = sqliteTable("join_application", {
   check("join_application_status_valid", sql`${table.status} IN ('pending', 'withdrawn', 'cancelled', 'approved', 'rejected', 'nickname_conflict')`)
 ]);
 
+// 封闭业务操作信封；原始归属不用级联外键，可能已发的创建证据不能随实体删除。
+export const operation = sqliteTable("operation", {
+  id: text("id").primaryKey(),
+  kind: text("kind", { enum: ["createPublicPlaylist"] }).notNull(),
+  userId: text("user_id").notNull(),
+  roomId: text("room_id").notNull(),
+  accountId: text("account_id"),
+  authorizationId: text("authorization_id"),
+  generation: integer("generation"),
+  status: text("status", { enum: ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"] }).notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, table => [
+  check("operation_kind_valid", sql`${table.kind} = 'createPublicPlaylist'`),
+  check("operation_status_valid", sql`${table.status} IN ('queued', 'processing', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed', 'stopped')`),
+  check("operation_recovery_scope_valid", sql`(${table.status} IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NULL AND ${table.authorizationId} IS NULL AND ${table.generation} IS NULL) OR (${table.status} NOT IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NOT NULL AND ${table.authorizationId} IS NOT NULL AND ${table.generation} IS NOT NULL AND ${table.generation} > 0)`),
+  uniqueIndex("operation_pending_public_room_unique").on(table.roomId).where(sql`${table.kind} = 'createPublicPlaylist' AND ${table.status} NOT IN ('succeeded', 'failed', 'stopped')`),
+  index("operation_room_created_index").on(table.roomId, table.createdAt)
+]);
+
+export const publicPlaylistCreation = sqliteTable("public_playlist_creation", {
+  operationId: text("operation_id").primaryKey().references(() => operation.id),
+  name: text("name").notNull(),
+  step: text("step", { enum: ["ready", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
+  playlistId: text("playlist_id")
+}, table => [
+  check("public_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
+  check("public_playlist_creation_returned_id_valid", sql`(${table.step} IN ('confirming', 'succeeded') AND ${table.playlistId} IS NOT NULL AND length(${table.playlistId}) > 0) OR (${table.step} NOT IN ('confirming', 'succeeded') AND ${table.playlistId} IS NULL)`)
+]);
+
+export const publicPlaylistBinding = sqliteTable("public_playlist_binding", {
+  roomId: text("room_id").primaryKey().references(() => room.id),
+  accountId: text("account_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  name: text("name").notNull(),
+  // 独立的专用创建来源证据；不依赖可到期移除的操作信封。
+  creationOperationId: text("creation_operation_id").notNull(),
+  generation: integer("generation").notNull().default(1)
+}, table => [
+  uniqueIndex("public_playlist_binding_target_unique").on(table.accountId, table.playlistId),
+  uniqueIndex("public_playlist_binding_creation_unique").on(table.creationOperationId),
+  check("public_playlist_binding_generation_valid", sql`${table.generation} > 0`),
+  check("public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
+]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

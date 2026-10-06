@@ -10,6 +10,7 @@ import { useVirtualKeyboard } from "./useVirtualKeyboard";
 import { IdentityForm } from "./IdentityForm";
 import { ApplicationsPane } from "./ApplicationsPane";
 import { InvitePane } from "./InvitePane";
+import { PublicPlaylistPane } from "./PublicPlaylistPane";
 
 export function RoomPage({ sessionId }: { sessionId: string }) {
   const { roomId } = useParams();
@@ -88,12 +89,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
       </aside>
       <div className="room-page-content">
         <section hidden={active !== "public"} aria-label="公共歌单">
-          <h2>公共歌单</h2>
-          <div className="empty-card">
-            <Music2 size={27} aria-hidden="true" />
-            <h3>尚未创建公共歌单</h3>
-            <p>创建房间不会自动创建公共歌单。此房间目前没有公共歌曲。</p>
-          </div>
+          <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
           <MembersPane sessionId={sessionId} roomId={roomId} active={active === "members"} />

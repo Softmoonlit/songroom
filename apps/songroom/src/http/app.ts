@@ -19,6 +19,8 @@ import { Rooms } from "../rooms/rooms.js";
 import { registerRoomRoutes } from "./rooms.js";
 import { Invites } from "../invites/invites.js";
 import { registerInviteRoutes } from "./invites.js";
+import { PublicPlaylists } from "../operations/public-playlists.js";
+import { registerPublicPlaylistRoutes } from "./public-playlists.js";
 
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 
@@ -61,6 +63,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     throw error;
   }
   const auth = createAuth(database, config);
+  const playlists = new PublicPlaylists(database, adapter, vault, dependencies.now);
   let state: RuntimeState = "starting";
   let closing: Promise<void> | undefined;
 
@@ -135,6 +138,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     registerNeteaseRoutes(fastify, auth, binding);
     registerRoomRoutes(fastify, auth, new Rooms(database, binding, dependencies.now));
     registerInviteRoutes(fastify, auth, new Invites(database, dependencies.now));
+    registerPublicPlaylistRoutes(fastify, auth, playlists);
 
     const readStatus = () => ({ status: state, service: "songroom" as const, schemaVersion: CURRENT_SCHEMA_VERSION });
     typed.get("/healthz", { schema: { response: { 200: healthResponse, 503: healthResponse } } }, async (_request, reply) => {
@@ -151,7 +155,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       }
       return reply.type("text/html; charset=utf-8").send(html);
     });
-    fastify.addHook("onListen", async () => { state = "ready"; fastify.log.info({ state }, "application lifecycle"); });
+    fastify.addHook("onListen", async () => { state = "ready"; playlists.start(); fastify.log.info({ state }, "application lifecycle"); });
     await fastify.ready();
   } catch (error) {
     await fastify.close();
@@ -164,6 +168,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const drain = (): void => {
     if (state !== "stopped" && state !== "draining") {
       state = "draining";
+      playlists.stop();
       binding.clear();
       fastify.log.info({ state }, "application lifecycle");
     }
@@ -175,6 +180,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       finally {
         binding.clear();
         await adapter.dispose();
+        await playlists.settle();
         database.$client.close();
         state = "stopped";
         fastify.log.info({ state }, "application lifecycle");

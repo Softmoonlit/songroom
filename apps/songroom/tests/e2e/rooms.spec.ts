@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { publicPlaylistView } from "../../src/shared/public-playlist-contracts.js";
 import {
   roomCreateView,
   roomListView,
@@ -34,6 +35,9 @@ async function signedIn(page: Page) {
   await page.route("**/api/rooms/create-view", route => route.fulfill({ json: createView }));
   await page.route(`**/api/rooms/${roomId}`, route =>
     route.fulfill({ json: roomShellView.parse({ room, version: 1, pendingCount: 0, allowedActions: ownerActions, disabledReasons: {} }) })
+  );
+  await page.route(`**/api/rooms/${roomId}/public-playlist`, route =>
+    route.fulfill({ json: publicPlaylistView.parse({ playlist: null, operation: null, allowedActions: ["createPublicPlaylist"], disabledReason: null, version: 1 }) })
   );
   await page.route(`**/api/rooms/${roomId}/members`, route =>
     route.fulfill({
