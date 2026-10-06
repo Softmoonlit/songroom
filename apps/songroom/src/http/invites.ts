@@ -3,7 +3,8 @@ import type { SongRoomAuth } from "../auth.js";
 import type { Invites } from "../invites/invites.js";
 import {
   withdrawApplicationCommand, inviteInspectCommand, inviteInspectView, inviteResetCommand, inviteView,
-  joinApplicationCommand, joinApplicationList, joinApplicationParams, joinApplicationView
+  joinApplicationCommand, joinApplicationList, joinApplicationParams, joinApplicationView,
+  applicationDecisionCommand, roomApplicationParams, roomApplicationsView
 } from "../shared/invite-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
 import { requireSession } from "./session.js";
@@ -16,6 +17,12 @@ export function registerInviteRoutes(app: FastifyInstance, auth: SongRoomAuth, i
   });
   typed.post("/api/rooms/:roomId/invite/reset", { schema: { params: roomParams, body: inviteResetCommand, response: { 200: inviteView } } }, async (request, reply) => {
     return invites.reset((await requireSession(auth, request, reply)).userId, request.params.roomId, request.body);
+  });
+  typed.get("/api/rooms/:roomId/applications", { schema: { params: roomParams, response: { 200: roomApplicationsView } } }, async (request, reply) => {
+    return invites.readPending((await requireSession(auth, request, reply)).userId, request.params.roomId);
+  });
+  typed.post("/api/rooms/:roomId/applications/:applicationId/decision", { schema: { params: roomApplicationParams, body: applicationDecisionCommand, response: { 200: joinApplicationView } } }, async (request, reply) => {
+    return invites.decide((await requireSession(auth, request, reply)).userId, request.params.roomId, request.params.applicationId, request.body);
   });
   typed.post("/api/invites/inspect", { schema: { body: inviteInspectCommand, response: { 200: inviteInspectView } } }, async (request, reply) => {
     return invites.inspect((await requireSession(auth, request, reply)).userId, request.body.code);

@@ -13,6 +13,8 @@ const otherRoomId = "0195cf0d-6a80-7000-8000-000000000012";
 const authorizationId = "0195cf0d-6a80-7000-8000-000000000013";
 const memberId = "0195cf0d-6a80-7000-8000-000000000014";
 const room = roomSummary.parse({ id: roomId, name: "晚间音乐", role: "owner", nickname: "小林" });
+const ownerActions = ["renameRoom", "renameNickname", "reviewApplications", "readInvite"];
+const memberListActions = ["renameNickname", "reviewApplications", "readInvite"];
 const identity = { accountId: "12345678", nickname: "已绑定音乐账号" };
 const createView = roomCreateView.parse({
   authorization: { id: authorizationId, identity },
@@ -31,12 +33,12 @@ async function signedIn(page: Page) {
   await page.route("**/api/rooms", route => route.fulfill({ json: roomListView.parse({ rooms: [room] }) }));
   await page.route("**/api/rooms/create-view", route => route.fulfill({ json: createView }));
   await page.route(`**/api/rooms/${roomId}`, route =>
-    route.fulfill({ json: roomShellView.parse({ room, version: 1 }) })
+    route.fulfill({ json: roomShellView.parse({ room, version: 1, pendingCount: 0, allowedActions: ownerActions, disabledReasons: {} }) })
   );
   await page.route(`**/api/rooms/${roomId}/members`, route =>
     route.fulfill({
       json: roomMembersView.parse({
-        members: [{ id: memberId, nickname: "小林", role: "owner", isSelf: true }]
+        members: [{ id: memberId, nickname: "小林", role: "owner", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: memberListActions, disabledReasons: {}
       })
     })
   );
@@ -47,7 +49,7 @@ async function signedIn(page: Page) {
         generation: 1,
         version: 1,
         pendingCount: 0,
-        allowedActions: ["copyInvite", "resetInvite"]
+        allowedActions: ["copyInvite", "resetInvite"], disabledReasons: {}
       }
     })
   );
@@ -97,10 +99,10 @@ for (const width of [320, 900, 1440]) {
       id: `0195cf0d-6a80-7000-8000-${String(index + 100).padStart(12, "0")}`,
       nickname: `室友${index + 1}`,
       role: "roommate",
-      isSelf: false
+      isSelf: false, allowedActions: [], disabledReasons: {}
     }));
     await page.route(`**/api/rooms/${roomId}/members`, route =>
-      route.fulfill({ json: roomMembersView.parse({ members }) })
+      route.fulfill({ json: roomMembersView.parse({ members, allowedActions: memberListActions, disabledReasons: {} }) })
     );
     await page.goto(`/rooms/${roomId}`);
     await expect(page.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
@@ -262,12 +264,12 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
     route.fulfill({ json: roomListView.parse({ rooms: [room, other] }) })
   );
   await page.route(`**/api/rooms/${otherRoomId}`, route =>
-    route.fulfill({ json: roomShellView.parse({ room: other, version: 1 }) })
+    route.fulfill({ json: roomShellView.parse({ room: other, version: 1, pendingCount: null, allowedActions: ["renameNickname"], disabledReasons: {} }) })
   );
   await page.route(`**/api/rooms/${otherRoomId}/members`, route =>
     route.fulfill({
       json: roomMembersView.parse({
-        members: [{ id: memberId, nickname: "室友昵称", role: "roommate", isSelf: true }]
+        members: [{ id: memberId, nickname: "室友昵称", role: "roommate", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameNickname"], disabledReasons: {}
       })
     })
   );

@@ -90,7 +90,7 @@ it("有效授权建房只建立房主成员，重复名称可建、查询隔离�
   }
   expect(await (await request(config, `/api/rooms/${summary.id}`, owner)).json()).toMatchObject({ room: { id: summary.id, role: "owner" }, version: 1 });
   const members = await request(config, `/api/rooms/${summary.id}/members`, owner);
-  expect(await members.json()).toEqual({ members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true }] });
+  expect(await members.json()).toEqual({ members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} });
   const body = await (await request(config, `/api/rooms/${summary.id}/members`, owner)).text();
   expect(body).not.toMatch(/email|ownerUserId|accountId|credentials|invitation|code/);
   await app.close();

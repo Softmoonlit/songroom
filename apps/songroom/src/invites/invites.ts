@@ -6,17 +6,19 @@ import { readCommandResource, recordCommandResource } from "../commands/receipts
 import type { AppDatabase } from "../db/database.js";
 import { joinApplication, retiredRoomInvite, room, roomInvite, roomMembership } from "../db/schema.js";
 import {
-  inviteCode, inviteResetCommand, joinApplicationCommand, withdrawApplicationCommand,
-  type InviteResetCommand, type InviteView, type JoinApplicationCommand, type JoinApplicationView
+  inviteCode, inviteResetCommand, joinApplicationCommand, withdrawApplicationCommand, applicationDecisionCommand,
+  type InviteResetCommand, type InviteView, type JoinApplicationCommand, type JoinApplicationView, type roomApplicationsView
 } from "../shared/invite-contracts.js";
 import { BusinessError } from "../shared/errors.js";
+import type { z } from "zod";
 
 function inviteDigest(code: string): string {
   return createHash("sha256").update(code).digest("hex");
 }
 
-function applicationView(application: Omit<JoinApplicationView, "allowedActions">): JoinApplicationView {
-  return { ...application, allowedActions: application.status === "pending" ? ["withdrawApplication"] : [] };
+function applicationView(application: Omit<JoinApplicationView, "allowedActions" | "disabledReasons">): JoinApplicationView {
+  return { ...application, allowedActions: application.status === "pending" ? ["withdrawApplication"] : [],
+    disabledReasons: application.status === "pending" ? {} : { withdrawApplication: "APPLICATION_NOT_PENDING" } };
 }
 
 export class Invites {
@@ -62,7 +64,7 @@ export class Invites {
   }
 
   #readInvite(userId: string, roomId: string): InviteView {
-    return { ...this.#ownerInvite(userId, roomId), pendingCount: this.#pendingCount(roomId), allowedActions: ["copyInvite", "resetInvite"] };
+    return { ...this.#ownerInvite(userId, roomId), pendingCount: this.#pendingCount(roomId), allowedActions: ["copyInvite", "resetInvite"], disabledReasons: {} };
   }
 
   readInvite(userId: string, roomId: string): InviteView {
@@ -93,6 +95,72 @@ export class Invites {
       tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
       recordCommandResource(tx, prepared, roomId, this.now());
       return this.#readInvite(userId, roomId);
+    }, { behavior: "immediate" });
+  }
+
+  #assertOwner(userId: string, roomId: string, code = "APPLICATION_FORBIDDEN") {
+    const owner = this.database.select({ ownerUserId: room.ownerUserId }).from(room).where(eq(room.id, roomId)).get();
+    if (!owner || owner.ownerUserId !== userId || !this.#isMember(userId, roomId)) {
+      throw new BusinessError(404, code, "只有当前房主可管理该房间申请");
+    }
+  }
+
+  #ownerApplication(userId: string, roomId: string, applicationId: string) {
+    this.#assertOwner(userId, roomId);
+    const application = this.database.select().from(joinApplication)
+      .where(and(eq(joinApplication.roomId, roomId), eq(joinApplication.id, applicationId))).get();
+    if (!application) throw new BusinessError(404, "APPLICATION_UNAVAILABLE", "该房间没有此申请");
+    return application;
+  }
+
+  #approvalDisabledReason(application: typeof joinApplication.$inferSelect): string | null {
+    const invitation = this.database.select().from(roomInvite).where(eq(roomInvite.roomId, application.roomId)).get();
+    if (!invitation || invitation.generation !== application.inviteGeneration) return "INVITE_RESET";
+    if (this.#isMember(application.userId, application.roomId)) return "ALREADY_MEMBER";
+    if (this.database.select({ id: roomMembership.id }).from(roomMembership).where(and(
+      eq(roomMembership.roomId, application.roomId), eq(roomMembership.nickname, application.nickname))).get()) return "NICKNAME_TAKEN";
+    if (this.database.select({ value: count() }).from(roomMembership).where(eq(roomMembership.roomId, application.roomId)).get()!.value >= 10) return "ROOM_MEMBER_LIMIT";
+    if (this.database.select({ value: count() }).from(roomMembership).where(eq(roomMembership.userId, application.userId)).get()!.value >= 10) return "JOINED_ROOM_LIMIT";
+    return null;
+  }
+
+  readPending(userId: string, roomId: string): z.infer<typeof roomApplicationsView> {
+    return this.database.transaction(() => {
+      this.#assertOwner(userId, roomId);
+      const applications = this.database.select().from(joinApplication)
+        .where(and(eq(joinApplication.roomId, roomId), eq(joinApplication.status, "pending"))).orderBy(asc(joinApplication.id)).all();
+      return { applications: applications.map((application): z.infer<typeof roomApplicationsView>["applications"][number] => {
+        const reason = this.#approvalDisabledReason(application);
+        return { id: application.id, nickname: application.nickname,
+          // 昵称冲突仍可点击批准，以明确结束该申请并要求申请人重新提交。
+          allowedActions: reason && reason !== "NICKNAME_TAKEN" ? ["rejectApplication" as const] : ["approveApplication" as const, "rejectApplication" as const],
+          disabledReasons: reason ? { approveApplication: reason } : {} };
+      }), allowedActions: ["reviewApplications"], disabledReasons: {} };
+    }, { behavior: "immediate" });
+  }
+
+  decide(userId: string, roomId: string, applicationId: string, input: z.infer<typeof applicationDecisionCommand>): JoinApplicationView {
+    const command = applicationDecisionCommand.parse(input);
+    const prepared = prepareCommand(userId, command.idempotencyKey, "decideJoinApplication", { roomId, applicationId, decision: command.decision }, this.now());
+    return this.database.transaction(tx => {
+      const application = this.#ownerApplication(userId, roomId, applicationId);
+      const replay = readCommandResource(tx, prepared, this.now());
+      if (replay) return this.readApplication(application.userId, replay);
+      if (application.status !== "pending") throw new BusinessError(409, "APPLICATION_NOT_PENDING", "申请已处理，请刷新待审批列表");
+      let status: typeof joinApplication.$inferSelect.status = "rejected";
+      if (command.decision === "approve") {
+        const reason = this.#approvalDisabledReason(application);
+        if (reason === "NICKNAME_TAKEN") status = "nickname_conflict";
+        else {
+          if (reason) throw new BusinessError(409, reason, "申请当前不满足加入条件，请刷新待审批列表");
+          tx.insert(roomMembership).values({ id: v7(), roomId, userId: application.userId, nickname: application.nickname }).run();
+          status = "approved";
+        }
+      }
+      tx.update(joinApplication).set({ status }).where(eq(joinApplication.id, applicationId)).run();
+      tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
+      recordCommandResource(tx, prepared, applicationId, this.now());
+      return this.readApplication(application.userId, applicationId);
     }, { behavior: "immediate" });
   }
 

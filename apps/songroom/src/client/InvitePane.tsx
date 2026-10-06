@@ -5,6 +5,7 @@ import { v7 as uuidv7 } from "uuid";
 import { inviteView, type InviteResetCommand, type InviteView } from "../shared/invite-contracts";
 import { InviteError } from "./InviteError";
 import { inviteErrorMessage, inviteRequest } from "./invite-http";
+import { invalidateRoomIdentity } from "./room-identity-queries";
 import { queryOptions, RoomRequestError } from "./room-http";
 
 export function InvitePane({ sessionId, roomId }: { sessionId: string; roomId: string }) {
@@ -41,8 +42,7 @@ export function InvitePane({ sessionId, roomId }: { sessionId: string; roomId: s
     onSuccess: view => {
       if (controller.current?.signal.aborted) return;
       queryClient.setQueryData(queryKey, view);
-      void queryClient.invalidateQueries({ queryKey: ["join-applications"] });
-      void queryClient.invalidateQueries({ queryKey: ["join-application"] });
+      void invalidateRoomIdentity(queryClient, sessionId, roomId);
       setCopyFeedback(null);
       setResetFeedback("邀请已重置，旧邀请码和链接已失效，旧邀请的待处理申请已取消。");
       setOpen(false);

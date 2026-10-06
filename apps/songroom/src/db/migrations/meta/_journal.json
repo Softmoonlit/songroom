@@ -43,6 +43,13 @@
       "when": 1791269483826,
       "tag": "0005_invite_join_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791286843120,
+      "tag": "0006_member_approval",
+      "breakpoints": true
     }
   ]
 }

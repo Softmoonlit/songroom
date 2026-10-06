@@ -7,6 +7,11 @@ import { InviteError } from "./InviteError";
 import { inviteRequest } from "./invite-http";
 import { queryOptions, RoomRequestError } from "./room-http";
 
+const statusLabels = {
+  pending: "等待房主审批", withdrawn: "申请已撤回", cancelled: "邀请已重置，申请已取消",
+  approved: "申请已获批", rejected: "房主已拒绝申请", nickname_conflict: "拟用昵称已被占用，申请已终结，请重新提交"
+};
+
 export function ApplicationPage({ sessionId }: { sessionId: string }) {
   const { applicationId } = useParams();
   return <ApplicationDetails key={`${sessionId}:${applicationId}`} sessionId={sessionId} applicationId={applicationId!} />;
@@ -50,10 +55,11 @@ function ApplicationDetails({ sessionId, applicationId }: { sessionId: string; a
       <div className="page-heading"><h1 id="application-heading" ref={heading} tabIndex={-1}>{query.data.room.name} 的加入申请</h1></div>
       <div className="settings-card room-create-form">
         <p>拟用昵称：{query.data.nickname}</p>
-        <p className="application-status" role="status">{query.data.status === "pending" ? "等待房主审批" : query.data.status === "withdrawn" ? "申请已撤回" : "邀请已重置，申请已取消"}</p>
-        <p>申请获批前不能查看房间内容。返回房间列表不会授予房间权限。</p>
+        <p className="application-status" role="status">{statusLabels[query.data.status]}</p>
+        {query.data.status === "pending" && <p>申请获批前不能查看房间内容。返回房间列表不会授予房间权限。</p>}
+        {query.data.status === "approved" && <Link className="text-link" to={`/rooms/${query.data.room.id}`}>进入获批房间</Link>}
         {query.data.allowedActions.includes("withdrawApplication") && <button className="secondary-button" type="button" disabled={mutation.isPending || query.isFetching} onClick={withdraw}>{mutation.isPending ? "撤回中…" : "撤回申请"}</button>}
-        {query.data.status !== "pending" && <Link className="text-link" to="/join">使用当前邀请码重新申请</Link>}
+        {query.data.status !== "pending" && query.data.status !== "approved" && <Link className="text-link" to="/join">使用当前邀请码重新申请</Link>}
         {mutation.isError && <InviteError error={mutation.error} />}
       </div>
     </>}

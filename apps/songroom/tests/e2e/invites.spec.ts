@@ -4,7 +4,7 @@ const code = "Abcde_1234";
 const roomId = "0195cf0d-6a80-7000-8000-000000000021";
 const applicationId = "0195cf0d-6a80-7000-8000-000000000022";
 const room = { id: roomId, name: "邀请音乐间" };
-const application = { id: applicationId, room, nickname: "é", status: "pending" };
+const application = { id: applicationId, room, nickname: "é", status: "pending", disabledReasons: {} };
 
 async function mockSession(page: Page) {
   await page.route("**/api/auth/get-session", route => route.fulfill({ json: {
@@ -115,9 +115,9 @@ test("手工邀请码校验、昵称规范化、申请独立待处理页与列�
 
 async function ownerRoom(page: Page, allowedActions = ["copyInvite", "resetInvite"]) {
   await mockSession(page);
-  await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: { room: { ...room, role: "owner", nickname: "房主" }, version: 1 } }));
-  await page.route(`**/api/rooms/${roomId}/members`, route => route.fulfill({ json: { members: [] } }));
-  await page.route(`**/api/rooms/${roomId}/invite`, route => route.fulfill({ json: { code, generation: 1, version: 1, pendingCount: 2, allowedActions } }));
+  await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: { room: { ...room, role: "owner", nickname: "房主" }, version: 1, pendingCount: 2, allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} } }));
+  await page.route(`**/api/rooms/${roomId}/members`, route => route.fulfill({ json: { members: [], allowedActions: ["renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} } }));
+  await page.route(`**/api/rooms/${roomId}/invite`, route => route.fulfill({ json: { code, generation: 1, version: 1, pendingCount: 2, allowedActions, disabledReasons: {} } }));
 }
 
 for (const copySucceeds of [true, false]) {
@@ -163,7 +163,7 @@ for (const copySucceeds of [true, false]) {
 test("320px 重置邀请对话框覆盖导航并捕获键盘，版本冲突留框展示新影响并重新确认", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
   await ownerRoom(page);
-  let latest = { code, generation: 1, version: 1, pendingCount: 2, allowedActions: ["copyInvite", "resetInvite"] };
+  let latest = { code, generation: 1, version: 1, pendingCount: 2, allowedActions: ["copyInvite", "resetInvite"], disabledReasons: {} };
   const commands: { version: number; idempotencyKey: string }[] = [];
   await page.route(`**/api/rooms/${roomId}/invite`, route => route.fulfill({ json: latest }));
   await page.route(`**/api/rooms/${roomId}/invite/reset`, route => {
@@ -377,7 +377,8 @@ test("服务端 allowedActions 决定邀请和撤回按钮，普通成员不读�
   await page.goto(`/application/${applicationId}`);
   await expect(page.getByRole("status")).toHaveText("等待房主审批");
   await expect(page.getByRole("button", { name: "撤回申请", exact: true })).toHaveCount(0);
-  await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: { room: { ...room, role: "roommate", nickname: "室友" }, version: 1 } }));
+  await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: { room: { ...room, role: "roommate", nickname: "室友" }, version: 1, pendingCount: null, allowedActions: ["renameNickname"], disabledReasons: {} } }));
+  await page.route(`**/api/rooms/${roomId}/members`, route => route.fulfill({ json: { members: [], allowedActions: ["renameNickname"], disabledReasons: {} } }));
   let inviteRead = false;
   await page.route(`**/api/rooms/${roomId}/invite`, route => { inviteRead = true; return route.fulfill({ status: 404, json: { error: { code: "INVITE_FORBIDDEN" } } }); });
   await page.goto(`/rooms/${roomId}`);

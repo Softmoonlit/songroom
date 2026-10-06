@@ -121,14 +121,14 @@ export const joinApplication = sqliteTable("join_application", {
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   nickname: text("nickname").notNull(),
   inviteGeneration: integer("invite_generation").notNull(),
-  status: text("status", { enum: ["pending", "withdrawn", "cancelled"] }).notNull().default("pending")
+  status: text("status", { enum: ["pending", "withdrawn", "cancelled", "approved", "rejected", "nickname_conflict"] }).notNull().default("pending")
 }, table => [
   uniqueIndex("join_application_pending_user_room_unique").on(table.roomId, table.userId).where(sql`${table.status} = 'pending'`),
   index("join_application_user_status_index").on(table.userId, table.status),
   index("join_application_room_status_index").on(table.roomId, table.status),
   check("join_application_nickname_valid", sql`length(${table.nickname}) BETWEEN 1 AND 12`),
   check("join_application_generation_valid", sql`${table.inviteGeneration} > 0`),
-  check("join_application_status_valid", sql`${table.status} IN ('pending', 'withdrawn', 'cancelled')`)
+  check("join_application_status_valid", sql`${table.status} IN ('pending', 'withdrawn', 'cancelled', 'approved', 'rejected', 'nickname_conflict')`)
 ]);
 
 export const authSchema = { user, session, account, verification };

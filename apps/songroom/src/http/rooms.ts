@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { SongRoomAuth } from "../auth.js";
 import type { Rooms } from "../rooms/rooms.js";
-import { roomListView, roomCreateView, roomCreateCommand, roomSummary, roomParams, roomShellView, roomMembersView } from "../shared/room-contracts.js";
+import { roomListView, roomCreateView, roomCreateCommand, roomSummary, roomParams, roomShellView, roomMembersView, roomRenameCommand, nicknameRenameCommand } from "../shared/room-contracts.js";
 import type { ZodProvider } from "./zod.js";
 import { requireSession } from "./session.js";
 
@@ -18,6 +18,12 @@ export function registerRoomRoutes(app: FastifyInstance, auth: SongRoomAuth, roo
   });
   typed.get("/api/rooms/:roomId", { schema: { params: roomParams, response: { 200: roomShellView } } }, async (request, reply) => {
     return rooms.readShell((await requireSession(auth, request, reply)).userId, request.params.roomId);
+  });
+  typed.post("/api/rooms/:roomId/name", { schema: { params: roomParams, body: roomRenameCommand, response: { 200: roomShellView } } }, async (request, reply) => {
+    return rooms.renameRoom((await requireSession(auth, request, reply)).userId, request.params.roomId, request.body);
+  });
+  typed.post("/api/rooms/:roomId/nickname", { schema: { params: roomParams, body: nicknameRenameCommand, response: { 200: roomShellView } } }, async (request, reply) => {
+    return rooms.renameNickname((await requireSession(auth, request, reply)).userId, request.params.roomId, request.body);
   });
   typed.get("/api/rooms/:roomId/members", { schema: { params: roomParams, response: { 200: roomMembersView } } }, async (request, reply) => {
     return rooms.readMembers((await requireSession(auth, request, reply)).userId, request.params.roomId);

@@ -2,19 +2,27 @@ import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { room, roomInvite, roomMembership } from "../db/schema.js";
+import { room, roomInvite, roomMembership, joinApplication } from "../db/schema.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
 import type { SessionPrincipal } from "../auth.js";
 import type { RoomCreateCommand, RoomCreateView, RoomSummary } from "../shared/room-contracts.js";
-import { roomCreateCommand, roomCreateDisabledReason } from "../shared/room-contracts.js";
+import { roomCreateCommand, roomCreateDisabledReason, roomRenameCommand, nicknameRenameCommand } from "../shared/room-contracts.js";
+import type { z } from "zod";
 import { BusinessError } from "../shared/errors.js";
 
 export function assertRoomCapacity(counts: { owned: number; joined: number; total: number }): void {
   if (counts.owned >= 3) throw new BusinessError(409, "OWNED_ROOM_LIMIT", "最多自建 3 个房间");
   if (counts.joined >= 10) throw new BusinessError(409, "JOINED_ROOM_LIMIT", "最多归属 10 个房间");
   if (counts.total >= 20) throw new BusinessError(409, "GLOBAL_ROOM_LIMIT", "全站房间数量已达上限");
+}
+
+function identityPermissions(role: "owner" | "roommate"): { allowedActions: ("renameRoom" | "renameNickname" | "reviewApplications" | "readInvite")[]; disabledReasons: Record<string, string> } {
+  return role === "owner"
+    ? { allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} }
+    : { allowedActions: ["renameNickname"],
+      disabledReasons: { renameRoom: "OWNER_ONLY", reviewApplications: "OWNER_ONLY", readInvite: "OWNER_ONLY" } };
 }
 
 export class Rooms {
@@ -54,15 +62,56 @@ export class Rooms {
     const visible = this.#visible(userId, roomId).get();
     if (!visible) throw new BusinessError(404, "ROOM_UNAVAILABLE", "房间不存在或你已不是当前成员");
     const { version, ...summary } = visible;
-    return { room: summary, version };
+    const pendingCount = summary.role === "owner" ? this.database.select({ value: count() }).from(joinApplication)
+      .where(and(eq(joinApplication.roomId, roomId), eq(joinApplication.status, "pending"))).get()!.value : null;
+    return { room: summary, version, pendingCount, ...identityPermissions(summary.role) };
   }
 
   readMembers(userId: string, roomId: string) {
-    this.readShell(userId, roomId);
-    return { members: this.database.select({ id: roomMembership.id, nickname: roomMembership.nickname,
+    const shell = this.readShell(userId, roomId);
+    const members = this.database.select({ id: roomMembership.id, nickname: roomMembership.nickname,
       role: sql<"owner" | "roommate">`CASE WHEN ${room.ownerUserId} = ${roomMembership.userId} THEN 'owner' ELSE 'roommate' END`,
       isSelf: sql<boolean>`(${roomMembership.userId} = ${userId})`.mapWith(Boolean)
-    }).from(roomMembership).innerJoin(room, eq(room.id, roomMembership.roomId)).where(eq(roomMembership.roomId, roomId)).orderBy(asc(roomMembership.id)).all() };
+    }).from(roomMembership).innerJoin(room, eq(room.id, roomMembership.roomId)).where(eq(roomMembership.roomId, roomId)).orderBy(asc(roomMembership.id)).all();
+    return { members: members.map((member): import("../shared/room-contracts.js").RoomMember => ({ ...member,
+      allowedActions: member.isSelf ? ["renameNickname" as const] : [],
+      disabledReasons: member.isSelf ? {} : { renameNickname: "SELF_ONLY" }
+    })), ...identityPermissions(shell.room.role) };
+  }
+
+  renameRoom(userId: string, roomId: string, input: z.infer<typeof roomRenameCommand>) {
+    const command = roomRenameCommand.parse(input);
+    const prepared = prepareCommand(userId, command.idempotencyKey, "renameRoom", { roomId, name: command.name }, this.now());
+    return this.database.transaction(tx => {
+      const current = this.readShell(userId, roomId);
+      if (current.room.role !== "owner") throw new BusinessError(404, "ROOM_OWNER_REQUIRED", "只有当前房主可修改房间名称");
+      if (readCommandResource(tx, prepared, this.now())) return current;
+      if (current.room.name !== command.name) {
+        tx.update(room).set({ name: command.name, version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
+      }
+      recordCommandResource(tx, prepared, roomId, this.now());
+      return this.readShell(userId, roomId);
+    }, { behavior: "immediate" });
+  }
+
+  renameNickname(userId: string, roomId: string, input: z.infer<typeof nicknameRenameCommand>) {
+    const command = nicknameRenameCommand.parse(input);
+    const prepared = prepareCommand(userId, command.idempotencyKey, "renameNickname", { roomId, nickname: command.nickname }, this.now());
+    return this.database.transaction(tx => {
+      const current = this.readShell(userId, roomId);
+      if (readCommandResource(tx, prepared, this.now())) return current;
+      if (current.room.nickname !== command.nickname) {
+        if (tx.select({ id: roomMembership.id }).from(roomMembership)
+          .where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.nickname, command.nickname))).get()) {
+          throw new BusinessError(409, "NICKNAME_TAKEN", "昵称已被当前成员使用，请换一个昵称");
+        }
+        tx.update(roomMembership).set({ nickname: command.nickname })
+          .where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, userId))).run();
+        tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
+      }
+      recordCommandResource(tx, prepared, roomId, this.now());
+      return this.readShell(userId, roomId);
+    }, { behavior: "immediate" });
   }
 
   async create(principal: SessionPrincipal, input: RoomCreateCommand): Promise<RoomSummary> {

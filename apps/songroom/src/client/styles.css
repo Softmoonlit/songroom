@@ -1204,3 +1204,26 @@ h1 {
     flex-direction: column;
   }
 }
+
+.pending-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 1rem;
+  background: #7357e8;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.application-review-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.application-review-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #e5e8ef;
+  overflow-wrap: anywhere;
+}

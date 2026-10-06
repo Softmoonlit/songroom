@@ -7,6 +7,8 @@ import { queryOptions, request } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
 import { useVirtualKeyboard } from "./useVirtualKeyboard";
+import { IdentityForm } from "./IdentityForm";
+import { ApplicationsPane } from "./ApplicationsPane";
 import { InvitePane } from "./InvitePane";
 
 export function RoomPage({ sessionId }: { sessionId: string }) {
@@ -54,6 +56,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         </Link>
         <h1>{room.name}</h1>
         <p>当前角色：{roleLabels[room.role]}</p>
+        <p>当前昵称：{room.nickname}</p>
         <nav className="room-navigation" aria-label="房间导航">
           <button
             type="button"
@@ -65,11 +68,13 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           </button>
           <button
             type="button"
+            aria-label="房间成员"
             aria-current={active === "members" ? "page" : undefined}
             onClick={() => selectTab("members")}
           >
             <Users size={20} aria-hidden="true" />
             房间成员
+            {query.data.allowedActions.includes("reviewApplications") && query.data.pendingCount !== null && query.data.pendingCount > 0 && <span className="pending-badge" aria-label={`待审批申请：${query.data.pendingCount}份`}>{query.data.pendingCount > 9 ? "9+" : query.data.pendingCount}</span>}
           </button>
           <button
             type="button"
@@ -91,10 +96,12 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           </div>
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
-          <MembersPane sessionId={sessionId} roomId={roomId} active={active === "members"} isOwner={room.role === "owner"} />
+          <MembersPane sessionId={sessionId} roomId={roomId} active={active === "members"} />
         </section>
         <section hidden={active !== "settings"} aria-label="房间设置">
           <h2>房间设置</h2>
+          {query.data.allowedActions.includes("renameRoom") && <IdentityForm sessionId={sessionId} roomId={roomId} field="name" current={room.name} disabledReason={query.data.disabledReasons.renameRoom} />}
+          {query.data.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={room.nickname} disabledReason={query.data.disabledReasons.renameNickname} />}
           <dl className="netease-identity">
             <div>
               <dt>房间名称</dt>
@@ -114,7 +121,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     </section>
   );
 }
-function MembersPane({ sessionId, roomId, active, isOwner }: { sessionId: string; roomId: string; active: boolean; isOwner: boolean }) {
+function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
   const query = useQuery({
     queryKey: ["room-members", sessionId, roomId],
     queryFn: ({ signal }) => request(`/${roomId}/members`, roomMembersView, signal),
@@ -123,6 +130,7 @@ function MembersPane({ sessionId, roomId, active, isOwner }: { sessionId: string
   });
   const [memberId, setMemberId] = useState<string | null>(null);
   const listScroll = useRef(0);
+  const [reviewing, setReviewing] = useState(false);
   const selected = query.data?.members.find(member => member.id === memberId);
   useLayoutEffect(() => {
     if (active) window.scrollTo({ top: memberId ? 0 : listScroll.current, behavior: "instant" });
@@ -142,6 +150,7 @@ function MembersPane({ sessionId, roomId, active, isOwner }: { sessionId: string
           <span>{selected.nickname}</span>
         </nav>
         <h2>{selected.nickname}</h2>
+        {selected.isSelf && selected.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={selected.nickname} disabledReason={selected.disabledReasons.renameNickname} />}
         <dl className="netease-identity">
           <div>
             <dt>昵称</dt>
@@ -157,6 +166,8 @@ function MembersPane({ sessionId, roomId, active, isOwner }: { sessionId: string
   return (
     <>
       <h2>房间成员</h2>
+      {query.data.allowedActions.includes("reviewApplications") && <button className="secondary-button" type="button" aria-expanded={reviewing} onClick={() => setReviewing(value => !value)}>审批加入申请</button>}
+      {active && reviewing && query.data.allowedActions.includes("reviewApplications") && <ApplicationsPane sessionId={sessionId} roomId={roomId} />}
       <ul className="member-list">
         {query.data.members.map(member => (
           <li key={member.id}>
@@ -178,7 +189,7 @@ function MembersPane({ sessionId, roomId, active, isOwner }: { sessionId: string
           </li>
         ))}
       </ul>
-      {active && isOwner && <InvitePane sessionId={sessionId} roomId={roomId} />}
+      {active && query.data.allowedActions.includes("readInvite") && <InvitePane sessionId={sessionId} roomId={roomId} />}
     </>
   );
 }
