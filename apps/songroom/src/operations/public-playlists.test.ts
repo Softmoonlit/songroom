@@ -107,6 +107,20 @@ it("每请求公平让出、真实账号串行间隔 1 秒且全站最多两个�
   for (const item of rooms) expect(service.read(item.userId, item.roomId).operation?.status).toBe("succeeded");
 });
 
+it("同账号请求超过间隔仍独占执行权，其他目标不能并发进入", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module(); const second = extraRoom(f);
+  const held = gate<AdapterResult<"identity">>();
+  f.adapter.identity = () => held.promise;
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.create("owner", second, { idempotencyKey: v7() });
+  service.start(); await vi.advanceTimersByTimeAsync(3000);
+  expect(f.adapter.inputs).toHaveLength(1);
+  expect(service.read("owner", f.roomId).operation?.status).toBe("processing");
+  expect(service.read("owner", second).operation?.status).toBe("queued");
+  service.stop(); held.resolve({ ok: true, data: { accountId: "cloud-owner", name: "房主" } }); await service.settle();
+});
+
 it("重开 SQLite 后仍等待持久的下一次启动时间，不突发请求", async () => {
   vi.useFakeTimers();
   const f = fixture(); const first = f.module();

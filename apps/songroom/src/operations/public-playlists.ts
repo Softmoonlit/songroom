@@ -2,7 +2,7 @@ import { v7 } from "uuid";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
 import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding, publicPlaylistCreation, room, roomMembership } from "../db/schema.js";
-import { UpstreamScheduling } from "./upstream-scheduling.js";
+import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import { CredentialVault } from "../netease/credentials.js";
@@ -11,7 +11,6 @@ import { BusinessError } from "../shared/errors.js";
 import { publicPlaylistCreateCommand, type PublicPlaylistCreateCommand, type PublicPlaylistView } from "../shared/public-playlist-contracts.js";
 
 type Operation = typeof operation.$inferSelect;
-type ClaimedRequest = { row: Operation; detail: typeof publicPlaylistCreation.$inferSelect; cookie: string };
 type Status = Operation["status"];
 const TERMINAL_RETENTION_MS = 86_400_000;
 const terminal = (status: Status) => ["succeeded", "failed", "stopped"].includes(status);
@@ -19,17 +18,31 @@ const authorizationErrors = new Set(["AUTH_UNAVAILABLE", "ACCOUNT_EMPTY", "ACCOU
 
 /** 只接受公共歌单创建意图。start 必须在 HTTP 成功监听后调用；事务始终同步。 */
 export class PublicPlaylists {
-  #started = false;
-  #stopped = false;
-  #pump: Promise<void> | undefined;
-  #wake: (() => void) | undefined;
-  readonly #inFlight = new Set<Promise<void>>();
+  readonly #scheduler: UpstreamScheduler;
+  readonly now: () => number;
 
-  readonly #scheduling: UpstreamScheduling;
-
-  constructor(readonly database: AppDatabase, readonly adapter: NeteaseAdapter, readonly vault: CredentialVault, readonly now = () => Date.now()) {
-    this.#scheduling = new UpstreamScheduling(database, now);
+  constructor(
+    readonly database: AppDatabase,
+    readonly adapter: NeteaseAdapter,
+    readonly vault: CredentialVault,
+    schedulerOrNow?: UpstreamScheduler | (() => number),
+    clock: () => number = () => Date.now()
+  ) {
+    if (schedulerOrNow instanceof UpstreamScheduler) {
+      this.#scheduler = schedulerOrNow;
+      this.now = clock;
+    } else {
+      this.now = typeof schedulerOrNow === "function" ? schedulerOrNow : clock;
+      this.#scheduler = new UpstreamScheduler(database, this.now);
+    }
+    this.#scheduler.register("createPublicPlaylist", {
+      claim: row => this.#claim(row),
+      execute: row => this.#execute(row),
+      recover: () => this.#recover()
+    });
   }
+
+  get scheduler(): UpstreamScheduler { return this.#scheduler; }
 
   #member(userId: string, roomId: string) {
     const current = this.database.select().from(room).where(eq(room.id, roomId)).get();
@@ -50,7 +63,7 @@ export class PublicPlaylists {
       : this.database.select().from(operation).where(and(eq(operation.roomId, roomId), sql`(${operation.status} NOT IN ('succeeded', 'failed', 'stopped') OR ${operation.updatedAt} > ${this.now() - TERMINAL_RETENTION_MS})`)).orderBy(desc(operation.createdAt), desc(operation.id)).get();
     const pending = this.database.select({ id: operation.id }).from(operation).where(and(eq(operation.roomId, roomId), sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).get();
     const disabledReason = current.ownerUserId !== userId ? "OWNER_ONLY" : binding ? "PUBLIC_PLAYLIST_EXISTS"
-      : pending ? currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING" : !this.#authorization(userId) ? "NETEASE_AUTH_REQUIRED" : this.#scheduling.admissionCode(this.#authorization(userId)!.accountId);
+      : pending ? currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING" : !this.#authorization(userId) ? "NETEASE_AUTH_REQUIRED" : this.#scheduler.admissionCode(this.#authorization(userId)!.accountId);
     return { playlist: binding ? { id: binding.playlistId, name: binding.name } : null,
       operation: currentOperation ? { id: currentOperation.id, status: currentOperation.status, errorCode: currentOperation.errorCode } : null,
       allowedActions: disabledReason ? [] : ["createPublicPlaylist"], disabledReason, version: current.version };
@@ -59,7 +72,7 @@ export class PublicPlaylists {
   read(userId: string, roomId: string): PublicPlaylistView { return this.#view(userId, roomId); }
 
   create(userId: string, roomId: string, input: PublicPlaylistCreateCommand): { replay: boolean; view: PublicPlaylistView } {
-    if (this.#stopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
+    if (this.#scheduler.isStopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
     const command = publicPlaylistCreateCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "createPublicPlaylist", { roomId }, this.now());
     const accepted = this.database.transaction(tx => {
@@ -78,7 +91,7 @@ export class PublicPlaylists {
       }
       const auth = this.#authorization(userId);
       if (!auth) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
-      const admissionCode = this.#scheduling.admissionCode(auth.accountId);
+      const admissionCode = this.#scheduler.admissionCode(auth.accountId);
       if (admissionCode) throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
       const id = v7();
       tx.insert(operation).values({ id, kind: "createPublicPlaylist", userId, roomId, accountId: auth.accountId,
@@ -88,7 +101,7 @@ export class PublicPlaylists {
       this.#bump(roomId);
       return { replay: false, view: this.#view(userId, roomId, id) };
     });
-    this.#kick();
+    this.#scheduler.kick();
     return accepted;
   }
 
@@ -112,88 +125,44 @@ export class PublicPlaylists {
     this.database.delete(commandReceipt).where(sql`${commandReceipt.expiresAt} <= ${this.now()}`).run();
   }
 
-  start(): void {
-    if (this.#started && !this.#stopped) return;
-    if (this.#pump) throw new Error("重新启动前必须等待 settle 完成，不能撤销在途执行权");
-    this.#started = true; this.#stopped = false;
-    this.database.transaction(tx => {
-      this.#prune();
-      // 单实例启动恢复：执行句柄已消失，启动预算与账号暂停仍保留。
-      this.#scheduling.recover();
-      for (const row of tx.select().from(operation).all()) {
-        if (terminal(row.status)) continue;
-        const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
-        if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
-        if (["sending", "unknown"].includes(detail.step)) this.#status(row.id, "awaitingConfirmation", row.errorCode);
-        else if (row.status !== "waitingAuthorization" && (detail.step === "confirming" || row.status === "processing")) this.#status(row.id, "queued", row.errorCode);
-        if (detail.step === "verified") tx.update(publicPlaylistCreation).set({ step: "ready" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
-      }
-    });
-    this.#kick();
+  start(): void { this.#scheduler.start(); }
+  stop(): void { this.#scheduler.stop(); }
+  settle(): Promise<void> { return this.#scheduler.settle(); }
+
+  #recover(): void {
+    this.#prune();
+    for (const row of this.database.select().from(operation).where(eq(operation.kind, "createPublicPlaylist")).all()) {
+      if (terminal(row.status)) continue;
+      const detail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
+      if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
+      if (["sending", "unknown"].includes(detail.step)) this.#status(row.id, "awaitingConfirmation", row.errorCode);
+      else if (row.status !== "waitingAuthorization" && (detail.step === "confirming" || row.status === "processing")) this.#status(row.id, "queued", row.errorCode);
+      if (detail.step === "verified") this.database.update(publicPlaylistCreation).set({ step: "ready" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+    }
   }
 
-  stop(): void { this.#stopped = true; this.#wake?.(); }
-
-  async settle(): Promise<void> {
-    while (this.#pump) await this.#pump;
-  }
-
-  #kick(): void {
-    if (!this.#started || this.#stopped) return;
-    if (this.#pump) { this.#wake?.(); return; }
-    // 计时器只唤醒已提交的账号启动预算；发送资格与唯一执行权始终由事务判定。
-    this.#pump = Promise.resolve().then(async () => {
-      while (!this.#stopped) {
-        const claimed = this.#claim();
-        if (claimed) {
-          const task = this.#execute(claimed).finally(() => {
-            this.#inFlight.delete(task);
-            this.#wake?.();
-          });
-          this.#inFlight.add(task);
-          continue;
-        }
-        const queued = this.database.select().from(operation).where(eq(operation.status, "queued")).all();
-        if (!queued.length && !this.#inFlight.size) break;
-        const nextStartAt = this.#scheduling.nextStartAt();
-        await new Promise<void>(resolve => {
-          const wake = () => { if (timer) clearTimeout(timer); this.#wake = undefined; resolve(); };
-          const timer = nextStartAt !== undefined ? setTimeout(wake, Math.max(1, nextStartAt - this.now())) : undefined;
-          this.#wake = wake;
-        });
-      }
-      await Promise.all(this.#inFlight);
-    }).finally(() => {
-      this.#pump = undefined;
-      if (!this.#stopped && this.database.select({ id: operation.id }).from(operation).where(eq(operation.status, "queued")).get()) this.#kick();
-    });
-  }
-
-  #claim() {
-    return this.database.transaction(tx => {
-      for (const row of tx.select().from(operation).where(eq(operation.status, "queued")).orderBy(operation.lastGranted, operation.createdAt, operation.id).all()) {
-        const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
-        if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
-        if (detail.step === "confirming") {
-          try { this.#bind(row); } catch { this.#status(row.id, "needsAdministrator"); }
-          continue;
-        }
-        if (["sending", "unknown"].includes(detail.step)) { this.#status(row.id, "awaitingConfirmation", row.errorCode); continue; }
-        if (this.#scheduling.paused(row.accountId!)) { this.#status(row.id, "needsAdministrator", "ACCOUNT_PAUSED"); continue; }
-        const condition = this.#conditions(row);
-        if (condition !== "valid") { this.#conditionStatus(row, condition); continue; }
-        if (!this.#scheduling.canStart(row.accountId!)) continue;
-        const auth = this.#authorization(row.userId)!;
-        let cookie: string;
-        try { cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation }); }
-        catch { this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE"); continue; }
-        if (!this.#scheduling.claim(row)) continue;
-        if (detail.step === "verified") tx.update(publicPlaylistCreation).set({ step: "sending" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
-        this.#bump(row.roomId);
-        return { row, detail, cookie };
-      }
-      return undefined;
-    });
+  #claim(row: Operation): boolean {
+    const detail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
+    if (!detail) { this.#status(row.id, "needsAdministrator"); return false; }
+    if (detail.step === "confirming") {
+      try { this.#bind(row); } catch { this.#status(row.id, "needsAdministrator"); }
+      return false;
+    }
+    if (["sending", "unknown"].includes(detail.step)) { this.#status(row.id, "awaitingConfirmation", row.errorCode); return false; }
+    const condition = this.#conditions(row);
+    if (condition !== "valid") { this.#conditionStatus(row, condition); return false; }
+    const auth = this.#authorization(row.userId)!;
+    try {
+      this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
+    } catch {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return false;
+    }
+    if (detail.step === "verified") {
+      this.database.update(publicPlaylistCreation).set({ step: "sending" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+    }
+    this.#bump(row.roomId);
+    return true;
   }
 
   #authorizationError(row: Operation): "ACCOUNT_MISMATCH" | "AUTH_UNAVAILABLE" {
@@ -230,20 +199,15 @@ export class PublicPlaylists {
     });
   }
 
-  #pauseAccount(accountId: string): void {
-    this.#scheduling.pause(accountId);
-    for (const pending of this.database.select().from(operation).where(and(eq(operation.accountId, accountId), eq(operation.status, "queued"))).all()) {
-      this.#status(pending.id, "needsAdministrator", "ACCOUNT_PAUSED");
-    }
-  }
-
   #readFailure(row: Operation, code: AdapterErrorCode): void {
-    if (code === "RATE_LIMITED") this.#pauseAccount(row.accountId!);
+    if (code === "RATE_LIMITED") this.#scheduler.pause(row.accountId!);
     this.#status(row.id, authorizationErrors.has(code) ? "waitingAuthorization" : ["RATE_LIMITED", "TARGET_PERMISSION"].includes(code) ? "needsAdministrator" : "failed", code);
   }
 
-  async #execute(claimed: ClaimedRequest): Promise<void> {
-    const { row, detail, cookie } = claimed;
+  async #execute(row: Operation): Promise<void> {
+    const detail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get()!;
+    const auth = this.#authorization(row.userId)!;
+    const cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
     try {
       if (detail.step === "ready") {
         const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
@@ -260,7 +224,7 @@ export class PublicPlaylists {
       const result = await this.adapter.call({ operation: "playlistCreate", cookie, name: detail.name });
       this.database.transaction(tx => {
         if (!result.ok) {
-          if (result.error.code === "RATE_LIMITED") this.#pauseAccount(row.accountId!);
+          if (result.error.code === "RATE_LIMITED") this.#scheduler.pause(row.accountId!);
           this.#status(row.id, "awaitingConfirmation", result.error.code);
           return;
         }
@@ -271,8 +235,6 @@ export class PublicPlaylists {
     } catch {
       const saved = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
       this.#status(row.id, saved?.step === "confirming" ? "needsAdministrator" : saved?.step === "sending" ? "awaitingConfirmation" : "failed", "MODULE_ERROR");
-    } finally {
-      this.#scheduling.release(row);
     }
   }
 }
