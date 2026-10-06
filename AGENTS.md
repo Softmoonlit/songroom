@@ -13,7 +13,7 @@ Issue 和 spec 存放在 `.scratch/` 下的本地 Markdown 文件中。See `docs
 
 ### Triage labels
 
-使用默认五个 triage 状态标签，并额外使用 `resolved` 和 `need-review`。See `docs/agents/triage-labels.md`.
+使用 `docs/agents/triage-labels.md` 定义的七个 triage 状态标签，包括 `resolved` 和 `need-review`；每张 Issue 只记录一个当前状态。
 
 ### Domain docs
 

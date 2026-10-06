@@ -10,6 +10,9 @@
 - ticket 编号从 `01` 开始，不能使用合并的 tickets 文件
 - triage 状态记录在 Issue 文件顶部附近的 `Status:` 行中
 - 评论和对话历史追加在文件底部的 `## Comments` 标题下
+- 状态标签及含义以 `docs/agents/triage-labels.md` 为准；每张 Issue 只有一个当前状态
+- 实现或决议完成时，必须在交付前更新验收清单、`Status:` 和完成评论；评论记录实现提交、实际验证结果及剩余事项，不得仅在聊天中报告完成
+- 尚需评审或验证有未解决事项时使用 `need-review`；所需验证与评审完成后使用 `resolved`
 
 ## 发布 Issue
 
