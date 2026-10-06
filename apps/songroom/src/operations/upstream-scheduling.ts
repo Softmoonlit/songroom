@@ -22,14 +22,14 @@ export class UpstreamScheduler {
   #pump: Promise<void> | undefined;
   #wake: (() => void) | undefined;
   readonly #inFlight = new Set<Promise<void>>();
-  readonly #handlers = new Map<string, OperationHandler>();
+  readonly #handlers = new Map<Operation["kind"], OperationHandler>();
 
   constructor(readonly database: AppDatabase, readonly now: () => number = () => Date.now()) {}
 
   get isStopped(): boolean { return this.#stopped; }
   get isStarted(): boolean { return this.#started; }
 
-  register(kind: string, handler: OperationHandler): void {
+  register(kind: Operation["kind"], handler: OperationHandler): void {
     this.#handlers.set(kind, handler);
   }
 

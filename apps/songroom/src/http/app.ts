@@ -20,6 +20,7 @@ import { registerRoomRoutes } from "./rooms.js";
 import { Invites } from "../invites/invites.js";
 import { registerInviteRoutes } from "./invites.js";
 import { PublicPlaylists } from "../operations/public-playlists.js";
+import { UpstreamScheduler } from "../operations/upstream-scheduling.js";
 import { registerPublicPlaylistRoutes } from "./public-playlists.js";
 
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
@@ -63,7 +64,8 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     throw error;
   }
   const auth = createAuth(database, config);
-  const playlists = new PublicPlaylists(database, adapter, vault, dependencies.now);
+  const scheduler = new UpstreamScheduler(database, dependencies.now);
+  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, dependencies.now);
   let state: RuntimeState = "starting";
   let closing: Promise<void> | undefined;
 
@@ -155,7 +157,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       }
       return reply.type("text/html; charset=utf-8").send(html);
     });
-    fastify.addHook("onListen", async () => { state = "ready"; playlists.start(); fastify.log.info({ state }, "application lifecycle"); });
+    fastify.addHook("onListen", async () => { state = "ready"; scheduler.start(); fastify.log.info({ state }, "application lifecycle"); });
     await fastify.ready();
   } catch (error) {
     await fastify.close();
@@ -168,7 +170,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const drain = (): void => {
     if (state !== "stopped" && state !== "draining") {
       state = "draining";
-      playlists.stop();
+      scheduler.stop();
       binding.clear();
       fastify.log.info({ state }, "application lifecycle");
     }
@@ -180,7 +182,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       finally {
         binding.clear();
         await adapter.dispose();
-        await playlists.settle();
+        await scheduler.settle();
         database.$client.close();
         state = "stopped";
         fastify.log.info({ state }, "application lifecycle");

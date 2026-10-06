@@ -18,31 +18,19 @@ const authorizationErrors = new Set(["AUTH_UNAVAILABLE", "ACCOUNT_EMPTY", "ACCOU
 
 /** 只接受公共歌单创建意图。start 必须在 HTTP 成功监听后调用；事务始终同步。 */
 export class PublicPlaylists {
-  readonly #scheduler: UpstreamScheduler;
-  readonly now: () => number;
-
   constructor(
     readonly database: AppDatabase,
     readonly adapter: NeteaseAdapter,
     readonly vault: CredentialVault,
-    schedulerOrNow?: UpstreamScheduler | (() => number),
-    clock: () => number = () => Date.now()
+    readonly scheduler: UpstreamScheduler,
+    readonly now: () => number = () => Date.now()
   ) {
-    if (schedulerOrNow instanceof UpstreamScheduler) {
-      this.#scheduler = schedulerOrNow;
-      this.now = clock;
-    } else {
-      this.now = typeof schedulerOrNow === "function" ? schedulerOrNow : clock;
-      this.#scheduler = new UpstreamScheduler(database, this.now);
-    }
-    this.#scheduler.register("createPublicPlaylist", {
+    this.scheduler.register("createPublicPlaylist", {
       claim: row => this.#claim(row),
       execute: row => this.#execute(row),
       recover: () => this.#recover()
     });
   }
-
-  get scheduler(): UpstreamScheduler { return this.#scheduler; }
 
   #member(userId: string, roomId: string) {
     const current = this.database.select().from(room).where(eq(room.id, roomId)).get();
@@ -63,7 +51,7 @@ export class PublicPlaylists {
       : this.database.select().from(operation).where(and(eq(operation.roomId, roomId), sql`(${operation.status} NOT IN ('succeeded', 'failed', 'stopped') OR ${operation.updatedAt} > ${this.now() - TERMINAL_RETENTION_MS})`)).orderBy(desc(operation.createdAt), desc(operation.id)).get();
     const pending = this.database.select({ id: operation.id }).from(operation).where(and(eq(operation.roomId, roomId), sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).get();
     const disabledReason = current.ownerUserId !== userId ? "OWNER_ONLY" : binding ? "PUBLIC_PLAYLIST_EXISTS"
-      : pending ? currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING" : !this.#authorization(userId) ? "NETEASE_AUTH_REQUIRED" : this.#scheduler.admissionCode(this.#authorization(userId)!.accountId);
+      : pending ? currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING" : !this.#authorization(userId) ? "NETEASE_AUTH_REQUIRED" : this.scheduler.admissionCode(this.#authorization(userId)!.accountId);
     return { playlist: binding ? { id: binding.playlistId, name: binding.name } : null,
       operation: currentOperation ? { id: currentOperation.id, status: currentOperation.status, errorCode: currentOperation.errorCode } : null,
       allowedActions: disabledReason ? [] : ["createPublicPlaylist"], disabledReason, version: current.version };
@@ -72,7 +60,7 @@ export class PublicPlaylists {
   read(userId: string, roomId: string): PublicPlaylistView { return this.#view(userId, roomId); }
 
   create(userId: string, roomId: string, input: PublicPlaylistCreateCommand): { replay: boolean; view: PublicPlaylistView } {
-    if (this.#scheduler.isStopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
+    if (this.scheduler.isStopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
     const command = publicPlaylistCreateCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "createPublicPlaylist", { roomId }, this.now());
     const accepted = this.database.transaction(tx => {
@@ -91,7 +79,7 @@ export class PublicPlaylists {
       }
       const auth = this.#authorization(userId);
       if (!auth) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
-      const admissionCode = this.#scheduler.admissionCode(auth.accountId);
+      const admissionCode = this.scheduler.admissionCode(auth.accountId);
       if (admissionCode) throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
       const id = v7();
       tx.insert(operation).values({ id, kind: "createPublicPlaylist", userId, roomId, accountId: auth.accountId,
@@ -101,7 +89,7 @@ export class PublicPlaylists {
       this.#bump(roomId);
       return { replay: false, view: this.#view(userId, roomId, id) };
     });
-    this.#scheduler.kick();
+    this.scheduler.kick();
     return accepted;
   }
 
@@ -125,9 +113,9 @@ export class PublicPlaylists {
     this.database.delete(commandReceipt).where(sql`${commandReceipt.expiresAt} <= ${this.now()}`).run();
   }
 
-  start(): void { this.#scheduler.start(); }
-  stop(): void { this.#scheduler.stop(); }
-  settle(): Promise<void> { return this.#scheduler.settle(); }
+  start(): void { this.scheduler.start(); }
+  stop(): void { this.scheduler.stop(); }
+  settle(): Promise<void> { return this.scheduler.settle(); }
 
   #recover(): void {
     this.#prune();
@@ -200,7 +188,7 @@ export class PublicPlaylists {
   }
 
   #readFailure(row: Operation, code: AdapterErrorCode): void {
-    if (code === "RATE_LIMITED") this.#scheduler.pause(row.accountId!);
+    if (code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
     this.#status(row.id, authorizationErrors.has(code) ? "waitingAuthorization" : ["RATE_LIMITED", "TARGET_PERMISSION"].includes(code) ? "needsAdministrator" : "failed", code);
   }
 
@@ -224,7 +212,7 @@ export class PublicPlaylists {
       const result = await this.adapter.call({ operation: "playlistCreate", cookie, name: detail.name });
       this.database.transaction(tx => {
         if (!result.ok) {
-          if (result.error.code === "RATE_LIMITED") this.#scheduler.pause(row.accountId!);
+          if (result.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
           this.#status(row.id, "awaitingConfirmation", result.error.code);
           return;
         }

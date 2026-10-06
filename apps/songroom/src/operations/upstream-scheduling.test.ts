@@ -35,7 +35,7 @@ function gate<T = void>() {
   return { promise, resolve };
 }
 
-it("多业务操作注册共享同一调度器：按最久未获得机会轮转、全站并发限制为 2 且释放后自动唤醒", async () => {
+it("单调度器跨账号与房间公平轮转、全站并发限制为 2 且释放后自动唤醒", async () => {
   vi.useFakeTimers();
   const { db } = fixture();
   const now = () => Date.now();

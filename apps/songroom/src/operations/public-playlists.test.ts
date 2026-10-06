@@ -12,6 +12,7 @@ import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding,
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { PublicPlaylists } from "./public-playlists.js";
+import { UpstreamScheduler } from "./upstream-scheduling.js";
 
 class Adapter implements NeteaseAdapter {
   inputs: AdapterInput[] = [];
@@ -53,7 +54,8 @@ function fixture() {
   const clockStartedAt = Date.now();
   function module(now?: () => number) {
     const clock = now ? () => now() + Date.now() - clockStartedAt : undefined;
-    const result = new PublicPlaylists(database, adapter, vault, clock); modules.push(result); return result;
+    const scheduler = new UpstreamScheduler(database, clock);
+    const result = new PublicPlaylists(database, adapter, vault, scheduler, clock); modules.push(result); return result;
   }
   return { database, adapter, roomId, module, authorizationId, vault, dbPath, keyPath };
 }
@@ -129,7 +131,8 @@ it("重开 SQLite 后仍等待持久的下一次启动时间，不突发请求",
   expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
   first.stop(); await first.settle();
   const reopened = openDatabase(f.dbPath);
-  const restarted = new PublicPlaylists(reopened, f.adapter, f.vault);
+  const restartedScheduler = new UpstreamScheduler(reopened);
+  const restarted = new PublicPlaylists(reopened, f.adapter, f.vault, restartedScheduler);
   try {
     restarted.start(); await vi.advanceTimersByTimeAsync(999);
     expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
@@ -430,10 +433,12 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
   const f = fixture(); const service = f.module();
   const accepted = service.create("owner", f.roomId, { idempotencyKey: v7() });
   const modulePath = fileURLToPath(new URL("./public-playlists.ts", import.meta.url));
+  const schedPath = fileURLToPath(new URL("./upstream-scheduling.ts", import.meta.url));
   const databasePath = fileURLToPath(new URL("../db/database.ts", import.meta.url));
   const vaultPath = fileURLToPath(new URL("../netease/credentials.ts", import.meta.url));
   const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
     import { PublicPlaylists } from ${JSON.stringify(modulePath)};
+    import { UpstreamScheduler } from ${JSON.stringify(schedPath)};
     import { openDatabase } from ${JSON.stringify(databasePath)};
     import { CredentialVault } from ${JSON.stringify(vaultPath)};
     const adapter = {
@@ -443,7 +448,9 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
         return new Promise(() => {});
       }, async assertVendorIntegrity() {}, async dispose() {}
     };
-    new PublicPlaylists(openDatabase(${JSON.stringify(f.dbPath)}), adapter, new CredentialVault(${JSON.stringify(f.keyPath)})).start();
+    const db = openDatabase(${JSON.stringify(f.dbPath)});
+    const scheduler = new UpstreamScheduler(db);
+    new PublicPlaylists(db, adapter, new CredentialVault(${JSON.stringify(f.keyPath)}), scheduler).start();
   `], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let stderr = ""; child.stderr!.on("data", chunk => { stderr += chunk.toString(); });
   try {
@@ -470,7 +477,8 @@ it("空泵正在退出时接受的新命令仍会推进", async () => {
 
 it("两个真实 SQLite 连接同时受理同房间，仅一份操作且所有键指向该操作", async () => {
   const f = fixture(); const first = f.module(); const anotherDatabase = openDatabase(f.dbPath);
-  const second = new PublicPlaylists(anotherDatabase, f.adapter, f.vault);
+  const secondScheduler = new UpstreamScheduler(anotherDatabase);
+  const second = new PublicPlaylists(anotherDatabase, f.adapter, f.vault, secondScheduler);
   try {
     const keys = Array.from({ length: 12 }, () => v7());
     const accepted = await Promise.all(keys.map(async (idempotencyKey, index) => (index % 2 ? first : second).create("owner", f.roomId, { idempotencyKey })));
