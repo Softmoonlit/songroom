@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { uuidv7 } from "./contracts.js";
+import { commandKey, uuidv7 } from "./contracts.js";
 
-export const publicPlaylistCreateCommand = z.strictObject({ idempotencyKey: uuidv7 });
+export const publicPlaylistCreateCommand = commandKey;
 export const publicPlaylistOperation = z.strictObject({
   id: uuidv7,
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"])

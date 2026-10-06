@@ -22,8 +22,6 @@ const disabledMessages = {
   PUBLIC_PLAYLIST_EXISTS: "此房间已经绑定公共歌单。",
   OPERATION_PENDING: "已有未完成的创建操作，不能再次创建。"
 };
-// Only explicit local rejections justify discarding a command whose response was uncertain.
-const localRejections = new Set(["ROOM_OWNER_REQUIRED", "ROOM_UNAVAILABLE", "SESSION_REQUIRED", "NETEASE_AUTH_REQUIRED", "PUBLIC_PLAYLIST_EXISTS", "INVALID_INPUT", "INVALID_ID", "IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_KEY_EXPIRED"]);
 
 export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
   const client = useQueryClient();
@@ -50,7 +48,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       if (controller.current?.signal.aborted) return;
       setMessage(errorMessage(failure));
       if (failure instanceof RoomRequestError) {
-        if (localRejections.has(failure.code)) setCommand(null);
+        // 过期键已被服务端拒绝；其他失败保留原键，避免响应丢失后产生新的创建意图。
+        if (failure.code === "IDEMPOTENCY_KEY_EXPIRED") setCommand(null);
         void client.invalidateQueries({ queryKey });
       }
     }

@@ -112,7 +112,7 @@ export class PublicPlaylists {
         const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
         if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
         if (["sending", "unknown"].includes(detail.step)) this.#status(row.id, "awaitingConfirmation");
-        else if (detail.step === "confirming" || row.status === "processing" || row.status === "waitingAuthorization") this.#status(row.id, "queued");
+        else if (row.status !== "waitingAuthorization" && (detail.step === "confirming" || row.status === "processing")) this.#status(row.id, "queued");
       }
     });
     this.#kick();

@@ -98,7 +98,7 @@ it.each(["AUTH_UNAVAILABLE", "ACCOUNT_EMPTY", "ACCOUNT_MISMATCH"] as const)("身
   expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
 });
 
-it("凭据解密失败及返回身份不一致都不发送", async () => {
+it("凭据解密失败后等待授权，重启不会恢复上游调用", async () => {
   const f = fixture(); const service = f.module();
   f.database.update(neteaseAuthorization).set({ credentials: "invalid" }).run();
   service.create("owner", f.roomId, { idempotencyKey: v7() }); service.start(); await service.settle();
@@ -107,6 +107,17 @@ it("凭据解密失败及返回身份不一致都不发送", async () => {
   service.stop();
   f.database.update(neteaseAuthorization).set({ credentials: f.vault.encrypt("cookie", { authorizationId: f.authorizationId, accountId: "cloud-owner", generation: 1 }) }).run();
   f.adapter.identity = async () => ({ ok: true, data: { accountId: "different", name: "other" } });
+  const restarted = f.module(); restarted.start(); await restarted.settle();
+  expect(restarted.read("owner", f.roomId).operation?.status).toBe("waitingAuthorization");
+  expect(f.adapter.inputs).toEqual([]);
+});
+
+it("身份不一致后保持等待授权，重启不自动核验或创建", async () => {
+  const f = fixture(); const service = f.module();
+  f.adapter.identity = async () => ({ ok: true, data: { accountId: "different", name: "other" } });
+  service.create("owner", f.roomId, { idempotencyKey: v7() }); service.start(); await service.settle(); service.stop();
+  expect(service.read("owner", f.roomId).operation?.status).toBe("waitingAuthorization");
+  f.adapter.identity = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "owner" } });
   const restarted = f.module(); restarted.start(); await restarted.settle();
   expect(restarted.read("owner", f.roomId).operation?.status).toBe("waitingAuthorization");
   expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
