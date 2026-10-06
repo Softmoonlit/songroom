@@ -6,7 +6,7 @@ import { readCommandResource, recordCommandResource } from "../commands/receipts
 import type { AppDatabase } from "../db/database.js";
 import { joinApplication, retiredRoomInvite, room, roomInvite, roomMembership } from "../db/schema.js";
 import {
-  inviteCode, inviteResetCommand, joinApplicationCommand, withdrawApplicationCommand, applicationDecisionCommand,
+  inviteCode, inviteResetCommand, joinApplicationCommand, withdrawApplicationCommand, applicationDecisionCommand, type approvalDisabledReason,
   type InviteResetCommand, type InviteView, type JoinApplicationCommand, type JoinApplicationView, type roomApplicationsView
 } from "../shared/invite-contracts.js";
 import { BusinessError } from "../shared/errors.js";
@@ -56,7 +56,7 @@ export class Invites {
   }
 
   #applicationRows(userId: string, applicationId?: string) {
-    return this.database.select({ id: joinApplication.id, room: { id: room.id, name: room.name },
+    return this.database.select({ version: room.version, id: joinApplication.id, room: { id: room.id, name: room.name },
       nickname: joinApplication.nickname, status: joinApplication.status })
       .from(joinApplication).innerJoin(room, eq(room.id, joinApplication.roomId))
       .where(and(eq(joinApplication.userId, userId), applicationId ? eq(joinApplication.id, applicationId) : eq(joinApplication.status, "pending")))
@@ -98,10 +98,10 @@ export class Invites {
     }, { behavior: "immediate" });
   }
 
-  #assertOwner(userId: string, roomId: string, code = "APPLICATION_FORBIDDEN") {
+  #assertOwner(userId: string, roomId: string) {
     const owner = this.database.select({ ownerUserId: room.ownerUserId }).from(room).where(eq(room.id, roomId)).get();
     if (!owner || owner.ownerUserId !== userId || !this.#isMember(userId, roomId)) {
-      throw new BusinessError(404, code, "只有当前房主可管理该房间申请");
+      throw new BusinessError(404, "APPLICATION_FORBIDDEN", "只有当前房主可管理该房间申请");
     }
   }
 
@@ -113,7 +113,7 @@ export class Invites {
     return application;
   }
 
-  #approvalDisabledReason(application: typeof joinApplication.$inferSelect): string | null {
+  #approvalDisabledReason(application: typeof joinApplication.$inferSelect): z.infer<typeof approvalDisabledReason> | null {
     const invitation = this.database.select().from(roomInvite).where(eq(roomInvite.roomId, application.roomId)).get();
     if (!invitation || invitation.generation !== application.inviteGeneration) return "INVITE_RESET";
     if (this.#isMember(application.userId, application.roomId)) return "ALREADY_MEMBER";
@@ -129,11 +129,11 @@ export class Invites {
       this.#assertOwner(userId, roomId);
       const applications = this.database.select().from(joinApplication)
         .where(and(eq(joinApplication.roomId, roomId), eq(joinApplication.status, "pending"))).orderBy(asc(joinApplication.id)).all();
-      return { applications: applications.map((application): z.infer<typeof roomApplicationsView>["applications"][number] => {
+      const version = this.database.select({ value: room.version }).from(room).where(eq(room.id, roomId)).get()!.value;
+      return { version, applications: applications.map((application): z.infer<typeof roomApplicationsView>["applications"][number] => {
         const reason = this.#approvalDisabledReason(application);
         return { id: application.id, nickname: application.nickname,
-          // 昵称冲突仍可点击批准，以明确结束该申请并要求申请人重新提交。
-          allowedActions: reason && reason !== "NICKNAME_TAKEN" ? ["rejectApplication" as const] : ["approveApplication" as const, "rejectApplication" as const],
+          allowedActions: reason ? ["rejectApplication"] : ["approveApplication", "rejectApplication"],
           disabledReasons: reason ? { approveApplication: reason } : {} };
       }), allowedActions: ["reviewApplications"], disabledReasons: {} };
     }, { behavior: "immediate" });
@@ -147,7 +147,8 @@ export class Invites {
       const replay = readCommandResource(tx, prepared, this.now());
       if (replay) return this.readApplication(application.userId, replay);
       if (application.status !== "pending") throw new BusinessError(409, "APPLICATION_NOT_PENDING", "申请已处理，请刷新待审批列表");
-      let status: typeof joinApplication.$inferSelect.status = "rejected";
+      let status: typeof joinApplication.$inferSelect.status = command.decision === "reject" && this.#approvalDisabledReason(application) === "NICKNAME_TAKEN"
+        ? "nickname_conflict" : "rejected";
       if (command.decision === "approve") {
         const reason = this.#approvalDisabledReason(application);
         if (reason === "NICKNAME_TAKEN") status = "nickname_conflict";

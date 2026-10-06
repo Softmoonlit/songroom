@@ -4,8 +4,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:net";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeAll, expect, it } from "vitest";
+import { assertRuntime } from "./config.js";
 import { initializeDatabase } from "./db/database.js";
+
+// 子进程使用 process.execPath；先明确运行时要求，避免将版本拒绝误判为缺库等启动行为。
+beforeAll(() => { assertRuntime(); });
 
 const roots: string[] = [];
 const children: ReturnType<typeof spawn>[] = [];
@@ -37,12 +41,25 @@ function runServer(config: string) {
   });
   children.push(child);
   let output = "";
-  const exited = once(child, "exit").then(([code, signal]) => ({ code, signal, output }));
+  const exited = once(child, "close").then(([code, signal]) => ({ code, signal, output }));
   const ready = new Promise<void>((resolve, reject) => {
     child.stdout!.on("data", chunk => { output += chunk.toString(); if (output.includes('"state":"ready"')) resolve(); });
     child.stderr!.on("data", chunk => { output += chunk.toString(); });
     child.once("error", reject);
-    child.once("exit", () => reject(new Error("process exited before readiness")));
+    child.once("close", (code, signal) => {
+      // 仅显示生命周期状态与本测试关注的稳定码，不转发原始日志、配置或凭据。
+      const allowedStates = new Set(["starting", "ready", "draining", "stopped", "failed"]);
+      const allowedCodes = new Set(["STARTUP_FAILED", "EADDRINUSE", "ENOENT"]);
+      const states = output.split("\n").flatMap(line => {
+        try {
+          const entry = JSON.parse(line) as { state?: unknown; code?: unknown };
+          return typeof entry.state === "string" && allowedStates.has(entry.state)
+            ? [{ state: entry.state, code: typeof entry.code === "string" && allowedCodes.has(entry.code) ? entry.code : undefined }]
+            : [];
+        } catch { return []; }
+      });
+      reject(new Error(`process exited before readiness: ${JSON.stringify({ code, signal, states })}`));
+    });
   });
   void ready.catch(() => undefined);
   return { child, ready, exited };
@@ -65,6 +82,9 @@ it("真实服务进程监听冲突明确失败，SIGTERM正常关闭，重启保
 it("真实服务缺库启动失败，不隐式初始化", async () => {
   const fixtureData = await fixture(); const database = path.join(fixtureData.root, "songroom.sqlite");
   await fs.unlink(database);
-  const launched = runServer(fixtureData.config); expect((await launched.exited).code).toBe(1);
+  const launched = runServer(fixtureData.config);
+  const result = await launched.exited;
+  expect(result.code).toBe(1);
+  expect(result.output).toContain('"state":"failed","code":"ENOENT"');
   await expect(fs.access(database)).rejects.toThrow();
 }, 10_000);

@@ -7,7 +7,7 @@ import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
 import type { SessionPrincipal } from "../auth.js";
-import type { RoomCreateCommand, RoomCreateView, RoomSummary } from "../shared/room-contracts.js";
+import type { RoomCreateCommand, RoomCreateView, RoomSummary, RoomMember, roomShellView, roomListView } from "../shared/room-contracts.js";
 import { roomCreateCommand, roomCreateDisabledReason, roomRenameCommand, nicknameRenameCommand } from "../shared/room-contracts.js";
 import type { z } from "zod";
 import { BusinessError } from "../shared/errors.js";
@@ -18,7 +18,7 @@ export function assertRoomCapacity(counts: { owned: number; joined: number; tota
   if (counts.total >= 20) throw new BusinessError(409, "GLOBAL_ROOM_LIMIT", "全站房间数量已达上限");
 }
 
-function identityPermissions(role: "owner" | "roommate"): { allowedActions: ("renameRoom" | "renameNickname" | "reviewApplications" | "readInvite")[]; disabledReasons: Record<string, string> } {
+function identityPermissions(role: "owner" | "roommate"): Pick<z.infer<typeof roomShellView>, "allowedActions" | "disabledReasons"> {
   return role === "owner"
     ? { allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} }
     : { allowedActions: ["renameNickname"],
@@ -54,8 +54,9 @@ export class Rooms {
       .where(and(eq(roomMembership.userId, userId), roomId ? eq(room.id, roomId) : undefined)).orderBy(asc(room.id));
   }
 
-  readList(userId: string) {
-    return { rooms: this.#visible(userId).all().map(({ version: _version, ...summary }) => summary) };
+  readList(userId: string): z.infer<typeof roomListView> {
+    return { rooms: this.#visible(userId).all().map(summary => ({ ...summary, allowedActions: ["enterRoom"], disabledReasons: {} })),
+      allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} };
   }
 
   readShell(userId: string, roomId: string) {
@@ -73,7 +74,7 @@ export class Rooms {
       role: sql<"owner" | "roommate">`CASE WHEN ${room.ownerUserId} = ${roomMembership.userId} THEN 'owner' ELSE 'roommate' END`,
       isSelf: sql<boolean>`(${roomMembership.userId} = ${userId})`.mapWith(Boolean)
     }).from(roomMembership).innerJoin(room, eq(room.id, roomMembership.roomId)).where(eq(roomMembership.roomId, roomId)).orderBy(asc(roomMembership.id)).all();
-    return { members: members.map((member): import("../shared/room-contracts.js").RoomMember => ({ ...member,
+    return { version: shell.version, members: members.map((member): RoomMember => ({ ...member,
       allowedActions: member.isSelf ? ["renameNickname" as const] : [],
       disabledReasons: member.isSelf ? {} : { renameNickname: "SELF_ONLY" }
     })), ...identityPermissions(shell.room.role) };

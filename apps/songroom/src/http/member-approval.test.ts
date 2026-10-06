@@ -96,7 +96,7 @@ it("房主基本批准后，申请人无需网易云绑定即可作为室友读�
   const approved = await application(await decide(config, owner, id, pending.id));
   expect(approved).toMatchObject({ id: pending.id, nickname: "新室友", status: "approved", allowedActions: [] });
   expect(await (await request(config, `/api/join-applications/${pending.id}`, applicant)).json()).toEqual(approved);
-  expect(await (await request(config, "/api/rooms", applicant)).json()).toEqual({ rooms: [{ id, name: "受邀宿舍", nickname: "新室友", role: "roommate" }] });
+  expect(await (await request(config, "/api/rooms", applicant)).json()).toEqual({ rooms: [{ id, name: "受邀宿舍", nickname: "新室友", role: "roommate", version: approved.version, allowedActions: ["enterRoom"], disabledReasons: {} }], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
   expect(await (await request(config, `/api/rooms/${id}`, applicant)).json()).toMatchObject({ room: { id, role: "roommate", nickname: "新室友" }, pendingCount: null });
   expect(await members(config, applicant, id)).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: expect.any(String), nickname: "房主", role: "owner", isSelf: false }),
@@ -108,10 +108,10 @@ it("待审批 read model 和房间壳返回角色动作、禁用原因和当前�
   const { config, owner, applicant, id, pending } = await setup();
   const response = await request(config, `/api/rooms/${id}/applications`, owner);
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ applications: [{ id: pending.id, nickname: "新室友", allowedActions: ["approveApplication", "rejectApplication"], disabledReasons: {} }], allowedActions: ["reviewApplications"], disabledReasons: {} });
+  expect(await response.json()).toEqual({ version: 2, applications: [{ id: pending.id, nickname: "新室友", allowedActions: ["approveApplication", "rejectApplication"], disabledReasons: {} }], allowedActions: ["reviewApplications"], disabledReasons: {} });
   expect(await (await request(config, `/api/rooms/${id}`, owner)).json()).toMatchObject({ pendingCount: 1, allowedActions: expect.arrayContaining(["renameRoom", "renameNickname", "reviewApplications", "readInvite"]), disabledReasons: {} });
   await application(await decide(config, owner, id, pending.id, "reject"));
-  expect(await (await request(config, `/api/rooms/${id}/applications`, owner)).json()).toEqual({ applications: [], allowedActions: ["reviewApplications"], disabledReasons: {} });
+  expect(await (await request(config, `/api/rooms/${id}/applications`, owner)).json()).toEqual({ version: 3, applications: [], allowedActions: ["reviewApplications"], disabledReasons: {} });
   expect(await (await request(config, `/api/rooms/${id}`, owner)).json()).toMatchObject({ pendingCount: 0 });
   expect((await request(config, `/api/rooms/${id}`, applicant)).status).toBe(404);
 });
@@ -270,7 +270,7 @@ it("成员容量包含房主：九名成员后并发批准只剩一个名额，�
   expect(await application(await request(config, `/api/join-applications/${candidates[blockedIndex]!.pending.id}`, candidates[blockedIndex]!.cookie))).toMatchObject({ status: "pending" });
   const review = await request(config, `/api/rooms/${id}/applications`, owner);
   expect(review.status).toBe(200);
-  expect(await review.json()).toEqual({ applications: [{ id: candidates[blockedIndex]!.pending.id, nickname: `最后${blockedIndex}`, allowedActions: ["rejectApplication"], disabledReasons: { approveApplication: "ROOM_MEMBER_LIMIT" } }], allowedActions: ["reviewApplications"], disabledReasons: {} });
+  expect(await review.json()).toEqual({ version: 20, applications: [{ id: candidates[blockedIndex]!.pending.id, nickname: `最后${blockedIndex}`, allowedActions: ["rejectApplication"], disabledReasons: { approveApplication: "ROOM_MEMBER_LIMIT" } }], allowedActions: ["reviewApplications"], disabledReasons: {} });
   expect(await application(await decide(config, owner, id, candidates[blockedIndex]!.pending.id, "reject"))).toMatchObject({ status: "rejected" });
 }, 30_000);
 
@@ -492,4 +492,27 @@ it("批准、拒绝、重置与撤回四路竞态只留下一个终态和一致�
   expect(await (await request(config, `/api/rooms/${id}`, owner)).json()).toMatchObject({ pendingCount: 0 });
   expect(await (await request(config, `/api/rooms/${id}/applications`, owner)).json()).toMatchObject({ applications: [] });
   await expectCode(await decide(config, owner, id, pending.id), "APPLICATION_NOT_PENDING");
+});
+
+it("已知昵称冲突只允许拒绝，终结后申请人可重新提交；各身份视图返回当前聚合版本", async () => {
+  const { config, owner, applicant, id, invitation, pending } = await setup();
+  const renamed = await (await request(config, `/api/rooms/${id}/nickname`, owner, { idempotencyKey: v7(), nickname: pending.nickname })).json();
+  expect(renamed.version).toBe(pending.version + 1);
+  const review = await (await request(config, `/api/rooms/${id}/applications`, owner)).json();
+  expect(review).toEqual({ version: renamed.version,
+    applications: [{ id: pending.id, nickname: pending.nickname, allowedActions: ["rejectApplication"], disabledReasons: { approveApplication: "NICKNAME_TAKEN" } }],
+    allowedActions: ["reviewApplications"], disabledReasons: {} });
+  const memberView = await (await request(config, `/api/rooms/${id}/members`, owner)).json();
+  expect(memberView.version).toBe(renamed.version);
+  expect(await application(await request(config, `/api/join-applications/${pending.id}`, applicant))).toMatchObject({ version: renamed.version, status: "pending" });
+  const conflict = await application(await decide(config, owner, id, pending.id, "reject"));
+  expect(conflict).toMatchObject({ version: renamed.version + 1, status: "nickname_conflict", allowedActions: [], disabledReasons: { withdrawApplication: "APPLICATION_NOT_PENDING" } });
+  const next = await application(await apply(config, applicant, invitation.code, "重新选择"));
+  expect(next).toMatchObject({ version: conflict.version + 1, status: "pending" });
+  expect(next.id).not.toBe(pending.id);
+  expect(await (await request(config, "/api/rooms", owner)).json()).toEqual({
+    rooms: [{ id, name: "受邀宿舍", role: "owner", nickname: pending.nickname, version: next.version, allowedActions: ["enterRoom"], disabledReasons: {} }],
+    allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {}
+  });
+  expect(await members(config, owner, id)).toHaveLength(1);
 });

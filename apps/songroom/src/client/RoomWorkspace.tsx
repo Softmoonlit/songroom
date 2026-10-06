@@ -101,7 +101,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         <section hidden={active !== "settings"} aria-label="房间设置">
           <h2>房间设置</h2>
           {query.data.allowedActions.includes("renameRoom") && <IdentityForm sessionId={sessionId} roomId={roomId} field="name" current={room.name} disabledReason={query.data.disabledReasons.renameRoom} />}
-          {query.data.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={room.nickname} disabledReason={query.data.disabledReasons.renameNickname} />}
+          {query.data.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={room.nickname} />}
           <dl className="netease-identity">
             <div>
               <dt>房间名称</dt>

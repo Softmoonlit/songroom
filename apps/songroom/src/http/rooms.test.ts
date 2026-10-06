@@ -57,7 +57,7 @@ it("未登录不可查看房间或建房，未授权账号不能建房", async (
   const { config } = await fixture();
   for (const url of ["/api/rooms", "/api/rooms/create-view", `/api/rooms/${v7()}`]) expect((await request(config, url)).status).toBe(401);
   const cookie = await signUp(config, "unbound@example.com");
-  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
   expect(await (await request(config, "/api/rooms/create-view", cookie)).json()).toMatchObject({ authorization: null, allowedActions: [], disabledReason: "NETEASE_AUTH_REQUIRED" });
   const rejected = await request(config, "/api/rooms", cookie, command(v7()));
   expect(rejected.status).toBe(409);
@@ -83,14 +83,14 @@ it("有效授权建房只建立房主成员，重复名称可建、查询隔离�
   expect((await second.json()).id).not.toBe(summary.id);
   expect(adapter.inputs.slice(before).map(input => input.operation)).toEqual(["identity", "identity"]);
   expect(await (await request(config, "/api/rooms", owner)).json()).toMatchObject({ rooms: [{ id: summary.id }, { name: "同名宿舍" }] });
-  expect(await (await request(config, "/api/rooms", other)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", other)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
   for (const suffix of ["", "/members"]) {
     expect((await request(config, `/api/rooms/${summary.id}${suffix}`, other)).status).toBe(404);
     expect((await request(config, `/api/rooms/${v7()}${suffix}`, owner)).status).toBe(404);
   }
   expect(await (await request(config, `/api/rooms/${summary.id}`, owner)).json()).toMatchObject({ room: { id: summary.id, role: "owner" }, version: 1 });
   const members = await request(config, `/api/rooms/${summary.id}/members`, owner);
-  expect(await members.json()).toEqual({ members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} });
+  expect(await members.json()).toEqual({ version: 1, members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} });
   const body = await (await request(config, `/api/rooms/${summary.id}/members`, owner)).text();
   expect(body).not.toMatch(/email|ownerUserId|accountId|credentials|invitation|code/);
   await app.close();
@@ -154,7 +154,7 @@ it("建房拒绝伪造房主、角色、上游账号或别人的本地授权", a
   const foreign = await request(config, "/api/rooms", cookie, command(foreignId));
   expect(foreign.status).toBe(409);
   expect(await foreign.json()).toMatchObject({ error: { code: "AUTHORIZATION_CHANGED" } });
-  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
 });
 
 it.each(["AUTH_UNAVAILABLE", "RATE_LIMITED", "NETWORK_ERROR"] as const)("建房重新核实身份，%s 不创建房间", async code => {
@@ -165,7 +165,7 @@ it.each(["AUTH_UNAVAILABLE", "RATE_LIMITED", "NETWORK_ERROR"] as const)("建房�
   const response = await request(config, "/api/rooms", cookie, command(authorizationId));
   expect(response.status).toBe(502);
   expect(await response.json()).toMatchObject({ error: { code } });
-  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
 });
 
 it("建房核实出的真实身份不匹配时保留原绑定并拒绝建房", async () => {
@@ -177,7 +177,7 @@ it("建房核实出的真实身份不匹配时保留原绑定并拒绝建房", a
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ error: { code: "ACCOUNT_MISMATCH" } });
   expect((await (await request(config, "/api/netease/binding", cookie)).json()).binding.id).toBe(authorizationId);
-  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", cookie)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
 });
 
 it("在途身份核实期间会话退出，晚到结果不能建房", async () => {
@@ -195,7 +195,7 @@ it("在途身份核实期间会话退出，晚到结果不能建房", async () =
   expect((await pending).status).toBe(401);
   const login = await request(config, "/api/auth/sign-in/email", undefined, { email: "late-room@example.com", password: "correct horse battery staple" });
   const device = login.headers.getSetCookie()[0]!.split(";", 1)[0]!;
-  expect(await (await request(config, "/api/rooms", device)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", device)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
 });
 
 it("房间名和昵称按 NFC 与码点长度校验，控制字符和空白输入被拒绝", async () => {

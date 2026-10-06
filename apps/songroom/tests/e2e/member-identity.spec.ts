@@ -11,20 +11,32 @@ async function workspace(page: Page, role = "owner", count: number | null = 10) 
     session: { id: "identity-session", expiresAt: "2099-01-01T00:00:00Z" },
     user: { id: "identity-user", name: "账号称呼", email: "private@example.com", emailVerified: false }
   } }));
-  await page.route("**/api/rooms", route => route.fulfill({ json: { rooms: [state.room] } }));
+  await page.route("**/api/rooms", route => route.fulfill({ json: { rooms: [{ ...state.room, version: state.version, allowedActions: ["enterRoom"], disabledReasons: {} }], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} } }));
   await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: state }));
   await page.route(`**/api/rooms/${roomId}/members`, route => route.fulfill({ json: {
-    members: [{ id: memberId, nickname: state.room.nickname, role, isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }],
+    version: state.version, members: [{ id: memberId, nickname: state.room.nickname, role, isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }],
     allowedActions: state.allowedActions.filter(action => action !== "renameRoom"), disabledReasons: {}
   } }));
   await page.route(`**/api/rooms/${roomId}/invite`, route => route.fulfill({ json: {
-    code: "Abcde_1234", generation: 1, version: 1, pendingCount: count ?? 0,
+    code: "Abcde_1234", generation: 1, version: state.version, pendingCount: state.pendingCount ?? 0,
     allowedActions: ["copyInvite", "resetInvite"], disabledReasons: {}
   } }));
   await page.route(`**/api/rooms/${roomId}/applications`, route => route.fulfill({ json: {
-    applications: [], allowedActions: ["reviewApplications"], disabledReasons: {}
+    version: state.version, applications: [], allowedActions: ["reviewApplications"], disabledReasons: {}
   } }));
   return state;
+}
+
+function readVersions(page: Page) {
+  const versions = { shell: [] as number[], members: [] as number[], invite: [] as number[], applications: [] as number[] };
+  page.on("response", async response => {
+    if (response.request().method() !== "GET") return;
+    const path = new URL(response.url()).pathname;
+    const resource = path === `/api/rooms/${roomId}` ? "shell"
+      : (["members", "invite", "applications"] as const).find(item => path === `/api/rooms/${roomId}/${item}`);
+    if (resource) versions[resource].push((await response.json()).version);
+  });
+  return versions;
 }
 
 test("房间壳显示当前昵称和9+待审批角标，室友没有审批或邀请", async ({ page }) => {
@@ -51,14 +63,14 @@ for (const [decision, status, result] of [
     const state = await workspace(page, "owner", 1);
     let pending = true;
     await page.route(`**/api/rooms/${roomId}/applications`, route => route.fulfill({ json: {
-      applications: pending ? [{ id: applicationId, nickname: "新室友", allowedActions: ["approveApplication", "rejectApplication"], disabledReasons: {} }] : [],
+      version: state.version, applications: pending ? [{ id: applicationId, nickname: "新室友", allowedActions: ["approveApplication", "rejectApplication"], disabledReasons: {} }] : [],
       allowedActions: ["reviewApplications"], disabledReasons: {}
     } }));
     await page.route(`**/api/rooms/${roomId}/applications/${applicationId}/decision`, route => {
       expect(route.request().postDataJSON()).toEqual({ idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/), decision });
       pending = false;
       state.pendingCount = 0;
-      return route.fulfill({ json: { id: applicationId, room: { id: roomId, name: state.room.name }, nickname: "新室友", status, allowedActions: [], disabledReasons: {} } });
+      return route.fulfill({ json: { version: state.version, id: applicationId, room: { id: roomId, name: state.room.name }, nickname: "新室友", status, allowedActions: [], disabledReasons: {} } });
     });
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: /房间成员/ }).click();
@@ -72,24 +84,39 @@ for (const [decision, status, result] of [
   });
 }
 
-test("设置修改房名和本人昵称，输入规范化后壳及成员同步更新", async ({ page }) => {
+test("房名和昵称修改后同步聚合版本，不重复读取已写入的房间壳", async ({ page }) => {
   const state = await workspace(page, "owner", 0);
-  for (const [path, field, value] of [["name", "name", "新音乐间"], ["nickname", "nickname", "é"]] as const) {
-    await page.route(`**/api/rooms/${roomId}/${path}`, route => {
+  const versions = readVersions(page);
+  for (const [field, value] of [["name", "新音乐间"], ["nickname", "é"]] as const) {
+    await page.route(`**/api/rooms/${roomId}/${field}`, route => {
       expect(route.request().postDataJSON()).toEqual({ idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/), [field]: value });
       state.room[field] = value;
+      state.version += 1;
       return route.fulfill({ json: state });
     });
   }
   await page.goto(`/rooms/${roomId}`);
-  await page.getByRole("button", { name: "房间设置", exact: true }).click();
-  await page.getByLabel("房间名称", { exact: true }).fill(" 新音乐间 ");
-  await page.getByRole("button", { name: "保存房间名称", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "新音乐间", exact: true })).toBeVisible();
-  await page.getByLabel("我的房间昵称", { exact: true }).fill(" e\u0301 ");
-  await page.getByRole("button", { name: "保存我的昵称", exact: true }).click();
-  await expect(page.getByText("当前昵称：é", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
+  await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
+  await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
+  await expect.poll(() => versions)
+    .toEqual({ shell: [1], members: [1], invite: [1], applications: [1] });
+  for (const [label, input, button, message, version] of [
+    ["房间名称", " 新音乐间 ", "保存房间名称", "房间名称已更新。", 2],
+    ["我的房间昵称", " e\u0301 ", "保存我的昵称", "我的房间昵称已更新。", 3]
+  ] as const) {
+    await page.getByRole("button", { name: "房间设置", exact: true }).click();
+    await page.getByLabel(label, { exact: true }).fill(input);
+    await page.getByRole("button", { name: button, exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: message })).toHaveText(message);
+    await page.getByRole("button", { name: "房间成员", exact: true }).click();
+    await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
+    // 每个失效模型都应恰好读取一次当前聚合版本，已写入的房间壳不重复读取。
+    await expect.poll(() => versions)
+      .toEqual({ shell: [1], members: Array.from({ length: version }, (_, index) => index + 1), invite: Array.from({ length: version }, (_, index) => index + 1), applications: Array.from({ length: version }, (_, index) => index + 1) });
+  }
+  await expect(page.getByRole("heading", { name: "新音乐间", exact: true })).toBeVisible();
+  await expect(page.getByText("当前昵称：é", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "查看成员：é", exact: true }).click();
   await expect(page.getByRole("region", { name: "成员详情" })).toContainText("é");
 });
@@ -98,7 +125,7 @@ for (const [status, text] of [["approved", "申请已获批"], ["rejected", "房
   test(`申请人看到 ${status} 明确状态，获批才显示进入房间`, async ({ page }) => {
     await workspace(page, "roommate", null);
     await page.route(`**/api/join-applications/${applicationId}`, route => route.fulfill({ json: {
-      id: applicationId, room: { id: roomId, name: "审批音乐间" }, nickname: "小林", status, allowedActions: [], disabledReasons: {}
+      version: 1, id: applicationId, room: { id: roomId, name: "审批音乐间" }, nickname: "小林", status, allowedActions: [], disabledReasons: {}
     } }));
     await page.goto(`/application/${applicationId}`);
     await expect(page.getByRole("status")).toHaveText(text);
@@ -122,9 +149,9 @@ for (const count of [0, 1, 9]) {
 }
 
 test("审批容量不足仅提供拒绝并展示中文禁用原因", async ({ page }) => {
-  await workspace(page, "owner", 1);
+  const state = await workspace(page, "owner", 1);
   await page.route(`**/api/rooms/${roomId}/applications`, route => route.fulfill({ json: {
-    applications: [{ id: applicationId, nickname: "新室友", allowedActions: ["rejectApplication"], disabledReasons: { approveApplication: "ROOM_MEMBER_LIMIT" } }],
+    version: state.version, applications: [{ id: applicationId, nickname: "新室友", allowedActions: ["rejectApplication"], disabledReasons: { approveApplication: "ROOM_MEMBER_LIMIT" } }],
     allowedActions: ["reviewApplications"], disabledReasons: {}
   } }));
   await page.goto(`/rooms/${roomId}`);
@@ -151,13 +178,15 @@ test("室友只改本人昵称，竞态冲突保留输入并显示服务端中�
 
 test("邀请重置后刷新待审批角标和打开的审批列表", async ({ page }) => {
   const state = await workspace(page, "owner", 2);
+  const versions = readVersions(page);
   let reset = false;
   await page.route(`**/api/rooms/${roomId}/applications`, route => route.fulfill({ json: {
-    applications: reset ? [] : [{ id: applicationId, nickname: "新室友", allowedActions: ["approveApplication", "rejectApplication"], disabledReasons: {} }],
+    version: state.version, applications: reset ? [] : [{ id: applicationId, nickname: "新室友", allowedActions: ["approveApplication", "rejectApplication"], disabledReasons: {} }],
     allowedActions: ["reviewApplications"], disabledReasons: {}
   } }));
   await page.route(`**/api/rooms/${roomId}/invite/reset`, route => {
     reset = true;
+    state.version += 1;
     state.pendingCount = 0;
     return route.fulfill({ json: { code: "NewCode_12", generation: 2, version: 2, pendingCount: 0, allowedActions: ["copyInvite", "resetInvite"], disabledReasons: {} } });
   });
@@ -167,10 +196,16 @@ test("邀请重置后刷新待审批角标和打开的审批列表", async ({ pa
   await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
   await expect(page.getByRole("button", { name: "批准：新室友" })).toBeVisible();
   await page.getByRole("button", { name: "重置邀请", exact: true }).click();
-  await page.getByRole("button", { name: "确认重置邀请", exact: true }).click();
+  const confirm = page.getByRole("button", { name: "确认重置邀请", exact: true });
+  await expect(confirm).toBeEnabled();
+  await expect.poll(() => versions).toEqual({ shell: [1], members: [1], invite: [1, 1], applications: [1] });
+  await confirm.click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByLabel(/待审批申请/)).toHaveCount(0);
   await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
+  // Reset advances the shared room version; members and applications must both refresh.
+  // The reset response supplies invite, so no third invite GET is needed.
+  await expect.poll(() => versions).toEqual({ shell: [1, 2], members: [1, 2], invite: [1, 1], applications: [1, 2] });
 });
 
 test("完整应用：房主审批后室友无需网易云绑定进入房间并修改本人昵称", async ({ page, browser }) => {
@@ -242,4 +277,29 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
   } finally {
     await guestContext.close();
   }
+});
+
+test("已知昵称冲突只允许拒绝，终结结果提示申请人重新提交", async ({ page }) => {
+  const state = await workspace(page, "owner", 1);
+  let pending = true;
+  await page.route(`**/api/rooms/${roomId}/applications`, route => route.fulfill({ json: {
+    version: state.version,
+    applications: pending ? [{ id: applicationId, nickname: "小林", allowedActions: ["rejectApplication"], disabledReasons: { approveApplication: "NICKNAME_TAKEN" } }] : [],
+    allowedActions: ["reviewApplications"], disabledReasons: {}
+  } }));
+  await page.route(`**/api/rooms/${roomId}/applications/${applicationId}/decision`, route => {
+    expect(route.request().postDataJSON()).toEqual({ idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/), decision: "reject" });
+    pending = false;
+    state.pendingCount = 0;
+    return route.fulfill({ json: { version: state.version, id: applicationId, room: { id: roomId, name: state.room.name }, nickname: "小林", status: "nickname_conflict", allowedActions: [], disabledReasons: {} } });
+  });
+  await page.goto(`/rooms/${roomId}`);
+  await page.getByRole("button", { name: "房间成员", exact: true }).click();
+  await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
+  await expect(page.getByRole("button", { name: "批准：小林", exact: true })).toHaveCount(0);
+  await expect(page.getByText("这个房间昵称已被使用，请换一个昵称。", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "拒绝：小林", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("昵称已被占用：小林；申请已终结，请申请人重新提交。");
+  await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
+  await expect(page.getByLabel(/待审批申请/)).toHaveCount(0);
 });

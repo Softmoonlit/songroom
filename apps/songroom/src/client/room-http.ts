@@ -30,9 +30,11 @@ export class RoomRequestError extends Error {
     super(code);
   }
 }
+export function errorMessageForCode(code: string) {
+  return errorMessages[code] ?? "暂时无法完成房间请求，请稍后重试。";
+}
 export function errorMessage(error: unknown) {
-  return error instanceof RoomRequestError && errorMessages[error.code]
-    ? errorMessages[error.code]
+  return error instanceof RoomRequestError ? errorMessageForCode(error.code)
     : "暂时无法完成房间请求，请稍后重试。";
 }
 export function request<T>(

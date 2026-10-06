@@ -86,7 +86,7 @@ it("邀请只供当前房主读取，受邀者只能获知房间名称并创建�
   expect(await inspected.json()).toEqual({ room: { id, name: "受邀宿舍" }, application: null, isMember: false });
   const created = await application(await apply(config, applicant, invitation.code));
   expect(created).toMatchObject({ room: { id, name: "受邀宿舍" }, nickname: "新室友", status: "pending" });
-  expect(await (await request(config, "/api/rooms", applicant)).json()).toEqual({ rooms: [] });
+  expect(await (await request(config, "/api/rooms", applicant)).json()).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
   for (const suffix of ["", "/members", "/invite"]) expect((await request(config, `/api/rooms/${id}${suffix}`, applicant)).status).toBe(404);
   expect(await (await request(config, "/api/join-applications", applicant)).json()).toEqual({ applications: [created] });
   expect(adapter.inputs.length).toBe(before);
@@ -111,8 +111,8 @@ it("同键规范内容返回原申请，另一键或不同内容冲突，多人�
   expect(await (await request(config, `/api/rooms/${id}/invite`, owner)).json()).toMatchObject({ pendingCount: 2, version: 3 });
   const login = await request(config, "/api/auth/sign-in/email", undefined, { email: "idempotent-applicant@example.com", password: "correct horse battery staple" });
   const device = login.headers.getSetCookie()[0]!.split(";", 1)[0]!;
-  expect(await application(await apply(config, device, invitation.code, "é", key))).toEqual(originals[0]);
-  expect(await (await request(config, "/api/join-applications", device)).json()).toEqual({ applications: [originals[0]] });
+  expect(await application(await apply(config, device, invitation.code, "é", key))).toEqual({ ...originals[0], version: 3 });
+  expect(await (await request(config, "/api/join-applications", device)).json()).toEqual({ applications: [{ ...originals[0], version: 3 }] });
 });
 
 it("仅申请人可读取和撤回自己的申请，撤回释放容量且旧操作不能恢复它", async () => {
@@ -166,7 +166,7 @@ it("邀请重置要求当前聚合版本，原子取消旧代申请，旧码失�
   await expectCode(await request(config, "/api/invites/inspect", applicant, { code: invitation.code }), "INVITE_RESET");
   await expectCode(await apply(config, applicant, invitation.code), "INVITE_RESET");
   await expectCode(await apply(config, applicant, invitation.code, "新室友", applyKey), "INVITE_RESET");
-  expect(await (await request(config, `/api/rooms/${id}/members`, owner)).json()).toEqual(originalMembers);
+  expect(await (await request(config, `/api/rooms/${id}/members`, owner)).json()).toEqual({ ...originalMembers, version: reset.version });
   const next = await application(await apply(config, applicant, reset.code));
   expect(next.id).not.toBe(first.id);
   expect(next.status).toBe("pending");
@@ -215,7 +215,7 @@ it("每房间最多十份待处理申请，并发不挤出既有申请，撤回�
   await application(await request(config, `/api/join-applications/${accepted[0]!.application.id}/withdraw`, applicants[accepted[0]!.index], { idempotencyKey: v7() }));
   await application(await apply(config, applicants[rejected[0]!]!, invitation.code));
   await expectCode(await apply(config, applicants[rejected[1]!]!, invitation.code), "ROOM_APPLICATION_LIMIT");
-  for (const remaining of accepted.slice(1)) expect(await (await request(config, `/api/join-applications/${remaining.application.id}`, applicants[remaining.index])).json()).toEqual(remaining.application);
+  for (const remaining of accepted.slice(1)) expect(await (await request(config, `/api/join-applications/${remaining.application.id}`, applicants[remaining.index])).json()).toEqual({ ...remaining.application, version: 13 });
   const latest = inviteView.parse(await (await request(config, `/api/rooms/${id}/invite`, owner)).json());
   const resetResponse = await request(config, `/api/rooms/${id}/invite/reset`, owner, { idempotencyKey: v7(), version: latest.version });
   expect(resetResponse.status).toBe(200);

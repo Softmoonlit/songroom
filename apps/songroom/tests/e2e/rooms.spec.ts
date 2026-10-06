@@ -30,7 +30,7 @@ async function signedIn(page: Page) {
       }
     })
   );
-  await page.route("**/api/rooms", route => route.fulfill({ json: roomListView.parse({ rooms: [room] }) }));
+  await page.route("**/api/rooms", route => route.fulfill({ json: roomListView.parse({ rooms: [{ ...room, version: 1, allowedActions: ["enterRoom"], disabledReasons: {} }], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} }) }));
   await page.route("**/api/rooms/create-view", route => route.fulfill({ json: createView }));
   await page.route(`**/api/rooms/${roomId}`, route =>
     route.fulfill({ json: roomShellView.parse({ room, version: 1, pendingCount: 0, allowedActions: ownerActions, disabledReasons: {} }) })
@@ -38,6 +38,7 @@ async function signedIn(page: Page) {
   await page.route(`**/api/rooms/${roomId}/members`, route =>
     route.fulfill({
       json: roomMembersView.parse({
+        version: 1,
         members: [{ id: memberId, nickname: "小林", role: "owner", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: memberListActions, disabledReasons: {}
       })
     })
@@ -58,7 +59,7 @@ async function signedIn(page: Page) {
 test("确认本地网易云身份后建房，进入公共歌单而不创建云端歌单", async ({ page }) => {
   await signedIn(page);
   await page.route("**/api/rooms", async route => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { rooms: [] } });
+    if (route.request().method() === "GET") return route.fulfill({ json: { rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} } });
     expect(route.request().postDataJSON()).toEqual({
       idempotencyKey: expect.stringMatching(
         /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -102,7 +103,7 @@ for (const width of [320, 900, 1440]) {
       isSelf: false, allowedActions: [], disabledReasons: {}
     }));
     await page.route(`**/api/rooms/${roomId}/members`, route =>
-      route.fulfill({ json: roomMembersView.parse({ members, allowedActions: memberListActions, disabledReasons: {} }) })
+      route.fulfill({ json: roomMembersView.parse({ version: 1, members, allowedActions: memberListActions, disabledReasons: {} }) })
     );
     await page.goto(`/rooms/${roomId}`);
     await expect(page.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
@@ -261,7 +262,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
     nickname: "室友昵称"
   });
   await page.route("**/api/rooms", route =>
-    route.fulfill({ json: roomListView.parse({ rooms: [room, other] }) })
+    route.fulfill({ json: roomListView.parse({ rooms: [room, other].map(summary => ({ ...summary, version: 1, allowedActions: ["enterRoom"], disabledReasons: {} })), allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} }) })
   );
   await page.route(`**/api/rooms/${otherRoomId}`, route =>
     route.fulfill({ json: roomShellView.parse({ room: other, version: 1, pendingCount: null, allowedActions: ["renameNickname"], disabledReasons: {} }) })
@@ -269,6 +270,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
   await page.route(`**/api/rooms/${otherRoomId}/members`, route =>
     route.fulfill({
       json: roomMembersView.parse({
+        version: 1,
         members: [{ id: memberId, nickname: "室友昵称", role: "roommate", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameNickname"], disabledReasons: {}
       })
     })
@@ -302,7 +304,7 @@ test("离开建房页后，晚到的建房成功不会跳转回旧房间", async
     finishDelivery = resolve;
   });
   await page.route("**/api/rooms", async route => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { rooms: [room] } });
+    if (route.request().method() === "GET") return route.fulfill({ json: { rooms: [{ ...room, version: 1, allowedActions: ["enterRoom"], disabledReasons: {} }], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} } });
     await gate;
     await route.fulfill({ status: 200, json: room }).catch(() => undefined);
     finishDelivery();
@@ -384,5 +386,23 @@ for (const width of [320, 900, 1440]) {
     await context.getByRole("button", { name: "返回成员列表" }).click();
     await expect(page.getByRole("heading", { name: "房间成员", exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "成员详情" })).toHaveCount(0);
+  });
+}
+
+
+for (const allowed of [false, true]) {
+  test(`房间列表由 allowedActions ${allowed ? "显示" : "隐藏"}创建、加入和进入入口`, async ({ page }) => {
+    await signedIn(page);
+    await page.route("**/api/rooms", route => route.fulfill({ json: roomListView.parse({
+      rooms: [{ ...room, version: 1, allowedActions: allowed ? ["enterRoom"] : [], disabledReasons: {} }],
+      allowedActions: allowed ? ["openCreateRoom", "openJoin"] : [], disabledReasons: {}
+    }) }));
+    await page.goto("/rooms");
+    await expect(page.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
+    for (const name of ["创建房间", "通过邀请码申请加入", `进入房间：${room.name}`]) {
+      const link = page.getByRole("link", { name, exact: true });
+      if (allowed) await expect(link).toBeVisible();
+      else await expect(link).toHaveCount(0);
+    }
   });
 }

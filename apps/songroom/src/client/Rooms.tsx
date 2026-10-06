@@ -25,10 +25,10 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
         <h1 id="rooms-heading">{accountName} 的房间</h1>
         <p>选择你创建或已加入的房间，和室友一起点歌。</p>
       </div>
-      <Link className="primary-button inline-button" to="/rooms/new">
+      {query.isSuccess && query.data.allowedActions.includes("openCreateRoom") && <Link className="primary-button inline-button" to="/rooms/new">
         创建房间
-      </Link>
-      <Link className="secondary-button inline-button" to="/join">通过邀请码申请加入</Link>
+      </Link>}
+      {query.isSuccess && query.data.allowedActions.includes("openJoin") && <Link className="secondary-button inline-button" to="/join">通过邀请码申请加入</Link>}
       {query.isPending ? (
         <p role="status">正在读取房间列表…</p>
       ) : query.isError ? (
@@ -43,13 +43,13 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
                   {roleLabels[room.role]} · {room.nickname}
                 </p>
               </div>
-              <Link
+              {room.allowedActions.includes("enterRoom") && <Link
                 className="secondary-button inline-button"
                 to={`/rooms/${room.id}`}
                 aria-label={`进入房间：${room.name}`}
               >
                 进入房间
-              </Link>
+              </Link>}
             </li>
           ))}
         </ul>

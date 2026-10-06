@@ -58,7 +58,7 @@ it("同一邀请可重复申请，pending 昵称不占成员昵称且只暴露�
   const b = invites.submit("applicant1", { idempotencyKey: key(), code: "abcdefgh01", nickname: "室友" });
   expect(a.nickname).toBe("室友");
   expect(b.nickname).toBe("室友");
-  expect(invites.inspect("applicant0", "abcdefgh01").application).toEqual(a);
+  expect(invites.inspect("applicant0", "abcdefgh01").application).toEqual({ ...a, version: b.version });
   expect(invites.inspect("applicant2", "abcdefgh01").application).toBeNull();
   expect(invites.inspect("member", "abcdefgh01").isMember).toBe(true);
   expect(database.select().from(roomMembership).all()).toHaveLength(2);
@@ -206,18 +206,19 @@ it("普通室友无邀请管理权限；reset 保留当前成员；已移除成�
   expect(() => rooms.readShell("applicant0", roomId)).toThrowError("ROOM_UNAVAILABLE");
   const reset = invites.reset("owner", roomId, { idempotencyKey: key(), version: invites.readInvite("owner", roomId).version });
   expect(invites.readApplication("applicant0", a.id)).toMatchObject({ status: "cancelled", allowedActions: [] });
-  expect(rooms.readMembers("owner", roomId)).toEqual(members);
+  expect(rooms.readMembers("owner", roomId).members).toEqual(members.members);
+  expect(rooms.readMembers("owner", roomId).version).toBe(reset.version);
   expect(rooms.readShell("member", roomId).room).toMatchObject({ role: "roommate", nickname: "老室友" });
   expect(() => invites.submit("member", { idempotencyKey: key(), code: reset.code, nickname: "老室友" })).toThrowError("ALREADY_MEMBER");
   // 用 fixture 表示该成员已被后续生命周期操作移除；没有 HTTP 后门或业务实现替身。
   database.delete(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "member"))).run();
-  expect(rooms.readList("member")).toEqual({ rooms: [] });
+  expect(rooms.readList("member")).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
   expect(() => rooms.readShell("member", roomId)).toThrowError("ROOM_UNAVAILABLE");
   expect(invites.inspect("member", reset.code)).toMatchObject({ application: null, isMember: false });
   const reapplication = invites.submit("member", { idempotencyKey: key(), code: reset.code, nickname: "新昵称" });
   expect(reapplication).toMatchObject({ nickname: "新昵称", status: "pending", allowedActions: ["withdrawApplication"] });
   expect(invites.readList("member")).toEqual({ applications: [reapplication] });
-  expect(rooms.readList("member")).toEqual({ rooms: [] });
+  expect(rooms.readList("member")).toEqual({ rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} });
   expect(rooms.readMembers("owner", roomId).members).toHaveLength(1);
   expect(() => rooms.readShell("member", roomId)).toThrowError("ROOM_UNAVAILABLE");
   expect(adapter.inputs).toEqual([]);
