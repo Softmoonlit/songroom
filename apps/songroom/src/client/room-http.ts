@@ -1,6 +1,18 @@
 import type { z } from "zod";
 
 export const errorMessages: Record<string, string> = {
+  UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
+  ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员明确恢复。",
+  TARGET_BLOCKED: "当前歌单目标已阻塞，等待权限处理。",
+  RATE_LIMITED: "网易云风控或频繁请求已暂停整个账号，请联系管理员。",
+  ACCOUNT_EMPTY: "网易云返回的账号为空，请房主恢复授权。",
+  TARGET_PERMISSION: "当前歌单目标权限不足，等待处理。",
+  NETWORK_ERROR: "网易云网络请求失败，请查看操作的确认状态。",
+  MODULE_ERROR: "网易云接口执行异常，请查看操作的确认状态。",
+  DEADLINE: "网易云请求超时，请查看操作的确认状态。",
+  PROCESS_ERROR: "网易云请求执行中断，请查看操作的确认状态。",
+  PARSE_ERROR: "网易云返回的结果无法识别，请查看操作的确认状态。",
+  INTEGRITY_ERROR: "网易云组件校验失败，请联系管理员。",
   SESSION_REQUIRED: "点歌台会话已失效，请重新登录。",
   ROOM_UNAVAILABLE: "房间不可访问，请返回房间列表。",
   AUTHORIZATION_CHANGED: "网易云授权已变化，请重新读取并确认身份。",

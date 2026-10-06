@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Music2 } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import { publicPlaylistView, type PublicPlaylistCreateCommand, type PublicPlaylistView } from "../shared/public-playlist-contracts";
-import { errorMessage, queryOptions, request, RoomRequestError } from "./room-http";
+import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
@@ -20,6 +20,9 @@ const disabledMessages = {
   OWNER_ONLY: "只有房主可以创建公共歌单。",
   NETEASE_AUTH_REQUIRED: "请房主先在账号设置中绑定有效的网易云账号。",
   PUBLIC_PLAYLIST_EXISTS: "此房间已经绑定公共歌单。",
+  ACCOUNT_PAUSED: "网易云账号因风控或频繁请求已暂停，请联系管理员恢复。",
+  TARGET_BLOCKED: "当前目标权限需要处理，其他房间可继续使用。",
+  UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
   OPERATION_PENDING: "已有未完成的创建操作，不能再次创建。"
 };
 
@@ -69,6 +72,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         <p>创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
       </>}
       {view.operation && <p className="netease-status" role="status">{operationMessages[view.operation.status]}</p>}
+      {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
       {view.disabledReason && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
       {view.allowedActions.includes("createPublicPlaylist") && <button className="primary-button" type="button" disabled={mutation.isPending || query.isFetching || view.disabledReason !== null} onClick={() => {
         if (mutation.isPending || view.disabledReason) return;

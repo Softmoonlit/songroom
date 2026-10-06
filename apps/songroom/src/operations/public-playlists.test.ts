@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { v7 } from "uuid";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
 import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding, publicPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
@@ -15,14 +15,14 @@ import { PublicPlaylists } from "./public-playlists.js";
 
 class Adapter implements NeteaseAdapter {
   inputs: AdapterInput[] = [];
-  identity: () => Promise<AdapterResult<"identity">> = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "房主" } });
-  create: () => Promise<AdapterResult<"playlistCreate">> = async () => ({ ok: true, data: { playlistId: "cloud-playlist" } });
+  identity: (input: Extract<AdapterInput, { operation: "identity" }>) => Promise<AdapterResult<"identity">> = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "房主" } });
+  create: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> = async () => ({ ok: true, data: { playlistId: "cloud-playlist" } });
   async assertVendorIntegrity() {}
   async dispose() {}
   async call<I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> {
     this.inputs.push(input);
-    if (input.operation === "identity") return await this.identity() as AdapterResult<I["operation"]>;
-    if (input.operation === "playlistCreate") return await this.create() as AdapterResult<I["operation"]>;
+    if (input.operation === "identity") return await this.identity(input) as AdapterResult<I["operation"]>;
+    if (input.operation === "playlistCreate") return await this.create(input) as AdapterResult<I["operation"]>;
     throw new Error("unexpected adapter call");
   }
 }
@@ -32,6 +32,7 @@ afterEach(async () => {
     for (const module of fixture.modules) { module.stop(); await module.settle(); }
     fixture.database.$client.close(); fs.rmSync(fixture.root, { recursive: true, force: true });
   }
+  vi.useRealTimers();
 });
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "songroom-public-playlists-"));
@@ -49,9 +50,190 @@ function fixture() {
   const adapter = new Adapter();
   const modules: PublicPlaylists[] = [];
   fixtures.push({ root, database, modules });
-  function module(now?: () => number) { const result = new PublicPlaylists(database, adapter, vault, now); modules.push(result); return result; }
+  const clockStartedAt = Date.now();
+  function module(now?: () => number) {
+    const clock = now ? () => now() + Date.now() - clockStartedAt : undefined;
+    const result = new PublicPlaylists(database, adapter, vault, clock); modules.push(result); return result;
+  }
   return { database, adapter, roomId, module, authorizationId, vault, dbPath, keyPath };
 }
+
+it("每请求公平让出、真实账号串行间隔 1 秒且全站最多两个在途请求", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module();
+  const rooms: Array<{ userId: string; roomId: string }> = [];
+  for (const userId of ["owner", "member", "outsider"]) {
+    if (userId !== "owner") {
+      const authorizationId = v7(); const scope = { authorizationId, accountId: `cloud-${userId}`, generation: 1 };
+      f.database.insert(neteaseAuthorization).values({ id: authorizationId, userId, accountId: scope.accountId, nickname: userId, generation: 1, status: "active", credentials: f.vault.encrypt(`cookie-${userId}`, scope) }).run();
+    }
+    for (let index = 0; index < 2; index++) {
+      const roomId = v7();
+      f.database.insert(room).values({ id: roomId, ownerUserId: userId, name: `${userId}-${index}` }).run();
+      f.database.insert(roomMembership).values({ id: v7(), roomId, userId, nickname: userId }).run();
+      rooms.push({ userId, roomId });
+      service.create(userId, roomId, { idempotencyKey: v7() });
+    }
+  }
+  const starts: Array<{ time: number; account: string; request: string }> = [];
+  const held = gate<void>(); let active = 0; let maximum = 0;
+  f.adapter.identity = async input => {
+    starts.push({ time: Date.now(), account: input.expectedAccountId!, request: "identity" });
+    maximum = Math.max(maximum, ++active);
+    await held.promise; active--;
+    return { ok: true, data: { accountId: input.expectedAccountId!, name: "房主" } };
+  };
+  f.adapter.create = async input => {
+    const account = input.cookie.includes("owner") ? "cloud-owner" : input.cookie.includes("member") ? "cloud-member" : "cloud-outsider";
+    starts.push({ time: Date.now(), account, request: "create" });
+    maximum = Math.max(maximum, ++active); active--;
+    return { ok: true, data: { playlistId: input.name } };
+  };
+  service.start(); await vi.advanceTimersByTimeAsync(0);
+  expect(starts.map(start => start.account)).toEqual(["cloud-owner", "cloud-member"]);
+  expect(rooms.filter(item => service.read(item.userId, item.roomId).operation?.status === "processing")).toHaveLength(2);
+  held.resolve(); await vi.advanceTimersByTimeAsync(0);
+  expect(starts.map(start => start.account)).toEqual(["cloud-owner", "cloud-member", "cloud-outsider"]);
+  await vi.advanceTimersByTimeAsync(999); expect(starts).toHaveLength(3);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(starts.slice(3).map(start => start.request)).toEqual(["identity", "identity", "identity"]);
+  await vi.runAllTimersAsync(); await service.settle();
+  expect(maximum).toBe(2);
+  for (const account of ["cloud-owner", "cloud-member", "cloud-outsider"]) {
+    const calls = starts.filter(start => start.account === account);
+    expect(calls.map(call => call.request)).toEqual(["identity", "identity", "create", "create"]);
+    for (let index = 1; index < calls.length; index++) expect(calls[index].time - calls[index - 1].time).toBeGreaterThanOrEqual(1000);
+  }
+  for (const item of rooms) expect(service.read(item.userId, item.roomId).operation?.status).toBe("succeeded");
+});
+
+it("重开 SQLite 后仍等待持久的下一次启动时间，不突发请求", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const first = f.module();
+  first.create("owner", f.roomId, { idempotencyKey: v7() });
+  first.start(); await vi.advanceTimersByTimeAsync(0);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
+  first.stop(); await first.settle();
+  const reopened = openDatabase(f.dbPath);
+  const restarted = new PublicPlaylists(reopened, f.adapter, f.vault);
+  try {
+    restarted.start(); await vi.advanceTimersByTimeAsync(999);
+    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "identity"]);
+    await vi.advanceTimersByTimeAsync(1000); await restarted.settle();
+    expect(restarted.read("owner", f.roomId).operation?.status).toBe("succeeded");
+  } finally { restarted.stop(); await restarted.settle(); reopened.$client.close(); }
+});
+
+function extraRoom(f: ReturnType<typeof fixture>, name = "其他目标") {
+  const roomId = v7();
+  f.database.insert(room).values({ id: roomId, ownerUserId: "owner", name }).run();
+  f.database.insert(roomMembership).values({ id: v7(), roomId, userId: "owner", nickname: "owner" }).run();
+  return roomId;
+}
+
+it("风控暂停同一真实账号的全部目标，重启不能恢复且新受理明确拒绝", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module(); const second = extraRoom(f); const third = extraRoom(f);
+  f.adapter.identity = async () => ({ ok: false, error: { code: "RATE_LIMITED", outcome: "failed" } });
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.create("owner", second, { idempotencyKey: v7() });
+  service.start(); await vi.runAllTimersAsync(); await service.settle();
+  expect(service.read("owner", f.roomId).operation).toMatchObject({ status: "needsAdministrator", errorCode: "RATE_LIMITED" });
+  expect(service.read("owner", second).operation).toMatchObject({ status: "needsAdministrator", errorCode: "ACCOUNT_PAUSED" });
+  expect(service.read("owner", third).disabledReason).toBe("ACCOUNT_PAUSED");
+  expect(() => service.create("owner", third, { idempotencyKey: v7() })).toThrowError("ACCOUNT_PAUSED");
+  service.stop(); const restarted = f.module(); restarted.start(); await vi.runAllTimersAsync(); await restarted.settle();
+  expect(f.adapter.inputs).toHaveLength(1);
+  expect(restarted.read("owner", second).operation?.errorCode).toBe("ACCOUNT_PAUSED");
+});
+
+it("目标权限只阻塞当前房间，待确认创建不阻挡其他目标且不重发", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module(); const second = extraRoom(f); const third = extraRoom(f);
+  let identities = 0;
+  f.adapter.identity = async () => ++identities === 1
+    ? { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed" } }
+    : { ok: true, data: { accountId: "cloud-owner", name: "房主" } };
+  f.adapter.create = async input => input.name.includes("其他目标")
+    ? { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } }
+    : { ok: true, data: { playlistId: "success" } };
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.create("owner", second, { idempotencyKey: v7() });
+  service.start(); await vi.runAllTimersAsync(); await service.settle();
+  expect(service.read("owner", f.roomId)).toMatchObject({ disabledReason: "TARGET_BLOCKED", operation: { status: "needsAdministrator", errorCode: "TARGET_PERMISSION" } });
+  expect(service.read("owner", second).operation).toMatchObject({ status: "awaitingConfirmation", errorCode: "NETWORK_ERROR" });
+  f.database.update(room).set({ name: "成功目标" }).where(eq(room.id, third)).run();
+  service.create("owner", third, { idempotencyKey: v7() }); await vi.runAllTimersAsync(); await service.settle();
+  expect(service.read("owner", third).operation?.status).toBe("succeeded");
+  expect(service.create("owner", second, { idempotencyKey: v7() }).replay).toBe(true);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(2);
+});
+
+it("发送后风控保留待确认事实并暂停整个账号，未知步骤不重新发送", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module(); const second = extraRoom(f);
+  f.adapter.create = async () => ({ ok: false, error: { code: "RATE_LIMITED", outcome: "unknown" } });
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.create("owner", second, { idempotencyKey: v7() });
+  service.start(); await vi.runAllTimersAsync(); await service.settle();
+  expect(service.read("owner", f.roomId).operation).toMatchObject({ status: "awaitingConfirmation", errorCode: "RATE_LIMITED" });
+  expect(service.read("owner", second).operation).toMatchObject({ status: "needsAdministrator", errorCode: "ACCOUNT_PAUSED" });
+  service.stop(); const restarted = f.module(); restarted.start(); await vi.runAllTimersAsync(); await restarted.settle();
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(1);
+  expect(restarted.read("owner", f.roomId).operation?.errorCode).toBe("RATE_LIMITED");
+});
+
+it("新到达操作不能饿死已核查的旧操作，同一房间所有幂等键保持同一个冲突意图", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module();
+  const first = service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.start(); await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(500);
+  const second = extraRoom(f);
+  service.create("owner", second, { idempotencyKey: v7() });
+  expect(service.create("owner", f.roomId, { idempotencyKey: v7() }).view.operation?.id).toBe(first.view.operation!.id);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(service.read("owner", f.roomId).operation?.status).toBe("succeeded");
+  expect(service.read("owner", second).operation?.status).toBe("queued");
+  f.adapter.create = async () => ({ ok: true, data: { playlistId: "second" } });
+  await vi.runAllTimersAsync(); await service.settle();
+  expect(service.read("owner", second).operation?.status).toBe("succeeded");
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "playlistCreate", "identity", "playlistCreate"]);
+});
+
+it("执行中和已核查的多请求操作只占一项，等待授权后释放队列容量并保留任务", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const service = f.module();
+  const rooms = Array.from({ length: 21 }, () => extraRoom(f));
+  for (const id of rooms.slice(0, 20)) service.create("owner", id, { idempotencyKey: v7() });
+  service.start(); await vi.advanceTimersByTimeAsync(0);
+  expect(service.read("owner", rooms[0]).operation?.status).toBe("queued");
+  expect(() => service.create("owner", rooms[20], { idempotencyKey: v7() })).toThrowError("UPSTREAM_QUEUE_FULL");
+  f.adapter.identity = async () => ({ ok: false, error: { code: "ACCOUNT_EMPTY", outcome: "failed" } });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(service.read("owner", rooms[1]).operation).toMatchObject({ status: "waitingAuthorization", errorCode: "ACCOUNT_EMPTY" });
+  expect(service.create("owner", rooms[20], { idempotencyKey: v7() }).replay).toBe(false);
+  service.stop(); await service.settle();
+  expect(service.read("owner", rooms[1]).operation?.status).toBe("waitingAuthorization");
+});
+
+it("真实账号最多受理 20 项业务操作，多请求不会重复占位，重放仍可读取", () => {
+  const f = fixture(); const service = f.module();
+  const rooms = Array.from({ length: 21 }, (_, index) => {
+    const id = v7();
+    f.database.insert(room).values({ id, ownerUserId: "owner", name: `房间${index}` }).run();
+    f.database.insert(roomMembership).values({ id: v7(), roomId: id, userId: "owner", nickname: "owner" }).run();
+    return id;
+  });
+  const key = v7();
+  const first = service.create("owner", rooms[0], { idempotencyKey: key });
+  for (const id of rooms.slice(1, 20)) expect(service.create("owner", id, { idempotencyKey: v7() }).view.operation?.status).toBe("queued");
+  expect(() => service.create("owner", rooms[20], { idempotencyKey: v7() })).toThrowError("UPSTREAM_QUEUE_FULL");
+  expect(service.create("owner", rooms[0], { idempotencyKey: key }).view.operation).toEqual(first.view.operation);
+  expect(service.read("owner", rooms[20]).disabledReason).toBe("UPSTREAM_QUEUE_FULL");
+});
 
 it("事务受理、成员权限、不同键合并和原键重放，监听前不派发", async () => {
   const f = fixture(); const service = f.module();
@@ -94,7 +276,7 @@ it.each(["AUTH_UNAVAILABLE", "ACCOUNT_EMPTY", "ACCOUNT_MISMATCH"] as const)("身
   const f = fixture(); const service = f.module();
   f.adapter.identity = async () => ({ ok: false, error: { code, outcome: "failed" } });
   service.create("owner", f.roomId, { idempotencyKey: v7() }); service.start(); await service.settle();
-  expect(service.read("owner", f.roomId)).toMatchObject({ operation: { status: "waitingAuthorization" }, disabledReason: "OPERATION_PENDING", allowedActions: [] });
+  expect(service.read("owner", f.roomId)).toMatchObject({ operation: { status: "waitingAuthorization", errorCode: code }, disabledReason: "OPERATION_PENDING", allowedActions: [] });
   expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
 });
 
@@ -152,7 +334,7 @@ it("持久未发送操作重启恢复，stop 不启动后续写且 settle 等待
   expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(0);
   f.adapter.identity = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "owner" } });
   const restarted = f.module(); restarted.start(); await restarted.settle();
-  expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "succeeded" });
+  expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "succeeded", errorCode: null });
 });
 
 it("身份读取期间授权代次变化，不发创建", async () => {
@@ -214,7 +396,7 @@ it("幂等键不同房间冲突、过期及未来拒绝，纯本地 read 不请�
   const secondRoomId = v7(); f.database.insert(room).values({ id: secondRoomId, ownerUserId: "owner", name: "另一个" }).run();
   f.database.insert(roomMembership).values({ id: v7(), roomId: secondRoomId, userId: "owner", nickname: "owner" }).run();
   expect(() => service.create("owner", secondRoomId, { idempotencyKey: key })).toThrowError("IDEMPOTENCY_CONFLICT");
-  for (const msecs of [now - 86_400_000, now + 60_001]) expect(() => service.create("owner", f.roomId, { idempotencyKey: v7({ msecs }) })).toThrowError("IDEMPOTENCY_KEY_EXPIRED");
+  for (const msecs of [now - 86_400_000, now + 61_000]) expect(() => service.create("owner", f.roomId, { idempotencyKey: v7({ msecs }) })).toThrowError("IDEMPOTENCY_KEY_EXPIRED");
   service.read("owner", f.roomId); service.read("member", f.roomId);
   expect(f.adapter.inputs).toEqual([]);
 });
@@ -246,7 +428,7 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
     });
     const exited = new Promise<void>(resolve => child.once("exit", () => resolve())); child.kill("SIGKILL"); await exited;
     const restarted = f.module(); restarted.start(); await restarted.settle();
-    expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "awaitingConfirmation" });
+    expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "awaitingConfirmation", errorCode: null });
     expect(f.adapter.inputs).toEqual([]);
     expect(restarted.create("owner", f.roomId, { idempotencyKey: v7() }).view.operation?.id).toBe(accepted.view.operation!.id);
     await restarted.settle(); expect(f.adapter.inputs).toEqual([]);

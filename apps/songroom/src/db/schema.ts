@@ -1,3 +1,4 @@
+import { adapterErrorCodeSchema } from "../netease/protocol.js";
 import { sql } from "drizzle-orm";
 import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
@@ -141,6 +142,8 @@ export const operation = sqliteTable("operation", {
   authorizationId: text("authorization_id"),
   generation: integer("generation"),
   status: text("status", { enum: ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"] }).notNull(),
+  errorCode: text("error_code", { enum: ["ACCOUNT_PAUSED", ...adapterErrorCodeSchema.options] }),
+  lastGranted: integer("last_granted").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
@@ -154,10 +157,10 @@ export const operation = sqliteTable("operation", {
 export const publicPlaylistCreation = sqliteTable("public_playlist_creation", {
   operationId: text("operation_id").primaryKey().references(() => operation.id),
   name: text("name").notNull(),
-  step: text("step", { enum: ["ready", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
+  step: text("step", { enum: ["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
   playlistId: text("playlist_id")
 }, table => [
-  check("public_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
+  check("public_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
   check("public_playlist_creation_returned_id_valid", sql`(${table.step} IN ('confirming', 'succeeded') AND ${table.playlistId} IS NOT NULL AND length(${table.playlistId}) > 0) OR (${table.step} NOT IN ('confirming', 'succeeded') AND ${table.playlistId} IS NULL)`)
 ]);
 
@@ -176,8 +179,16 @@ export const publicPlaylistBinding = sqliteTable("public_playlist_binding", {
   check("public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
 ]);
 
+// 真实账号请求启动预算与风控暂停持久化；执行权在发送前短事务中认领。
+export const upstreamAccount = sqliteTable("upstream_account", {
+  accountId: text("account_id").primaryKey(),
+  nextStartAt: integer("next_start_at").notNull().default(0),
+  runningOperationId: text("running_operation_id"),
+  paused: integer("paused", { mode: "boolean" }).notNull().default(false)
+}, table => [check("upstream_account_next_start_valid", sql`${table.nextStartAt} >= 0`)]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, upstreamAccount };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

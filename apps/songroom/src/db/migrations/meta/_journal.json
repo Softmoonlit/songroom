@@ -57,6 +57,13 @@
       "when": 1791301321319,
       "tag": "0007_public_playlist_creation",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791302134530,
+      "tag": "0008_bounded_upstream_scheduling",
+      "breakpoints": true
     }
   ]
 }

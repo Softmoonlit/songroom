@@ -79,6 +79,7 @@ describe("database lifecycle", () => {
       "room_membership",
       "schema_meta",
       "session",
+      "upstream_account",
       "user",
       "verification"
     ]);
