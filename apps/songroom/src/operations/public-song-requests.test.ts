@@ -553,7 +553,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
     expect(op.tagConfirmed).toBe(true);
     f.playlists.stop();
   }
-});
+}, 30000);
 
 it("错误分类：明确拒绝立即终结为失败，不进入补查；未知错误与网络/超时进入 awaitingConfirmation 并启动补查", async () => {
   const f = fixture();

@@ -378,7 +378,14 @@ describe("09: 读取并刷新权威公共歌单快照", () => {
     expect(partialView.snapshot?.version).toBe(1);
     expect(partialView.snapshot?.tracks).toHaveLength(2);
 
-    // 上游返回已删除对象墓碑状态 (status 10)
+    // 上游返回已删除对象墓碑状态 (status 10)，但完整清单仍包含目标，不能单独解除绑定，仅记录 TARGET_PERMISSION 并保留快照
+    f.adapter.userPlaylists = async () => ({
+      ok: true,
+      data: {
+        playlists: [{ id: "cloud-playlist", name: "songroom-宿舍-公共", creatorId: "cloud-owner", subscribed: false, status: 0 }],
+        more: false
+      }
+    });
     f.adapter.detail = async () => ({
       ok: true,
       data: {

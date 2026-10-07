@@ -7,6 +7,8 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
   identityAccount?: string;
   beforeIdentity?: () => Promise<void>;
   playlistDetail?: (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => Promise<AdapterResult<"playlistDetail">> | AdapterResult<"playlistDetail">;
+  userPlaylists?: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> | AdapterResult<"userPlaylists">;
+  playlistCreate?: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> | AdapterResult<"playlistCreate">;
   #qr = 0;
   async assertVendorIntegrity() {}
   async dispose() {}
@@ -23,7 +25,12 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
         data = { accountId: this.identityAccount ?? input.cookie.slice("MUSIC_U=".length), name: "测试网易云身份" };
         break;
       case "userPlaylists":
+        if (this.userPlaylists) return await this.userPlaylists(input) as AdapterResult<I["operation"]>;
         data = { playlists: [], more: false };
+        break;
+      case "playlistCreate":
+        if (this.playlistCreate) return await this.playlistCreate(input) as AdapterResult<I["operation"]>;
+        data = { playlistId: `cloud-created-${this.inputs.length}` };
         break;
       case "playlistDetail":
         if (this.playlistDetail) return await this.playlistDetail(input) as AdapterResult<I["operation"]>;

@@ -1,12 +1,12 @@
 import { v7 } from "uuid";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCreation, publicSongRequest, requesterTag, room, roomMembership } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCreation, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import { CredentialVault } from "../netease/credentials.js";
-import type { AdapterErrorCode, NeteaseAdapter } from "../netease/protocol.js";
+import type { AdapterErrorCode, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { BusinessError } from "../shared/errors.js";
 import { publicPlaylistCreateCommand, type PublicPlaylistCreateCommand, type PublicPlaylistView, publicSongRequestCommand, type PublicSongRequestCommand, type SongRequestOperationView } from "../shared/public-playlist-contracts.js";
 import { EventStreamService } from "../events/event-stream.js";
@@ -56,6 +56,16 @@ export class PublicPlaylists {
   #view(userId: string, roomId: string, operationId?: string): PublicPlaylistView {
     const current = this.#member(userId, roomId);
     const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
+    const latestRetired = this.database.select().from(retiredPublicPlaylistBinding)
+      .where(eq(retiredPublicPlaylistBinding.roomId, roomId))
+      .orderBy(desc(retiredPublicPlaylistBinding.generation))
+      .get();
+    const invalidatedTarget = (!binding && latestRetired) ? {
+      playlistId: latestRetired.playlistId,
+      name: latestRetired.name,
+      checkedAt: latestRetired.invalidatedAt,
+      status: "confirmedDeleted" as const
+    } : null;
     const currentOperation = operationId
       ? this.database.select().from(operation).where(and(eq(operation.id, operationId), eq(operation.roomId, roomId), eq(operation.userId, userId))).get()
       : this.database.select().from(operation).where(and(eq(operation.roomId, roomId), sql`(${operation.status} NOT IN ('succeeded', 'failed', 'stopped') OR ${operation.updatedAt} > ${this.now() - TERMINAL_RETENTION_MS})`)).orderBy(desc(operation.createdAt), desc(operation.id)).get();
@@ -173,6 +183,7 @@ export class PublicPlaylists {
 
     return {
       playlist: binding ? { id: binding.playlistId, name: binding.name } : null,
+      invalidatedTarget,
       snapshot,
       lastRefreshError,
       operation: opView,
@@ -263,12 +274,118 @@ export class PublicPlaylists {
       if (result.error.code === "RATE_LIMITED") {
         this.scheduler.pause(accountId);
       }
+      if (result.error.code === "TARGET_PERMISSION") {
+        const deleted = await this.#verifyTargetDeleted(cookie, accountId, playlistId);
+        if (deleted) {
+          this.#invalidateBinding(accountId, playlistId, generation);
+          return;
+        }
+      }
       this.#recordRefreshError(accountId, playlistId, result.error.code);
       return;
     }
 
     const data = result.data as { playlist: { id: string; name: string; status: number }; songIds: string[]; songs: Array<{ id: string; name: string; artists: string[]; album: string }> };
+    if (data.playlist.status !== 0) {
+      const deleted = await this.#verifyTargetDeleted(cookie, accountId, playlistId);
+      if (deleted) {
+        this.#invalidateBinding(accountId, playlistId, generation);
+        return;
+      }
+      this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION");
+      return;
+    }
     this.#commitSnapshot(accountId, playlistId, generation, data, readStartedAt);
+  }
+
+  async #verifyTargetDeleted(cookie: string, accountId: string, playlistId: string): Promise<boolean> {
+    let identityResult: AdapterResult<"identity">;
+    try {
+      identityResult = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: accountId });
+    } catch {
+      return false;
+    }
+    if (!identityResult.ok) {
+      if (identityResult.error.code === "RATE_LIMITED") this.scheduler.pause(accountId);
+      return false;
+    }
+    if (identityResult.data.accountId !== accountId) {
+      return false;
+    }
+
+    const accountPlaylists = await this.#fetchAccountPlaylists(cookie, accountId);
+    if (!accountPlaylists) {
+      return false;
+    }
+
+    const exists = accountPlaylists.some(p => p.id === playlistId);
+    return !exists;
+  }
+
+  #invalidateBinding(accountId: string, playlistId: string, generation: number): void {
+    const now = this.now();
+    this.database.transaction(tx => {
+      const bindings = tx.select().from(publicPlaylistBinding)
+        .where(and(eq(publicPlaylistBinding.accountId, accountId), eq(publicPlaylistBinding.playlistId, playlistId))).all();
+      if (!bindings.length) return;
+
+      for (const b of bindings) {
+        if (b.generation !== generation) continue;
+
+        tx.insert(retiredPublicPlaylistBinding).values({
+          id: v7(),
+          roomId: b.roomId,
+          accountId: b.accountId,
+          playlistId: b.playlistId,
+          name: b.name,
+          generation: b.generation,
+          invalidatedAt: now
+        }).run();
+
+        tx.delete(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, b.roomId)).run();
+
+        tx.delete(requesterTag).where(and(
+          eq(requesterTag.roomId, b.roomId),
+          eq(requesterTag.bindingGeneration, b.generation)
+        )).run();
+
+        const songOps = tx.select().from(operation).where(and(
+          eq(operation.roomId, b.roomId),
+          eq(operation.kind, "requestPublicSong"),
+          sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`
+        )).all();
+
+        for (const op of songOps) {
+          tx.update(operation).set({
+            status: "stopped",
+            accountId: null,
+            authorizationId: null,
+            generation: null,
+            updatedAt: now
+          }).where(eq(operation.id, op.id)).run();
+          tx.update(publicSongRequest).set({
+            step: "stopped",
+            nextCheckAt: null
+          }).where(eq(publicSongRequest.operationId, op.id)).run();
+
+          const timer = this.#checkTimers.get(op.id);
+          if (timer) {
+            clearTimeout(timer);
+            this.#checkTimers.delete(op.id);
+          }
+        }
+
+        this.#bump(b.roomId);
+        this.eventStream.notifyRoom(this.database, b.roomId, { type: "publicPlaylist", roomId: b.roomId });
+      }
+
+      const remainingBindings = tx.select().from(publicPlaylistBinding)
+        .where(and(eq(publicPlaylistBinding.accountId, accountId), eq(publicPlaylistBinding.playlistId, playlistId))).all();
+      if (!remainingBindings.length) {
+        tx.delete(playlistTrack).where(and(eq(playlistTrack.accountId, accountId), eq(playlistTrack.playlistId, playlistId))).run();
+        tx.delete(playlistSnapshot).where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId))).run();
+      }
+    });
   }
 
   #commitSnapshot(
@@ -549,10 +666,34 @@ export class PublicPlaylists {
         this.#conditionStatus(row, condition, true);
         return;
       }
-      tx.insert(publicPlaylistBinding).values({ roomId: row.roomId, accountId: row.accountId!, playlistId: detail.playlistId!, name: detail.name, creationOperationId: row.id }).run();
+      const targetPlaylistId = detail.playlistId!;
+
+      // 检查不能复用已失效的旧云端 ID
+      const retired = tx.select({ id: retiredPublicPlaylistBinding.id }).from(retiredPublicPlaylistBinding)
+        .where(eq(retiredPublicPlaylistBinding.playlistId, targetPlaylistId)).get();
+      if (retired) {
+        this.#status(row.id, "needsAdministrator", "TARGET_PERMISSION");
+        return;
+      }
+
+      const maxRetired = tx.select({ gen: retiredPublicPlaylistBinding.generation })
+        .from(retiredPublicPlaylistBinding)
+        .where(eq(retiredPublicPlaylistBinding.roomId, row.roomId))
+        .orderBy(desc(retiredPublicPlaylistBinding.generation))
+        .get();
+      const nextGeneration = (maxRetired?.gen ?? 0) + 1;
+
+      tx.insert(publicPlaylistBinding).values({
+        roomId: row.roomId,
+        accountId: row.accountId!,
+        playlistId: targetPlaylistId,
+        name: detail.name,
+        creationOperationId: row.id,
+        generation: nextGeneration
+      }).run();
       tx.insert(playlistSnapshot).values({
         accountId: row.accountId!,
-        playlistId: detail.playlistId!,
+        playlistId: targetPlaylistId,
         snapshotVersion: 0,
         syncedAt: null,
         lastErrorCode: null,
@@ -893,6 +1034,12 @@ export class PublicPlaylists {
   }
 
   #hasTargetConflict(accountId: string, playlistId: string): boolean {
+    const snap = this.database.select({ code: playlistSnapshot.lastErrorCode })
+      .from(playlistSnapshot)
+      .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId)))
+      .get();
+    if (snap?.code === "TARGET_PERMISSION") return true;
+
     const conflict = this.database.select({ id: operation.id })
       .from(operation)
       .innerJoin(publicSongRequest, eq(operation.id, publicSongRequest.operationId))

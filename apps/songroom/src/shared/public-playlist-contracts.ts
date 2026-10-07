@@ -33,8 +33,17 @@ export const publicPlaylistOperation = z.strictObject({
 export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist", "requestSong"]);
 export type PublicPlaylistAction = z.infer<typeof publicPlaylistAction>;
 
+export const publicPlaylistInvalidatedTarget = z.strictObject({
+  playlistId: z.string().min(1),
+  name: z.string(),
+  checkedAt: z.number().int().positive(),
+  status: z.literal("confirmedDeleted")
+});
+export type PublicPlaylistInvalidatedTarget = z.infer<typeof publicPlaylistInvalidatedTarget>;
+
 export const publicPlaylistView = z.strictObject({
   playlist: z.strictObject({ id: z.string().min(1), name: z.string() }).nullable(),
+  invalidatedTarget: publicPlaylistInvalidatedTarget.nullable().optional(),
   snapshot: publicPlaylistSnapshot.nullable().optional(),
   lastRefreshError: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED")]).nullable().optional(),
   operation: publicPlaylistOperation.nullable(),

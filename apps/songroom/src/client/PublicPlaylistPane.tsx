@@ -23,7 +23,7 @@ import { QueryError } from "./RoomQueryError";
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
   queued: "已排队，等待创建公共歌单。",
   processing: "正在创建公共歌单。",
-  awaitingConfirmation: "创建结果待确认，可能已在网易云创建。请勿重试创建。",
+  awaitingConfirmation: "创建结果待确认（创建结果待核查），可能已在网易云创建。请勿重试创建。",
   waitingAuthorization: "正在等待房主恢复网易云授权。",
   needsAdministrator: "创建结果未知，需要管理员处理，已阻止该房间再次创建。",
   succeeded: "公共歌单已创建并绑定。",
@@ -355,13 +355,17 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       {view.playlist ? <>
         <h3>{view.playlist.name}</h3>
         <dl className="netease-identity"><div><dt>网易云歌单 ID</dt><dd>{view.playlist.id}</dd></div></dl>
+      </> : view.invalidatedTarget ? <>
+        <h3>公共歌单已确认失效</h3>
+        <p className="field-help" role="alert">原公共歌单「{view.invalidatedTarget.name}」（ID: {view.invalidatedTarget.playlistId}）已从网易云删除。最后核查状态：已确认失效（{formatTime(view.invalidatedTarget.checkedAt)}）。</p>
+        {view.disabledReason === "OWNER_ONLY" && <p className="field-help" role="status">已确认失效，等待房主重新创建公共歌单。</p>}
       </> : <>
         <h3>尚未创建公共歌单</h3>
         <p>创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
       </>}
       {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
       {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
-      {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
+      {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && (!view.invalidatedTarget || view.disabledReason !== "OWNER_ONLY") && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
       {!view.playlist && view.disabledReason === "PUBLIC_PLAYLIST_EXISTS" && <p className="field-help">{disabledMessages.PUBLIC_PLAYLIST_EXISTS}</p>}
       {view.allowedActions.includes("createPublicPlaylist") && <button className="primary-button" type="button" disabled={mutation.isPending || query.isFetching || view.disabledReason !== null} onClick={() => {
         if (mutation.isPending || view.disabledReason) return;
@@ -369,11 +373,11 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         setCommand(next);
         setMessage("");
         mutation.mutate(next);
-      }}>{mutation.isPending ? "正在提交创建…" : "创建公共歌单"}</button>}
+      }}>{mutation.isPending ? "正在提交创建…" : view.invalidatedTarget ? "重新创建公共歌单" : "创建公共歌单"}</button>}
       {view.playlist && <>
         {view.snapshot?.syncedAt ? <p className="sync-time">最近成功同步：{formatTime(view.snapshot.syncedAt)}</p> : null}
         {refreshMutation.isPending ? <p className="netease-status" role="status">正在刷新歌单…</p> : null}
-        {!refreshMutation.isPending && view.lastRefreshError ? <p className="field-help" role="alert">刷新未成功（{errorMessageForCode(view.lastRefreshError)}），已保留上次快照</p> : null}
+        {!refreshMutation.isPending && view.lastRefreshError ? <p className="field-help" role="alert">暂时读取失败（刷新未成功：{errorMessageForCode(view.lastRefreshError)}），已保留上次快照</p> : null}
         {!refreshMutation.isPending && refreshError ? <p className="form-message" role="alert">{refreshError}</p> : null}
         {!refreshMutation.isPending && !view.lastRefreshError && !refreshError && view.snapshot?.syncedAt ? <p className="netease-status" role="status">歌单已同步</p> : null}
         <div className="invite-actions">

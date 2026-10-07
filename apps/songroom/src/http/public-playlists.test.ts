@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:net";
 import { v7 } from "uuid";
+import { eq } from "drizzle-orm";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase } from "../db/database.js";
 import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding } from "../db/schema.js";
@@ -138,4 +139,81 @@ it("显式刷新接口仅对成员开放且校验同源，返回最新权威快�
   expect(view.snapshot?.tracks).toHaveLength(1);
   expect(view.snapshot?.tracks[0].name).toBe("晴天");
   expect(view.allowedActions).toContain("refreshPublicPlaylist");
+});
+
+it("经由公开刷新核查失效，清空旧快照与标签并允许房主重新创建 generation 2 歌单", async () => {
+  const { app, adapter, owner, member, url } = await fixture();
+  const refreshUrl = `${url}/refresh`;
+  const roomId = url.split("/")[3];
+
+  app.database.insert(publicPlaylistBinding).values({
+    roomId,
+    accountId: "test",
+    playlistId: "cloud-pl-stale",
+    name: "songroom-测试宿舍-公共",
+    creationOperationId: v7(),
+    generation: 1
+  }).run();
+
+  // 墓碑旧详情 (status 10)，身份匹配，完整清单确认无该歌单
+  adapter.playlistDetail = async () => ({
+    ok: true,
+    data: {
+      playlist: { id: "cloud-pl-stale", name: "songroom-测试宿舍-公共", creatorId: "test", subscribed: false, status: 10 },
+      songIds: ["s1"],
+      songs: [{ id: "s1", name: "旧歌", artists: ["歌手"], album: "专辑" }]
+    }
+  });
+  adapter.userPlaylists = async () => ({
+    ok: true,
+    data: { playlists: [], more: false }
+  });
+
+  // 刷新触发核查并确认失效
+  const refreshRes = await request(app, refreshUrl, owner.cookie, {});
+  expect(refreshRes.statusCode).toBe(200);
+  const invalidatedView = publicPlaylistView.parse(refreshRes.json());
+  expect(invalidatedView.playlist).toBeNull();
+  expect(invalidatedView.snapshot).toBeNull();
+  expect(invalidatedView.invalidatedTarget).toEqual({
+    playlistId: "cloud-pl-stale",
+    name: "songroom-测试宿舍-公共",
+    checkedAt: expect.any(Number),
+    status: "confirmedDeleted"
+  });
+  expect(invalidatedView.allowedActions).toEqual(["createPublicPlaylist"]);
+
+  // 室友读取：无创建权限，显示 OWNER_ONLY
+  const memberGetRes = await request(app, url, member.cookie);
+  expect(memberGetRes.statusCode).toBe(200);
+  const memberView = publicPlaylistView.parse(memberGetRes.json());
+  expect(memberView.playlist).toBeNull();
+  expect(memberView.invalidatedTarget?.playlistId).toBe("cloud-pl-stale");
+  expect(memberView.allowedActions).toEqual([]);
+  expect(memberView.disabledReason).toBe("OWNER_ONLY");
+
+  // 室友尝试重建：拒绝
+  const memberRecreateRes = await request(app, url, member.cookie, { idempotencyKey: v7() });
+  expect(memberRecreateRes.statusCode).toBe(404);
+
+  // 房主提交重新创建
+  adapter.playlistCreate = async () => ({
+    ok: true,
+    data: { playlistId: "cloud-pl-v2" }
+  });
+  const ownerRecreateRes = await request(app, url, owner.cookie, { idempotencyKey: v7() });
+  expect(ownerRecreateRes.statusCode).toBe(202);
+
+  // 等待调度执行完成
+  await app.scheduler.settle();
+
+  // 查询新状态：绑定已恢复为代次 2，invalidatedTarget 为空
+  const newViewRes = await request(app, url, owner.cookie);
+  expect(newViewRes.statusCode).toBe(200);
+  const newView = publicPlaylistView.parse(newViewRes.json());
+  expect(newView.playlist?.id).toBe("cloud-pl-v2");
+  expect(newView.invalidatedTarget).toBeNull();
+
+  const newBinding = app.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get()!;
+  expect(newBinding.generation).toBe(2);
 });

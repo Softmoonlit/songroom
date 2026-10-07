@@ -36,6 +36,8 @@ export interface SongRoomApp {
   auth: SongRoomAuth;
   eventStream: EventStreamService;
   searchService: SongSearchService;
+  playlists: PublicPlaylists;
+  scheduler: UpstreamScheduler;
   getState: () => RuntimeState;
   listen: () => Promise<string>;
   drain: () => void;
@@ -210,5 +212,5 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     })();
     return closing;
   };
-  return { fastify, database, auth, eventStream, searchService, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
+  return { fastify, database, auth, eventStream, searchService, playlists, scheduler, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
 }

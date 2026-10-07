@@ -186,6 +186,21 @@ export const publicPlaylistBinding = sqliteTable("public_playlist_binding", {
   check("public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
 ]);
 
+export const retiredPublicPlaylistBinding = sqliteTable("retired_public_playlist_binding", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  name: text("name").notNull(),
+  generation: integer("generation").notNull(),
+  invalidatedAt: integer("invalidated_at").notNull()
+}, table => [
+  index("retired_public_playlist_binding_room_generation_index").on(table.roomId, table.generation),
+  index("retired_public_playlist_binding_account_playlist_index").on(table.accountId, table.playlistId),
+  check("retired_public_playlist_binding_generation_valid", sql`${table.generation} > 0`),
+  check("retired_public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
+]);
+
 // 真实账号请求启动预算与风控暂停持久化；执行权在发送前短事务中认领。
 export const upstreamAccount = sqliteTable("upstream_account", {
   accountId: text("account_id").primaryKey(),
@@ -269,7 +284,7 @@ export const requesterTag = sqliteTable("requester_tag", {
 ]);
 
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;
