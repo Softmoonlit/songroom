@@ -102,7 +102,9 @@ function DeleteRoomDialog({
                     <p>
                       <strong>公共歌单：</strong>
                       {deletion.publicPlaylist
-                        ? `专用歌单“${deletion.publicPlaylist.name}”（ID: ${deletion.publicPlaylist.id}），将启动网易云删除清理`
+                        ? deletion.publicPlaylist.id
+                          ? `专用歌单“${deletion.publicPlaylist.name}”（ID: ${deletion.publicPlaylist.id}），将启动网易云删除清理`
+                          : `在途创建的公共歌单“${deletion.publicPlaylist.name}”，将停止创建并视情况启动云端清理`
                         : "无专用公共歌单，无需云端清理"}
                     </p>
                     <p className="version-tag">聚合版本：v{deletion.version}</p>
@@ -111,7 +113,7 @@ function DeleteRoomDialog({
                     <li>本地立即永久删除房间，所有设备与成员马上失去访问</li>
                     <li>彻底清除全部成员关系、昵称、邀请码及待审批申请</li>
                     <li>彻底清除全部点歌人标签及公共歌单绑定引用</li>
-                    {deletion.publicPlaylist?.willCleanUp && (
+                    {deletion.publicPlaylist && (
                       <li>仅为该房间创建的专用公共歌单启动云端删除，不影响其他房间与账号</li>
                     )}
                     <li>房间不提供恢复入口，所有数据不可撤销</li>

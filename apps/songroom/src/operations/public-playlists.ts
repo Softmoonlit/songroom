@@ -840,7 +840,24 @@ export class PublicPlaylists {
     this.database.delete(commandReceipt).where(sql`${commandReceipt.expiresAt} <= ${this.now()}`).run();
   }
 
-  start(): void { this.scheduler.start(); }
+  start(): void {
+    this.#recoverCleanups();
+    this.scheduler.start();
+  }
+
+  #recoverCleanups(): void {
+    const cleanups = this.database.select().from(publicPlaylistCleanup).all();
+    for (const c of cleanups) {
+      if (c.status === "sending") {
+        this.database.update(publicPlaylistCleanup).set({
+          status: "awaitingConfirmation",
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, c.id)).run();
+      } else if (c.status === "ready") {
+        this.dispatchCleanup(c.id);
+      }
+    }
+  }
   stop(): void {
     for (const timer of this.#checkTimers.values()) clearTimeout(timer);
     this.#checkTimers.clear();
@@ -938,10 +955,45 @@ export class PublicPlaylists {
   #bind(row: Operation): void {
     // 创建 ID 已在独立提交中保存；关联失败不会抹掉上游资源证据。
     let boundPlaylistId: string | null = null;
+    let lateCleanupId: string | null = null;
     this.database.transaction(tx => {
       const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get()!;
       const condition = this.#conditions(row);
       if (condition !== "valid") {
+        const roomExists = tx.select({ id: room.id }).from(room).where(eq(room.id, row.roomId)).get();
+        if (!roomExists && detail.playlistId) {
+          const existingCleanup = tx.select().from(publicPlaylistCleanup)
+            .where(and(eq(publicPlaylistCleanup.accountId, row.accountId!), eq(publicPlaylistCleanup.playlistId, detail.playlistId))).get();
+          if (!existingCleanup) {
+            const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, row.userId)).get();
+            const isAuthActive = auth && auth.status === "active" && auth.accountId === row.accountId;
+            const isPaused = isAuthActive ? this.scheduler.paused(row.accountId!) : false;
+            let status: typeof publicPlaylistCleanup.$inferSelect["status"] = "waitingAuthorization";
+            let lastErrorCode: string | null = null;
+            if (!isAuthActive) {
+              status = "waitingAuthorization";
+              lastErrorCode = "AUTH_UNAVAILABLE";
+            } else if (isPaused) {
+              status = "needsAdministrator";
+              lastErrorCode = "ACCOUNT_PAUSED";
+            } else {
+              status = "ready";
+            }
+            const cleanupId = v7();
+            tx.insert(publicPlaylistCleanup).values({
+              id: cleanupId,
+              userId: row.userId,
+              accountId: row.accountId!,
+              playlistId: detail.playlistId,
+              creationOperationId: row.id,
+              status,
+              lastErrorCode,
+              createdAt: this.now(),
+              updatedAt: this.now()
+            }).run();
+            lateCleanupId = cleanupId;
+          }
+        }
         this.#conditionStatus(row, condition, true);
         return;
       }
@@ -993,6 +1045,9 @@ export class PublicPlaylists {
       this.#status(row.id, "succeeded");
       boundPlaylistId = targetPlaylistId;
     });
+    if (lateCleanupId) {
+      this.dispatchCleanup(lateCleanupId);
+    }
     if (boundPlaylistId) {
       const currentRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
       if (currentRoom) {
@@ -1826,6 +1881,23 @@ export class PublicPlaylists {
     }
   }
 
+  readPublicPlaylistTarget(roomId: string): { id: string | null; name: string } | null {
+    const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
+    if (binding) {
+      return { id: binding.playlistId, name: binding.name };
+    }
+    const op = this.database.select().from(operation)
+      .where(and(eq(operation.roomId, roomId), eq(operation.kind, "createPublicPlaylist"))).get();
+    if (op && ["queued", "processing"].includes(op.status)) {
+      const creation = this.database.select().from(publicPlaylistCreation)
+        .where(eq(publicPlaylistCreation.operationId, op.id)).get();
+      if (creation) {
+        return { id: creation.playlistId, name: creation.name };
+      }
+    }
+    return null;
+  }
+
   readPublicPlaylistBinding(roomId: string) {
     return this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
   }
@@ -1864,10 +1936,16 @@ export class PublicPlaylists {
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
+        if (op.kind === "createPublicPlaylist") {
+          tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, op.id)).run();
+        } else if (op.kind === "requestPublicSong") {
+          tx.delete(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).run();
+        }
         tx.delete(operation).where(eq(operation.id, op.id)).run();
       } else if (op.kind === "createPublicPlaylist") {
         const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, op.id)).get();
         if (!detail || ["ready", "verified"].includes(detail.step)) {
+          if (detail) tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, op.id)).run();
           tx.delete(operation).where(eq(operation.id, op.id)).run();
         } else if (detail.playlistId) {
           if (!target) {
@@ -1890,6 +1968,7 @@ export class PublicPlaylists {
       } else if (op.kind === "requestPublicSong") {
         const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
         if (!detail || ["ready", "verified"].includes(detail.step)) {
+          if (detail) tx.delete(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).run();
           tx.delete(operation).where(eq(operation.id, op.id)).run();
         } else {
           const anonymousId = v7();

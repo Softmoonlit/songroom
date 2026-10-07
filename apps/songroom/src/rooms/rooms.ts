@@ -290,6 +290,11 @@ export class Rooms {
     return outcome.members;
   }
 
+  #requirePublicPlaylists(): PublicPlaylists {
+    if (!this.publicPlaylists) throw new Error("PublicPlaylists 模块未就绪");
+    return this.publicPlaylists;
+  }
+
   readDeletion(userId: string, roomId: string): z.infer<typeof roomDeletionView> {
     const shell = this.readShell(userId, roomId);
     if (shell.room.role !== "owner") {
@@ -300,11 +305,10 @@ export class Rooms {
     const pendingApplicationCount = this.database.select({ value: count() })
       .from(joinApplication).where(and(eq(joinApplication.roomId, roomId), eq(joinApplication.status, "pending"))).get()!.value;
 
-    const binding = this.publicPlaylists?.readPublicPlaylistBinding(roomId);
-    const publicPlaylist = binding ? {
-      id: binding.playlistId,
-      name: binding.name,
-      willCleanUp: true
+    const target = this.#requirePublicPlaylists().readPublicPlaylistTarget(roomId);
+    const publicPlaylist = target ? {
+      id: target.id,
+      name: target.name
     } : null;
 
     return {
@@ -339,7 +343,7 @@ export class Rooms {
       const members = tx.select({ userId: roomMembership.userId }).from(roomMembership).where(eq(roomMembership.roomId, roomId)).all();
       const memberUserIds = members.map(m => m.userId);
 
-      const { cleanupId } = this.publicPlaylists?.terminateRoomInTx(tx, roomId, userId) ?? { cleanupId: null };
+      const { cleanupId } = this.#requirePublicPlaylists().terminateRoomInTx(tx, roomId, userId);
 
       tx.delete(joinApplication).where(eq(joinApplication.roomId, roomId)).run();
       tx.delete(roomInvite).where(eq(roomInvite.roomId, roomId)).run();
@@ -368,11 +372,11 @@ export class Rooms {
       }
 
       if (outcome.cleanupId) {
-        this.publicPlaylists?.dispatchCleanup(outcome.cleanupId);
+        this.#requirePublicPlaylists().dispatchCleanup(outcome.cleanupId);
       }
     }
 
-    let cleanupInfo: { id: string; status: string } | null = null;
+    let cleanupInfo: RoomDeleteResult["cleanup"] = null;
     if (outcome.cleanupId) {
       const cRow = this.database.select({ id: publicPlaylistCleanup.id, status: publicPlaylistCleanup.status })
         .from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, outcome.cleanupId)).get();
@@ -387,6 +391,6 @@ export class Rooms {
   }
 
   readCleanups(userId: string): z.infer<typeof publicPlaylistCleanupList> {
-    return this.publicPlaylists?.readCleanups(userId) ?? { cleanups: [] };
+    return this.#requirePublicPlaylists().readCleanups(userId);
   }
 }

@@ -52,10 +52,14 @@ export const roomLeaveResult = z.strictObject({ ok: z.literal(true), roomId: uui
 export const memberParams = z.strictObject({ roomId: uuidv7, memberId: uuidv7 });
 export const roomMemberRemoveCommand = z.strictObject({ idempotencyKey: uuidv7, version: z.number().int().positive() });
 
+export const publicPlaylistCleanupStatus = z.enum([
+  "ready", "sending", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed"
+]);
+export type PublicPlaylistCleanupStatus = z.infer<typeof publicPlaylistCleanupStatus>;
+
 export const roomDeletionPublicPlaylist = z.object({
-  id: z.string(),
-  name: z.string(),
-  willCleanUp: z.boolean()
+  id: z.string().nullable(),
+  name: z.string()
 }).nullable();
 
 export const roomDeletionView = z.object({
@@ -78,13 +82,9 @@ export const roomDeleteResult = z.strictObject({
   roomId: uuidv7,
   cleanup: z.object({
     id: uuidv7,
-    status: z.string()
+    status: publicPlaylistCleanupStatus
   }).nullable()
 });
-
-export const publicPlaylistCleanupStatus = z.enum([
-  "ready", "sending", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed"
-]);
 
 export const publicPlaylistCleanupItem = z.object({
   id: uuidv7,

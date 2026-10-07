@@ -239,7 +239,7 @@ test("删除确认后返回房间列表，房间已移除，且显示独立的�
         version: 1,
         memberCount: 1,
         pendingApplicationCount: 0,
-        publicPlaylist: { id: "pl-cloud-1", name: "songroom-测试音乐间-公共", willCleanUp: true },
+        publicPlaylist: { id: "pl-cloud-1", name: "songroom-测试音乐间-公共" },
         allowedActions: ["deleteRoom"],
         disabledReasons: {}
       }
@@ -299,7 +299,7 @@ test("响应式与无障碍：在 320px/900px/1440px 弹窗与清理状态正常
         version: 1,
         memberCount: 2,
         pendingApplicationCount: 0,
-        publicPlaylist: { id: "pl-cloud-1", name: "songroom-测试音乐间-公共", willCleanUp: true },
+        publicPlaylist: { id: "pl-cloud-1", name: "songroom-测试音乐间-公共" },
         allowedActions: ["deleteRoom"],
         disabledReasons: {}
       }
