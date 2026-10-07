@@ -75,6 +75,8 @@ describe("database lifecycle", () => {
       "playlist_track",
       "public_playlist_binding",
       "public_playlist_creation",
+      "public_song_request",
+      "requester_tag",
       "retired_room_invite",
       "room",
       "room_invite",

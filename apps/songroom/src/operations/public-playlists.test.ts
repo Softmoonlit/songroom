@@ -13,6 +13,7 @@ import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { PublicPlaylists } from "./public-playlists.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
+import { EventStreamService } from "../events/event-stream.js";
 
 class Adapter implements NeteaseAdapter {
   inputs: AdapterInput[] = [];
@@ -49,13 +50,14 @@ function fixture() {
   const scope = { authorizationId, accountId: "cloud-owner", generation: 1 };
   database.insert(neteaseAuthorization).values({ id: authorizationId, userId: "owner", accountId: scope.accountId, generation: 1, nickname: "房主", status: "active", credentials: vault.encrypt("MUSIC_U=owner", scope) }).run();
   const adapter = new Adapter();
+  const eventStream = new EventStreamService();
   const modules: PublicPlaylists[] = [];
   fixtures.push({ root, database, modules });
   const clockStartedAt = Date.now();
   function module(now?: () => number) {
     const clock = now ? () => now() + Date.now() - clockStartedAt : undefined;
     const scheduler = new UpstreamScheduler(database, clock);
-    const result = new PublicPlaylists(database, adapter, vault, scheduler, clock); modules.push(result); return result;
+    const result = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, clock); modules.push(result); return result;
   }
   return { database, adapter, roomId, module, authorizationId, vault, dbPath, keyPath };
 }
@@ -132,7 +134,7 @@ it("重开 SQLite 后仍等待持久的下一次启动时间，不突发请求",
   first.stop(); await first.settle();
   const reopened = openDatabase(f.dbPath);
   const restartedScheduler = new UpstreamScheduler(reopened);
-  const restarted = new PublicPlaylists(reopened, f.adapter, f.vault, restartedScheduler);
+  const restarted = new PublicPlaylists(reopened, f.adapter, f.vault, restartedScheduler, new EventStreamService());
   try {
     restarted.start(); await vi.advanceTimersByTimeAsync(999);
     expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
@@ -436,11 +438,13 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
   const schedPath = fileURLToPath(new URL("./upstream-scheduling.ts", import.meta.url));
   const databasePath = fileURLToPath(new URL("../db/database.ts", import.meta.url));
   const vaultPath = fileURLToPath(new URL("../netease/credentials.ts", import.meta.url));
+  const eventStreamPath = fileURLToPath(new URL("../events/event-stream.ts", import.meta.url));
   const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
     import { PublicPlaylists } from ${JSON.stringify(modulePath)};
     import { UpstreamScheduler } from ${JSON.stringify(schedPath)};
     import { openDatabase } from ${JSON.stringify(databasePath)};
     import { CredentialVault } from ${JSON.stringify(vaultPath)};
+    import { EventStreamService } from ${JSON.stringify(eventStreamPath)};
     const adapter = {
       async call(input) {
         if (input.operation === 'identity') return { ok: true, data: { accountId: 'cloud-owner', name: 'owner' } };
@@ -450,7 +454,7 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
     };
     const db = openDatabase(${JSON.stringify(f.dbPath)});
     const scheduler = new UpstreamScheduler(db);
-    new PublicPlaylists(db, adapter, new CredentialVault(${JSON.stringify(f.keyPath)}), scheduler).start();
+    new PublicPlaylists(db, adapter, new CredentialVault(${JSON.stringify(f.keyPath)}), scheduler, new EventStreamService()).start();
   `], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let stderr = ""; child.stderr!.on("data", chunk => { stderr += chunk.toString(); });
   try {
@@ -478,7 +482,7 @@ it("空泵正在退出时接受的新命令仍会推进", async () => {
 it("两个真实 SQLite 连接同时受理同房间，仅一份操作且所有键指向该操作", async () => {
   const f = fixture(); const first = f.module(); const anotherDatabase = openDatabase(f.dbPath);
   const secondScheduler = new UpstreamScheduler(anotherDatabase);
-  const second = new PublicPlaylists(anotherDatabase, f.adapter, f.vault, secondScheduler);
+  const second = new PublicPlaylists(anotherDatabase, f.adapter, f.vault, secondScheduler, new EventStreamService());
   try {
     const keys = Array.from({ length: 12 }, () => v7());
     const accepted = await Promise.all(keys.map(async (idempotencyKey, index) => (index % 2 ? first : second).create("owner", f.roomId, { idempotencyKey })));

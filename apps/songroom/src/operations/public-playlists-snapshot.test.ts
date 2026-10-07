@@ -11,6 +11,7 @@ import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { PublicPlaylists } from "./public-playlists.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
+import { EventStreamService } from "../events/event-stream.js";
 
 class MockAdapter implements NeteaseAdapter {
   inputs: AdapterInput[] = [];
@@ -101,7 +102,8 @@ function fixture() {
 
   function module() {
     const scheduler = new UpstreamScheduler(database, now);
-    const result = new PublicPlaylists(database, adapter, vault, scheduler, now);
+    const eventStream = new EventStreamService();
+    const result = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now);
     modules.push(result);
     return result;
   }
@@ -200,8 +202,8 @@ describe("09: 读取并刷新权威公共歌单快照", () => {
     const view1 = await service.refresh("member", f.roomId);
     expect(view1.snapshot?.version).toBe(1);
     expect(view1.snapshot?.tracks).toEqual([
-      { position: 0, songId: "s1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
-      { position: 1, songId: "s2", name: "七里香", artists: ["周杰伦"], album: "七里香" }
+      { position: 0, songId: "s1", name: "晴天", artists: ["周杰伦"], album: "叶惠美", requesters: [] },
+      { position: 1, songId: "s2", name: "七里香", artists: ["周杰伦"], album: "七里香", requesters: [] }
     ]);
 
     // 第二次刷新：云端顺序调整，移除 s1，新增 s3
@@ -221,8 +223,8 @@ describe("09: 读取并刷新权威公共歌单快照", () => {
     const view2 = await service.refresh("owner", f.roomId);
     expect(view2.snapshot?.version).toBe(2);
     expect(view2.snapshot?.tracks).toEqual([
-      { position: 0, songId: "s2", name: "七里香", artists: ["周杰伦"], album: "七里香" },
-      { position: 1, songId: "s3", name: "稻香", artists: ["周杰伦"], album: "魔杰座" }
+      { position: 0, songId: "s2", name: "七里香", artists: ["周杰伦"], album: "七里香", requesters: [] },
+      { position: 1, songId: "s3", name: "稻香", artists: ["周杰伦"], album: "魔杰座", requesters: [] }
     ]);
 
     // 数据库中不再存在的 s1 已被清理

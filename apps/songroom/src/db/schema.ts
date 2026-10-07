@@ -135,7 +135,7 @@ export const joinApplication = sqliteTable("join_application", {
 // 封闭业务操作信封；原始归属不用级联外键，可能已发的创建证据不能随实体删除。
 export const operation = sqliteTable("operation", {
   id: text("id").primaryKey(),
-  kind: text("kind", { enum: ["createPublicPlaylist"] }).notNull(),
+  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong"] }).notNull(),
   userId: text("user_id").notNull(),
   roomId: text("room_id").notNull(),
   accountId: text("account_id"),
@@ -147,10 +147,11 @@ export const operation = sqliteTable("operation", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
-  check("operation_kind_valid", sql`${table.kind} = 'createPublicPlaylist'`),
+  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong')`),
   check("operation_status_valid", sql`${table.status} IN ('queued', 'processing', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed', 'stopped')`),
   check("operation_recovery_scope_valid", sql`(${table.status} IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NULL AND ${table.authorizationId} IS NULL AND ${table.generation} IS NULL) OR (${table.status} NOT IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NOT NULL AND ${table.authorizationId} IS NOT NULL AND ${table.generation} IS NOT NULL AND ${table.generation} > 0)`),
   uniqueIndex("operation_pending_public_room_unique").on(table.roomId).where(sql`${table.kind} = 'createPublicPlaylist' AND ${table.status} NOT IN ('succeeded', 'failed', 'stopped')`),
+  uniqueIndex("operation_pending_user_room_unique").on(table.roomId, table.userId).where(sql`${table.status} NOT IN ('succeeded', 'failed', 'stopped')`),
   index("operation_room_created_index").on(table.roomId, table.createdAt)
 ]);
 
@@ -225,8 +226,36 @@ export const playlistTrack = sqliteTable("playlist_track", {
   check("playlist_track_name_valid", sql`length(${table.name}) > 0`)
 ]);
 
+export const publicSongRequest = sqliteTable("public_song_request", {
+  operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
+  songId: text("song_id").notNull(),
+  name: text("name").notNull(),
+  artists: text("artists").notNull(),
+  album: text("album").notNull(),
+  step: text("step", { enum: ["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
+  songConfirmed: integer("song_confirmed", { mode: "boolean" }).notNull().default(false),
+  tagConfirmed: integer("tag_confirmed", { mode: "boolean" }).notNull().default(false)
+}, table => [
+  check("public_song_request_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'tagging', 'succeeded', 'rejected', 'unknown', 'stopped')`),
+  check("public_song_request_song_id_valid", sql`length(${table.songId}) > 0`),
+  check("public_song_request_name_valid", sql`length(${table.name}) > 0`)
+]);
+
+export const requesterTag = sqliteTable("requester_tag", {
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
+  bindingGeneration: integer("binding_generation").notNull(),
+  songId: text("song_id").notNull(),
+  memberId: text("member_id").notNull().references(() => roomMembership.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at").notNull()
+}, table => [
+  primaryKey({ columns: [table.roomId, table.bindingGeneration, table.songId, table.memberId] }),
+  index("requester_tag_room_song_index").on(table.roomId, table.bindingGeneration, table.songId),
+  check("requester_tag_generation_valid", sql`${table.bindingGeneration} > 0`),
+  check("requester_tag_song_id_valid", sql`length(${table.songId}) > 0`)
+]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

@@ -8,7 +8,8 @@ export const publicPlaylistTrack = z.strictObject({
   songId: z.string().min(1),
   name: z.string(),
   artists: z.array(z.string()),
-  album: z.string()
+  album: z.string(),
+  requesters: z.array(z.string())
 });
 export type PublicPlaylistTrack = z.infer<typeof publicPlaylistTrack>;
 
@@ -26,7 +27,7 @@ export const publicPlaylistOperation = z.strictObject({
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"])
 });
 
-export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist"]);
+export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist", "requestSong"]);
 export type PublicPlaylistAction = z.infer<typeof publicPlaylistAction>;
 
 export const publicPlaylistView = z.strictObject({
@@ -40,3 +41,33 @@ export const publicPlaylistView = z.strictObject({
 });
 export type PublicPlaylistView = z.infer<typeof publicPlaylistView>;
 export type PublicPlaylistCreateCommand = z.infer<typeof publicPlaylistCreateCommand>;
+
+export const publicSongRequestCommand = z.strictObject({
+  idempotencyKey: uuidv7,
+  songId: z.string().min(1),
+  name: z.string().min(1),
+  artists: z.array(z.string()),
+  album: z.string()
+});
+export type PublicSongRequestCommand = z.infer<typeof publicSongRequestCommand>;
+
+export const songRequestOperationView = z.strictObject({
+  id: uuidv7,
+  roomId: uuidv7,
+  songId: z.string().min(1),
+  name: z.string().min(1),
+  artists: z.array(z.string()),
+  album: z.string(),
+  status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
+  songConfirmed: z.boolean(),
+  tagConfirmed: z.boolean(),
+  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED")]).nullable(),
+  step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"])
+});
+export type SongRequestOperationView = z.infer<typeof songRequestOperationView>;
+
+export const songRequestResponse = z.strictObject({
+  replay: z.boolean(),
+  operation: songRequestOperationView
+});
+export type SongRequestResponse = z.infer<typeof songRequestResponse>;

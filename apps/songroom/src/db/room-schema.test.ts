@@ -4,7 +4,8 @@ import path from "node:path";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "./database.js";
-import { playlistSnapshot, playlistTrack, room, roomInvite, roomMembership, user } from "./schema.js";
+import { sql } from "drizzle-orm";
+import { operation, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
 import { roomNickname } from "../shared/room-contracts.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase }> = [];
@@ -57,4 +58,86 @@ it("歌单快照及歌曲表维护外键级联、单调版本与位置唯一性"
   // 级联删除
   database.delete(playlistSnapshot).run();
   expect(database.select().from(playlistTrack).all()).toHaveLength(0);
+});
+
+it("点歌人标签去重且随成员注销或房间删除级联清理，拒绝悬空外键", () => {
+  const { database, roomId } = fixture();
+  const memberId = v7();
+  database.insert(roomMembership).values({ id: memberId, roomId, userId: "roommate", nickname: "室友A" }).run();
+
+  database.insert(requesterTag).values({ roomId, bindingGeneration: 1, songId: "s-100", memberId, createdAt: Date.now() }).run();
+
+  // 同成员同歌曲重复插入抛出主键冲突
+  expect(() => database.insert(requesterTag).values({ roomId, bindingGeneration: 1, songId: "s-100", memberId, createdAt: Date.now() }).run()).toThrow();
+
+  // 另一成员可点同一首歌
+  const member2Id = v7();
+  database.insert(roomMembership).values({ id: member2Id, roomId, userId: "another", nickname: "室友B" }).run();
+  database.insert(requesterTag).values({ roomId, bindingGeneration: 1, songId: "s-100", memberId: member2Id, createdAt: Date.now() }).run();
+
+  expect(database.select().from(requesterTag).all()).toHaveLength(2);
+
+  // 成员移除级联删除其标签，不影响其他成员标签
+  database.delete(roomMembership).where(sql`${roomMembership.id} = ${memberId}`).run();
+  const remaining = database.select().from(requesterTag).all();
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0].memberId).toBe(member2Id);
+
+  // 房间删除级联清空全部标签
+  database.delete(room).where(sql`${room.id} = ${roomId}`).run();
+  expect(database.select().from(requesterTag).all()).toHaveLength(0);
+});
+
+it("操作信封支持 requestPublicSong 且严格限制同一成员同一房间最多一项未完成操作", () => {
+  const { database, roomId } = fixture();
+  const opId = v7();
+  database.insert(operation).values({
+    id: opId,
+    kind: "requestPublicSong",
+    userId: "roommate",
+    roomId,
+    accountId: "acc-1",
+    authorizationId: "auth-1",
+    generation: 1,
+    status: "queued",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
+
+  database.insert(publicSongRequest).values({
+    operationId: opId,
+    songId: "s-100",
+    name: "稻香",
+    artists: JSON.stringify(["周杰伦"]),
+    album: "魔杰座",
+    step: "ready"
+  }).run();
+
+  // 同一成员在同一房间尝试插入第二项未完成操作被唯一索引拒绝
+  expect(() => database.insert(operation).values({
+    id: v7(),
+    kind: "requestPublicSong",
+    userId: "roommate",
+    roomId,
+    accountId: "acc-1",
+    authorizationId: "auth-1",
+    generation: 1,
+    status: "queued",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run()).toThrow();
+
+  // 另一成员可以有未完成操作
+  expect(() => database.insert(operation).values({
+    id: v7(),
+    kind: "requestPublicSong",
+    userId: "another",
+    roomId,
+    accountId: "acc-1",
+    authorizationId: "auth-1",
+    generation: 1,
+    status: "queued",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run()).not.toThrow();
 });

@@ -88,9 +88,9 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
         syncedAt: Date.now() - 30000,
         trackCount: 3,
         tracks: [
-          { position: 0, songId: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
-          { position: 1, songId: "s-2", name: "七里香", artists: ["周杰伦"], album: "七里香" },
-          { position: 2, songId: "s-3", name: "夜曲", artists: ["周杰伦"], album: "十一月的萧邦" }
+          { position: 0, songId: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美", requesters: [] },
+          { position: 1, songId: "s-2", name: "七里香", artists: ["周杰伦"], album: "七里香", requesters: [] },
+          { position: 2, songId: "s-3", name: "夜曲", artists: ["周杰伦"], album: "十一月的萧邦", requesters: [] }
         ]
       },
       lastRefreshError: null,
@@ -132,7 +132,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
         syncedAt: 1700000000000,
         trackCount: 1,
         tracks: [
-          { position: 0, songId: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }
+          { position: 0, songId: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美", requesters: [] }
         ]
       },
       lastRefreshError: null,

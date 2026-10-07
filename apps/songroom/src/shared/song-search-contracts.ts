@@ -1,0 +1,32 @@
+import { z } from "zod";
+import { adapterErrorCodeSchema } from "../netease/protocol.js";
+import { uuidv7 } from "./contracts.js";
+
+export const songCandidate = z.strictObject({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  artists: z.array(z.string()),
+  album: z.string()
+});
+export type SongCandidate = z.infer<typeof songCandidate>;
+
+export const searchCommand = z.strictObject({
+  query: z.string().trim().min(1).max(400)
+});
+export type SearchCommand = z.infer<typeof searchCommand>;
+
+export const searchInitiatedResponse = z.strictObject({
+  searchId: uuidv7
+});
+export type SearchInitiatedResponse = z.infer<typeof searchInitiatedResponse>;
+
+export const searchStatus = z.enum(["searching", "completed", "failed"]);
+export type SearchStatus = z.infer<typeof searchStatus>;
+
+export const searchView = z.strictObject({
+  searchId: uuidv7,
+  status: searchStatus,
+  songs: z.array(songCandidate),
+  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("UPSTREAM_QUEUE_FULL")]).nullable()
+});
+export type SearchView = z.infer<typeof searchView>;

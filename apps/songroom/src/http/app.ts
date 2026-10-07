@@ -4,6 +4,7 @@ import os from "node:os";
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import fastifyStatic from "@fastify/static";
+import { fastifySSE } from "@fastify/sse";
 import { createAuth, type SongRoomAuth } from "../auth.js";
 import { errorResponse, healthResponse } from "../shared/contracts.js";
 import { BusinessError } from "../shared/errors.js";
@@ -22,6 +23,10 @@ import { registerInviteRoutes } from "./invites.js";
 import { PublicPlaylists } from "../operations/public-playlists.js";
 import { UpstreamScheduler } from "../operations/upstream-scheduling.js";
 import { registerPublicPlaylistRoutes } from "./public-playlists.js";
+import { EventStreamService } from "../events/event-stream.js";
+import { SongSearchService } from "../operations/song-search.js";
+import { registerSongSearchRoutes } from "./song-search.js";
+import { requireSession } from "./session.js";
 
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 
@@ -29,6 +34,8 @@ export interface SongRoomApp {
   fastify: FastifyInstance;
   database: AppDatabase;
   auth: SongRoomAuth;
+  eventStream: EventStreamService;
+  searchService: SongSearchService;
   getState: () => RuntimeState;
   listen: () => Promise<string>;
   drain: () => void;
@@ -65,7 +72,9 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   }
   const auth = createAuth(database, config);
   const scheduler = new UpstreamScheduler(database, dependencies.now);
-  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, dependencies.now);
+  const eventStream = new EventStreamService();
+  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
+  const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
   let state: RuntimeState = "starting";
   let closing: Promise<void> | undefined;
 
@@ -99,6 +108,9 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       setHeaders: (response, file) => {
         if (!/-[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9]+$/.test(path.basename(file))) response.setHeader("cache-control", "no-store");
       }
+    });
+    await fastify.register(fastifySSE, {
+      heartbeatInterval: 30000
     });
 
     fastify.addHook("onRequest", async (request, reply) => {
@@ -141,6 +153,13 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     registerRoomRoutes(fastify, auth, new Rooms(database, binding, dependencies.now));
     registerInviteRoutes(fastify, auth, new Invites(database, dependencies.now));
     registerPublicPlaylistRoutes(fastify, auth, playlists);
+    registerSongSearchRoutes(fastify, auth, searchService);
+
+    fastify.get("/api/events", { sse: "only" }, async (request, reply) => {
+      const principal = await requireSession(auth, request, reply);
+      reply.header("cache-control", "no-store");
+      await eventStream.subscribe(principal.userId, reply);
+    });
 
     const readStatus = () => ({ status: state, service: "songroom" as const, schemaVersion: CURRENT_SCHEMA_VERSION });
     typed.get("/healthz", { schema: { response: { 200: healthResponse, 503: healthResponse } } }, async (_request, reply) => {
@@ -171,6 +190,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     if (state !== "stopped" && state !== "draining") {
       state = "draining";
       scheduler.stop();
+      eventStream.close();
       binding.clear();
       fastify.log.info({ state }, "application lifecycle");
     }
@@ -190,5 +210,5 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     })();
     return closing;
   };
-  return { fastify, database, auth, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
+  return { fastify, database, auth, eventStream, searchService, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
 }

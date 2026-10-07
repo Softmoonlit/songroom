@@ -53,19 +53,22 @@ export function request<T>(
   path: string,
   schema: z.ZodType<T>,
   signal?: AbortSignal,
-  body?: unknown
+  body?: unknown,
+  method?: string
 ): Promise<T> {
-  return apiRequest(`/rooms${path}`, schema, signal, body);
+  return apiRequest(`/rooms${path}`, schema, signal, body, method);
 }
 
 export async function apiRequest<T>(
   path: string,
   schema: z.ZodType<T>,
   signal?: AbortSignal,
-  body?: unknown
+  body?: unknown,
+  method?: string
 ): Promise<T> {
+  const httpMethod = method ?? (body === undefined ? "GET" : "POST");
   const response = await fetch(`/api${path}`, {
-    method: body === undefined ? "GET" : "POST",
+    method: httpMethod,
     headers:
       body === undefined
         ? { Accept: "application/json" }

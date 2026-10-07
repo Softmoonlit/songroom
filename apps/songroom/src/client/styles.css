@@ -1311,3 +1311,222 @@ h1 {
   white-space: nowrap;
 }
 
+/* 点歌人标签 */
+.track-requesters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.requester-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  background: #ede9fe;
+  color: #5b21b6;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 直接单曲搜索吸顶工具栏 */
+.sticky-search-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
+  padding: 0.85rem 0;
+  border-top: 1px solid #edf0f5;
+  border-bottom: 1px solid #edf0f5;
+  margin: 1rem 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.search-input-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
+}
+
+.search-input-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 0.75rem;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 0.55rem 0.75rem 0.55rem 2.2rem;
+  font-size: 0.95rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-sizing: border-box;
+  background: #f9fafb;
+}
+
+.search-input:focus-visible {
+  outline: 2px solid #7357e8;
+  border-color: #7357e8;
+  background: #ffffff;
+}
+
+.search-submit-button,
+.search-cancel-button {
+  flex-shrink: 0;
+}
+
+.search-results-panel {
+  margin-top: 0.75rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.search-progress-text,
+.search-empty-text {
+  font-size: 0.9rem;
+  color: #64748b;
+  padding: 0.5rem 0;
+  margin: 0;
+}
+
+.candidate-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+  max-height: 260px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.candidate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid #f1f5f9;
+  gap: 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.candidate-item:last-child {
+  border-bottom: none;
+}
+
+.candidate-item:hover,
+.candidate-item:focus-visible {
+  background: #f5f3ff;
+  outline: 2px solid #7357e8;
+  outline-offset: -2px;
+}
+
+.candidate-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.candidate-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-meta {
+  font-size: 0.8rem;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-select-btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+
+.selected-song-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0.75rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  box-sizing: border-box;
+}
+
+.selected-song-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 140px;
+}
+
+.selected-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7357e8;
+  text-transform: uppercase;
+}
+
+.selected-song-name {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.selected-song-meta {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.selected-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.selected-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.song-request-status {
+  color: #2563eb;
+  margin-top: 0.5rem;
+}
+
+.song-request-error {
+  color: #dc2626;
+  margin-top: 0.5rem;
+}
+
+

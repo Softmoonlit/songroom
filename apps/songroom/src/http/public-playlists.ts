@@ -1,10 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import type { SongRoomAuth } from "../auth.js";
 import type { PublicPlaylists } from "../operations/public-playlists.js";
-import { publicPlaylistCreateCommand, publicPlaylistView } from "../shared/public-playlist-contracts.js";
+import { publicPlaylistCreateCommand, publicPlaylistView, publicSongRequestCommand, songRequestOperationView, songRequestResponse } from "../shared/public-playlist-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
+import { uuidv7 } from "../shared/contracts.js";
 import { requireSession } from "./session.js";
 import type { ZodProvider } from "./zod.js";
+
+const operationParams = roomParams.extend({
+  operationId: uuidv7
+});
 
 export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoomAuth, playlists: PublicPlaylists): void {
   const typed = app.withTypeProvider<ZodProvider>();
@@ -21,5 +26,14 @@ export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoo
     const principal = await requireSession(auth, request, reply);
     const view = await playlists.refresh(principal.userId, request.params.roomId);
     return reply.code(200).send(view);
+  });
+  typed.post("/api/rooms/:roomId/song-requests", { schema: { params: roomParams, body: publicSongRequestCommand, response: { 200: songRequestResponse, 202: songRequestResponse } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const accepted = playlists.requestSong(principal.userId, request.params.roomId, request.body);
+    return reply.code(accepted.replay ? 200 : 202).send(accepted);
+  });
+  typed.get("/api/rooms/:roomId/song-requests/:operationId", { schema: { params: operationParams, response: { 200: songRequestOperationView } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    return playlists.readOperation(principal.userId, request.params.roomId, request.params.operationId);
   });
 }

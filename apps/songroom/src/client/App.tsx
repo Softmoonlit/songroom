@@ -11,6 +11,7 @@ import { RoomPage } from "./RoomWorkspace";
 import { InviteProvider, JoinEntry, useInviteContext } from "./InviteContext";
 import { JoinPage } from "./JoinPage";
 import { ApplicationPage } from "./ApplicationPage";
+import { useEventStream } from "./useEventStream";
 
 type SessionData = {
   session: { id: string; expiresAt: string };
@@ -109,6 +110,8 @@ function AppContent() {
     retry: false,
     refetchOnWindowFocus: false
   });
+
+  useEventStream(Boolean(sessionQuery.data));
 
   async function onAuthenticated(): Promise<void> {
     const result = await sessionQuery.refetch({ throwOnError: true });
