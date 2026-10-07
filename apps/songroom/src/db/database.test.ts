@@ -71,6 +71,8 @@ describe("database lifecycle", () => {
       "join_application",
       "netease_authorization",
       "operation",
+      "playlist_snapshot",
+      "playlist_track",
       "public_playlist_binding",
       "public_playlist_creation",
       "retired_room_invite",

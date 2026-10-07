@@ -64,6 +64,13 @@
       "when": 1791302134530,
       "tag": "0008_bounded_upstream_scheduling",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791345800000,
+      "tag": "0009_playlist_snapshot",
+      "breakpoints": true
     }
   ]
 }

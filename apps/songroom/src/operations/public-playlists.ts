@@ -1,7 +1,7 @@
 import { v7 } from "uuid";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding, publicPlaylistCreation, room, roomMembership } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCreation, room, roomMembership } from "../db/schema.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
@@ -18,6 +18,8 @@ const authorizationErrors = new Set(["AUTH_UNAVAILABLE", "ACCOUNT_EMPTY", "ACCOU
 
 /** 只接受公共歌单创建意图。start 必须在 HTTP 成功监听后调用；事务始终同步。 */
 export class PublicPlaylists {
+  readonly #inFlightRefreshes = new Map<string, Promise<void>>();
+
   constructor(
     readonly database: AppDatabase,
     readonly adapter: NeteaseAdapter,
@@ -50,14 +52,240 @@ export class PublicPlaylists {
       ? this.database.select().from(operation).where(and(eq(operation.id, operationId), eq(operation.roomId, roomId), eq(operation.userId, userId))).get()
       : this.database.select().from(operation).where(and(eq(operation.roomId, roomId), sql`(${operation.status} NOT IN ('succeeded', 'failed', 'stopped') OR ${operation.updatedAt} > ${this.now() - TERMINAL_RETENTION_MS})`)).orderBy(desc(operation.createdAt), desc(operation.id)).get();
     const pending = this.database.select({ id: operation.id }).from(operation).where(and(eq(operation.roomId, roomId), sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).get();
-    const disabledReason = current.ownerUserId !== userId ? "OWNER_ONLY" : binding ? "PUBLIC_PLAYLIST_EXISTS"
-      : pending ? currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING" : !this.#authorization(userId) ? "NETEASE_AUTH_REQUIRED" : this.scheduler.admissionCode(this.#authorization(userId)!.accountId);
-    return { playlist: binding ? { id: binding.playlistId, name: binding.name } : null,
+
+    let disabledReason: PublicPlaylistView["disabledReason"] = null;
+    if (current.ownerUserId !== userId && !binding) {
+      disabledReason = "OWNER_ONLY";
+    } else if (binding) {
+      const code = this.scheduler.admissionCode(binding.accountId);
+      if (code) {
+        disabledReason = code;
+      } else {
+        disabledReason = "PUBLIC_PLAYLIST_EXISTS";
+      }
+    } else if (pending) {
+      disabledReason = currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING";
+    } else if (!this.#authorization(userId)) {
+      disabledReason = "NETEASE_AUTH_REQUIRED";
+    } else {
+      disabledReason = this.scheduler.admissionCode(this.#authorization(userId)!.accountId);
+    }
+
+    let snapshot: PublicPlaylistView["snapshot"] = null;
+    let lastRefreshError: PublicPlaylistView["lastRefreshError"] = null;
+
+    if (binding) {
+      const snapRow = this.database.select().from(playlistSnapshot)
+        .where(and(eq(playlistSnapshot.accountId, binding.accountId), eq(playlistSnapshot.playlistId, binding.playlistId))).get();
+      if (snapRow) {
+        lastRefreshError = (snapRow.lastErrorCode as any) ?? null;
+        if (snapRow.syncedAt !== null) {
+          const tracks = this.database.select().from(playlistTrack)
+            .where(and(eq(playlistTrack.accountId, binding.accountId), eq(playlistTrack.playlistId, binding.playlistId)))
+            .orderBy(playlistTrack.position).all();
+          snapshot = {
+            version: snapRow.snapshotVersion,
+            syncedAt: snapRow.syncedAt,
+            trackCount: tracks.length,
+            tracks: tracks.map(t => ({
+              position: t.position,
+              songId: t.songId,
+              name: t.name,
+              artists: JSON.parse(t.artists) as string[],
+              album: t.album
+            }))
+          };
+        } else {
+          snapshot = {
+            version: snapRow.snapshotVersion,
+            syncedAt: null,
+            trackCount: 0,
+            tracks: []
+          };
+        }
+      } else {
+        snapshot = {
+          version: 0,
+          syncedAt: null,
+          trackCount: 0,
+          tracks: []
+        };
+      }
+    }
+
+    const allowedActions: PublicPlaylistView["allowedActions"] = [];
+    if (!binding) {
+      if (!disabledReason) allowedActions.push("createPublicPlaylist");
+    } else {
+      if (disabledReason !== "ACCOUNT_PAUSED" && disabledReason !== "UPSTREAM_QUEUE_FULL") {
+        allowedActions.push("refreshPublicPlaylist");
+      }
+    }
+
+    return {
+      playlist: binding ? { id: binding.playlistId, name: binding.name } : null,
+      snapshot,
+      lastRefreshError,
       operation: currentOperation ? { id: currentOperation.id, status: currentOperation.status, errorCode: currentOperation.errorCode } : null,
-      allowedActions: disabledReason ? [] : ["createPublicPlaylist"], disabledReason, version: current.version };
+      allowedActions,
+      disabledReason,
+      version: current.version
+    };
   }
 
   read(userId: string, roomId: string): PublicPlaylistView { return this.#view(userId, roomId); }
+
+  async refresh(userId: string, roomId: string): Promise<PublicPlaylistView> {
+    if (this.scheduler.isStopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
+    const current = this.#member(userId, roomId);
+    const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
+    if (!binding) throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单");
+
+    const key = `${binding.accountId}:${binding.playlistId}`;
+    let task = this.#inFlightRefreshes.get(key);
+    if (!task) {
+      task = this.#executeRefresh(current.ownerUserId, binding.accountId, binding.playlistId, binding.generation)
+        .finally(() => {
+          this.#inFlightRefreshes.delete(key);
+        });
+      this.#inFlightRefreshes.set(key, task);
+    }
+    await task;
+    return this.#view(userId, roomId);
+  }
+
+  #recordRefreshError(accountId: string, playlistId: string, errorCode: AdapterErrorCode | "ACCOUNT_PAUSED"): void {
+    this.database.transaction(tx => {
+      const now = this.now();
+      tx.insert(playlistSnapshot).values({
+        accountId,
+        playlistId,
+        snapshotVersion: 0,
+        syncedAt: null,
+        lastErrorCode: errorCode,
+        createdAt: now,
+        updatedAt: now
+      }).onConflictDoUpdate({
+        target: [playlistSnapshot.accountId, playlistSnapshot.playlistId],
+        set: {
+          lastErrorCode: errorCode,
+          updatedAt: now
+        }
+      }).run();
+
+      const bindings = tx.select().from(publicPlaylistBinding)
+        .where(and(eq(publicPlaylistBinding.accountId, accountId), eq(publicPlaylistBinding.playlistId, playlistId))).all();
+      for (const b of bindings) {
+        this.#bump(b.roomId);
+      }
+    });
+  }
+
+  async #executeRefresh(ownerUserId: string, accountId: string, playlistId: string, generation: number): Promise<void> {
+    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, ownerUserId)).get();
+    if (!auth || auth.accountId !== accountId || auth.generation !== generation) {
+      this.#recordRefreshError(accountId, playlistId, "AUTH_UNAVAILABLE");
+      return;
+    }
+    let cookie: string;
+    try {
+      cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
+    } catch {
+      this.#recordRefreshError(accountId, playlistId, "AUTH_UNAVAILABLE");
+      return;
+    }
+
+    const readStartedAt = this.now();
+    let result: Awaited<ReturnType<NeteaseAdapter["call"]>>;
+    try {
+      result = await this.scheduler.executeMemoryTask(accountId, async () => {
+        return this.adapter.call({ operation: "playlistDetail", cookie, playlistId });
+      });
+    } catch (err) {
+      if (err instanceof BusinessError && err.code === "ACCOUNT_PAUSED") {
+        this.#recordRefreshError(accountId, playlistId, "ACCOUNT_PAUSED");
+        return;
+      }
+      this.#recordRefreshError(accountId, playlistId, "MODULE_ERROR");
+      return;
+    }
+
+    if (!result.ok) {
+      if (result.error.code === "RATE_LIMITED") {
+        this.scheduler.pause(accountId);
+      }
+      this.#recordRefreshError(accountId, playlistId, result.error.code);
+      return;
+    }
+
+    const data = result.data as { playlist: { id: string; name: string; status: number }; songIds: string[]; songs: Array<{ id: string; name: string; artists: string[]; album: string }> };
+    if (data.playlist.status !== 0) {
+      this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION");
+      return;
+    }
+    if (data.songIds.length !== data.songs.length) {
+      this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR");
+      return;
+    }
+    for (let i = 0; i < data.songIds.length; i++) {
+      const song = data.songs[i];
+      if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || !song.album || song.album.length === 0) {
+        this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR");
+        return;
+      }
+    }
+
+    this.database.transaction(tx => {
+      const currentBindings = tx.select().from(publicPlaylistBinding)
+        .where(and(eq(publicPlaylistBinding.accountId, accountId), eq(publicPlaylistBinding.playlistId, playlistId))).all();
+      if (!currentBindings.length) return;
+      const hasMatchingGen = currentBindings.some(b => b.generation === generation);
+      if (!hasMatchingGen) return;
+
+      const currentSnapshot = tx.select().from(playlistSnapshot)
+        .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId))).get();
+
+      if (currentSnapshot?.syncedAt && currentSnapshot.syncedAt > readStartedAt) {
+        // 较新的读取已提交，不被旧读取覆盖
+        return;
+      }
+
+      const nextVersion = (currentSnapshot?.snapshotVersion ?? 0) + 1;
+      const now = this.now();
+
+      tx.insert(playlistSnapshot).values({
+        accountId,
+        playlistId,
+        snapshotVersion: nextVersion,
+        syncedAt: now,
+        lastErrorCode: null,
+        createdAt: now,
+        updatedAt: now
+      }).onConflictDoUpdate({
+        target: [playlistSnapshot.accountId, playlistSnapshot.playlistId],
+        set: {
+          snapshotVersion: nextVersion,
+          syncedAt: now,
+          lastErrorCode: null,
+          updatedAt: now
+        }
+      }).run();
+
+      tx.delete(playlistTrack).where(and(eq(playlistTrack.accountId, accountId), eq(playlistTrack.playlistId, playlistId))).run();
+
+      const insertTrack = this.database.$client.prepare(
+        "INSERT INTO playlist_track (account_id, playlist_id, position, song_id, name, artists, album) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      );
+      for (let i = 0; i < data.songs.length; i++) {
+        const s = data.songs[i];
+        insertTrack.run(accountId, playlistId, i, s.id, s.name, JSON.stringify(s.artists), s.album);
+      }
+
+      for (const b of currentBindings) {
+        this.#bump(b.roomId);
+      }
+    });
+  }
 
   create(userId: string, roomId: string, input: PublicPlaylistCreateCommand): { replay: boolean; view: PublicPlaylistView } {
     if (this.scheduler.isStopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
@@ -183,6 +411,15 @@ export class PublicPlaylists {
         return;
       }
       tx.insert(publicPlaylistBinding).values({ roomId: row.roomId, accountId: row.accountId!, playlistId: detail.playlistId!, name: detail.name, creationOperationId: row.id }).run();
+      tx.insert(playlistSnapshot).values({
+        accountId: row.accountId!,
+        playlistId: detail.playlistId!,
+        snapshotVersion: 0,
+        syncedAt: null,
+        lastErrorCode: null,
+        createdAt: this.now(),
+        updatedAt: this.now()
+      }).onConflictDoNothing().run();
       this.#status(row.id, "succeeded");
     });
   }

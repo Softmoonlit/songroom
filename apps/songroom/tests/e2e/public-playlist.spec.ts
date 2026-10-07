@@ -144,6 +144,9 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     if (request.url.includes("qrcode/client/login")) return { body: { code: 803 }, cookies: ["MUSIC_U=offline-only; Domain=music.163.com; Path=/"] };
     if (request.url.includes("playlist/create")) return { body: { code: 200, id: "cloud-public-071" } };
     if (request.url.includes("user/account")) return { body: { code: 200, account: { id: "offline-071" }, profile: { userId: "offline-071", nickname: "离线网易云" } } };
+    if (request.url.includes("playlist/detail") || request.url.includes("v6/playlist/detail")) {
+      return { body: { code: 200, playlist: { id: "cloud-public-071", name: "songroom-离线音乐间-公共", status: 0, trackIds: [] }, privileges: [] } };
+    }
     throw new Error(`Unexpected offline call: ${request.url}`);
   });
   const root = await mkdtemp(path.join(tmpdir(), "songroom-public-e2e-"));
@@ -191,12 +194,16 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     await expect(page.getByRole("heading", { name: "songroom-离线音乐间-公共" })).toBeVisible();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
+    // 进入歌单后显式刷新歌单详情，确认发生了一次 detail 调用
+    await expect.poll(() => fixture.outbound.filter(call => call.url.includes("playlist/detail")).length).toBe(1);
     const count = fixture.outbound.length;
     await page.getByRole("button", { name: "更新状态", exact: true }).click();
     await expect(page.getByRole("button", { name: "更新状态", exact: true })).toBeEnabled();
+    // 纯更新状态不发起上游调用
+    expect(fixture.outbound).toHaveLength(count);
     await page.reload();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
-    expect(fixture.outbound).toHaveLength(count);
+    expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
     await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally {

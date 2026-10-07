@@ -4,7 +4,7 @@ import path from "node:path";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "./database.js";
-import { room, roomInvite, roomMembership, user } from "./schema.js";
+import { playlistSnapshot, playlistTrack, room, roomInvite, roomMembership, user } from "./schema.js";
 import { roomNickname } from "../shared/room-contracts.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase }> = [];
@@ -41,4 +41,20 @@ it("每房间只有一份有效邀请和每账号一份成员关系，外键拒�
   database.insert(roomMembership).values({ id: v7(), roomId, userId: "owner", nickname: "房主" }).run();
   expect(() => database.insert(roomMembership).values({ id: v7(), roomId, userId: "owner", nickname: "另一称呼" }).run()).toThrow();
   expect(() => database.insert(roomMembership).values({ id: v7(), roomId: v7(), userId: "roommate", nickname: "室友" }).run()).toThrow();
+});
+
+it("歌单快照及歌曲表维护外键级联、单调版本与位置唯一性", () => {
+  const { database } = fixture();
+  const now = Date.now();
+  database.insert(playlistSnapshot).values({ accountId: "acc-1", playlistId: "pl-1", snapshotVersion: 1, syncedAt: now, createdAt: now, updatedAt: now }).run();
+  database.insert(playlistTrack).values({ accountId: "acc-1", playlistId: "pl-1", position: 0, songId: "s-1", name: "晴天", artists: JSON.stringify(["周杰伦"]), album: "叶惠美" }).run();
+  database.insert(playlistTrack).values({ accountId: "acc-1", playlistId: "pl-1", position: 1, songId: "s-2", name: "七里香", artists: JSON.stringify(["周杰伦"]), album: "七里香" }).run();
+
+  // 重复位置拒绝
+  expect(() => database.insert(playlistTrack).values({ accountId: "acc-1", playlistId: "pl-1", position: 0, songId: "s-3", name: "稻香", artists: JSON.stringify(["周杰伦"]), album: "魔杰座" }).run()).toThrow();
+  // 悬空外键拒绝
+  expect(() => database.insert(playlistTrack).values({ accountId: "acc-none", playlistId: "pl-none", position: 0, songId: "s-1", name: "晴天", artists: JSON.stringify(["周杰伦"]), album: "叶惠美" }).run()).toThrow();
+  // 级联删除
+  database.delete(playlistSnapshot).run();
+  expect(database.select().from(playlistTrack).all()).toHaveLength(0);
 });

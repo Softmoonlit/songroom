@@ -20,6 +20,7 @@
     "@radix-ui/react-alert-dialog": "1.1.24",
     "@songroom/netease-vendor": "workspace:*",
     "@tanstack/react-query": "5.104.1",
+    "@tanstack/react-virtual": "3.14.13",
     "better-auth": "1.7.7",
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.3",

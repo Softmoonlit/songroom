@@ -6,6 +6,7 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
   identityError?: Extract<AdapterResult, { ok: false }>["error"];
   identityAccount?: string;
   beforeIdentity?: () => Promise<void>;
+  playlistDetail?: (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => Promise<AdapterResult<"playlistDetail">> | AdapterResult<"playlistDetail">;
   #qr = 0;
   async assertVendorIntegrity() {}
   async dispose() {}
@@ -20,6 +21,14 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
         await this.beforeIdentity?.();
         if (this.identityError) return { ok: false, error: this.identityError };
         data = { accountId: this.identityAccount ?? input.cookie.slice("MUSIC_U=".length), name: "测试网易云身份" };
+        break;
+      case "playlistDetail":
+        if (this.playlistDetail) return await this.playlistDetail(input) as AdapterResult<I["operation"]>;
+        data = {
+          playlist: { id: input.playlistId, name: "默认歌单", creatorId: "test", subscribed: false, status: 0 },
+          songIds: [],
+          songs: []
+        };
         break;
       default: return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
     }

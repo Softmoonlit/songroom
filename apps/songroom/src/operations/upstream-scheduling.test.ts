@@ -120,3 +120,66 @@ it("账号暂停同时隔离属于该账号的所有注册业务类型", async (
   expect(rows.find(r => r.id === opB)?.status).toBe("needsAdministrator");
   expect(rows.find(r => r.id === opB)?.errorCode).toBe("ACCOUNT_PAUSED");
 });
+
+it("内存任务遵守单账号 1 秒间隔、风控暂停，并与持久操作公平轮转", async () => {
+  vi.useFakeTimers();
+  let time = 1_000;
+  const { db } = fixture();
+  const scheduler = new UpstreamScheduler(db, () => time);
+
+  insertRoom(db, "r1", "u1");
+  const executed: string[] = [];
+
+  const op1 = v7();
+  db.insert(operation).values({
+    id: op1,
+    kind: "createPublicPlaylist",
+    userId: "u1",
+    roomId: "r1",
+    accountId: "acc-mem",
+    authorizationId: v7(),
+    generation: 1,
+    lastGranted: 100,
+    createdAt: 100,
+    updatedAt: 100,
+    status: "queued"
+  }).run();
+
+  scheduler.register("createPublicPlaylist", {
+    claim: () => true,
+    execute: async row => {
+      executed.push(row.id);
+      db.update(operation).set({ status: "succeeded", accountId: null, authorizationId: null, generation: null }).where(eq(operation.id, row.id)).run();
+    }
+  });
+
+  scheduler.start();
+
+  // 添加同账号内存任务
+  const memPromise = scheduler.executeMemoryTask("acc-mem", async () => {
+    executed.push("mem-task");
+    return "result";
+  });
+
+  // 第一次 tick：op1 先被认领执行（createdAt 较早）
+  await vi.advanceTimersByTimeAsync(0);
+  expect(executed).toEqual([op1]);
+
+  // 同账号严格串行且启动至少间隔 1 秒：立即推进 500ms 不触发 mem-task
+  time += 500;
+  await vi.advanceTimersByTimeAsync(500);
+  expect(executed).toEqual([op1]);
+
+  // 满 1000ms 后触发 mem-task
+  time += 500;
+  await vi.advanceTimersByTimeAsync(500);
+  expect(executed).toEqual([op1, "mem-task"]);
+  expect(await memPromise).toBe("result");
+
+  // 账号暂停后拒绝新内存任务
+  scheduler.pause("acc-mem");
+  expect(() => scheduler.executeMemoryTask("acc-mem", async () => {})).toThrowError("ACCOUNT_PAUSED");
+
+  scheduler.stop();
+  await scheduler.settle();
+});

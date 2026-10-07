@@ -1227,3 +1227,87 @@ h1 {
   border-bottom: 1px solid #e5e8ef;
   overflow-wrap: anywhere;
 }
+
+.sync-time {
+  margin: 0.25rem 0;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.initial-sync-card,
+.empty-playlist-card {
+  padding: 1.5rem;
+  text-align: center;
+  background: #f8f9fc;
+  border: 1px dashed #cfd5e2;
+  border-radius: 8px;
+  color: #555;
+  margin: 1rem 0;
+}
+
+.playlist-tracks-container {
+  height: 520px;
+  overflow-y: auto;
+  border: 1px solid #e2e6ee;
+  border-radius: 8px;
+  background: #ffffff;
+  margin-top: 1rem;
+  position: relative;
+}
+
+.playlist-tracks-container:focus-visible {
+  outline: 2px solid #7357e8;
+  outline-offset: -2px;
+}
+
+.track-item {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  gap: 1rem;
+  box-sizing: border-box;
+  border-bottom: 1px solid #f1f3f7;
+  background: #ffffff;
+}
+
+.track-item:focus-visible {
+  outline: 2px solid #7357e8;
+  outline-offset: -2px;
+  background: #f6f4fe;
+}
+
+.track-index {
+  flex-shrink: 0;
+  width: 2.5rem;
+  font-size: 0.9rem;
+  color: #8892a0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.track-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.35;
+}
+
+.track-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1e28;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-artists-album {
+  font-size: 0.82rem;
+  color: #667085;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

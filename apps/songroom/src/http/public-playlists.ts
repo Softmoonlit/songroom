@@ -17,4 +17,9 @@ export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoo
     const accepted = playlists.create(principal.userId, request.params.roomId, request.body);
     return reply.code(accepted.replay ? 200 : 202).send(accepted.view);
   });
+  typed.post("/api/rooms/:roomId/public-playlist/refresh", { schema: { params: roomParams, response: { 200: publicPlaylistView } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const view = await playlists.refresh(principal.userId, request.params.roomId);
+    return reply.code(200).send(view);
+  });
 }

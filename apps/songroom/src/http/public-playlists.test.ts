@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase } from "../db/database.js";
-import { room, roomMembership, neteaseAuthorization } from "../db/schema.js";
+import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
@@ -93,4 +93,49 @@ it("受理立即返回202，同键并发返回200原操作；未来键和跨意�
   expect(renamed.json()).toMatchObject({ error: { code: "IDEMPOTENCY_CONFLICT" } });
   const body = JSON.stringify(views);
   expect(body).not.toMatch(/credentials|cookie|accountId|generation|sending|digest/);
+});
+
+it("显式刷新接口仅对成员开放且校验同源，返回最新权威快照视图", async () => {
+  const { app, adapter, owner, member, outsider, url } = await fixture();
+  const refreshUrl = `${url}/refresh`;
+
+  // 未登录 401
+  expect((await request(app, refreshUrl, undefined, {})).statusCode).toBe(401);
+  // 房间外用户 404
+  expect((await request(app, refreshUrl, outsider.cookie, {})).statusCode).toBe(404);
+  // 跨源 403
+  expect((await request(app, refreshUrl, member.cookie, {}, "https://evil.com")).statusCode).toBe(403);
+
+  // 尚未绑定歌单 409
+  const unboundRes = await request(app, refreshUrl, member.cookie, {});
+  expect(unboundRes.statusCode).toBe(409);
+
+  // 插入绑定
+  const roomId = url.split("/")[3];
+  app.database.insert(publicPlaylistBinding).values({
+    roomId,
+    accountId: "test",
+    playlistId: "cloud-pl",
+    name: "songroom-测试宿舍-公共",
+    creationOperationId: v7(),
+    generation: 1
+  }).run();
+
+  adapter.playlistDetail = async () => ({
+    ok: true,
+    data: {
+      playlist: { id: "cloud-pl", name: "songroom-测试宿舍-公共", creatorId: "test", subscribed: false, status: 0 },
+      songIds: ["s1"],
+      songs: [{ id: "s1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+    }
+  });
+
+  // 室友成功刷新
+  const refreshRes = await request(app, refreshUrl, member.cookie, {});
+  expect(refreshRes.statusCode).toBe(200);
+  const view = publicPlaylistView.parse(refreshRes.json());
+  expect(view.snapshot?.version).toBe(1);
+  expect(view.snapshot?.tracks).toHaveLength(1);
+  expect(view.snapshot?.tracks[0].name).toBe("晴天");
+  expect(view.allowedActions).toContain("refreshPublicPlaylist");
 });

@@ -1,6 +1,6 @@
 import { adapterErrorCodeSchema } from "../netease/protocol.js";
 import { sql } from "drizzle-orm";
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const schemaMeta = sqliteTable("schema_meta", {
   key: text("key").primaryKey(),
@@ -187,8 +187,46 @@ export const upstreamAccount = sqliteTable("upstream_account", {
   paused: integer("paused", { mode: "boolean" }).notNull().default(false)
 }, table => [check("upstream_account_next_start_valid", sql`${table.nextStartAt} >= 0`)]);
 
+// 规范化云端歌单权威快照元数据；跨房间绑定共享同一记录。
+export const playlistSnapshot = sqliteTable("playlist_snapshot", {
+  accountId: text("account_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  snapshotVersion: integer("snapshot_version").notNull().default(0),
+  syncedAt: integer("synced_at"),
+  lastErrorCode: text("last_error_code"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, table => [
+  primaryKey({ columns: [table.accountId, table.playlistId] }),
+  check("playlist_snapshot_account_id_valid", sql`length(${table.accountId}) > 0`),
+  check("playlist_snapshot_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
+  check("playlist_snapshot_version_valid", sql`${table.snapshotVersion} >= 0`),
+  check("playlist_snapshot_synced_at_valid", sql`${table.syncedAt} IS NULL OR ${table.syncedAt} > 0`)
+]);
+
+// 快照内部按网易云实际顺序保存的歌曲；不推断中间事件，按集合在事务中整体替换。
+export const playlistTrack = sqliteTable("playlist_track", {
+  accountId: text("account_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  position: integer("position").notNull(),
+  songId: text("song_id").notNull(),
+  name: text("name").notNull(),
+  artists: text("artists").notNull(),
+  album: text("album").notNull()
+}, table => [
+  primaryKey({ columns: [table.accountId, table.playlistId, table.position] }),
+  foreignKey({
+    columns: [table.accountId, table.playlistId],
+    foreignColumns: [playlistSnapshot.accountId, playlistSnapshot.playlistId]
+  }).onDelete("cascade"),
+  index("playlist_track_target_song_index").on(table.accountId, table.playlistId, table.songId),
+  check("playlist_track_position_valid", sql`${table.position} >= 0`),
+  check("playlist_track_song_id_valid", sql`length(${table.songId}) > 0`),
+  check("playlist_track_name_valid", sql`length(${table.name}) > 0`)
+]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, upstreamAccount };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;
