@@ -85,10 +85,13 @@ export class PublicPlaylists {
       }
     } else if (pending) {
       disabledReason = currentOperation?.errorCode === "TARGET_PERMISSION" ? "TARGET_BLOCKED" : "OPERATION_PENDING";
-    } else if (!this.#authorization(userId)) {
-      disabledReason = "NETEASE_AUTH_REQUIRED";
     } else {
-      disabledReason = this.scheduler.admissionCode(this.#authorization(userId)!.accountId);
+      const auth = this.#authorization(userId);
+      if (!auth || auth.status !== "active") {
+        disabledReason = "NETEASE_AUTH_REQUIRED";
+      } else {
+        disabledReason = this.scheduler.admissionCode(auth.accountId);
+      }
     }
 
     let snapshot: PublicPlaylistView["snapshot"] = null;
@@ -253,7 +256,7 @@ export class PublicPlaylists {
 
   async #executeRefresh(ownerUserId: string, accountId: string, playlistId: string, bindingGeneration: number): Promise<void> {
     const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, ownerUserId)).get();
-    if (!auth || auth.accountId !== accountId || auth.status !== "active") {
+    if (!auth || auth.accountId !== accountId || auth.status !== "active" || !auth.credentials) {
       this.#recordRefreshError(accountId, playlistId, "AUTH_UNAVAILABLE");
       return;
     }
@@ -440,6 +443,15 @@ export class PublicPlaylists {
       const hasMatchingGen = currentBindings.some(b => b.generation === generation);
       if (!hasMatchingGen) return { roomsInfo: [], confirmedOps: [] };
 
+      // 确保护照依然有效，防止已退出授权的晚到读回覆盖快照
+      const activeBindings = currentBindings.filter(b => {
+        const r = tx.select().from(room).where(eq(room.id, b.roomId)).get();
+        if (!r) return false;
+        const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, r.ownerUserId)).get();
+        return auth && auth.status === "active" && auth.generation === generation;
+      });
+      if (!activeBindings.length) return { roomsInfo: [], confirmedOps: [] };
+
       const currentSnapshot = tx.select().from(playlistSnapshot)
         .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId))).get();
 
@@ -551,7 +563,7 @@ export class PublicPlaylists {
         return { replay: true, view: this.#view(userId, roomId, pending.id) };
       }
       const auth = this.#authorization(userId);
-      if (!auth) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
+      if (!auth || auth.status !== "active") throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
       const admissionCode = this.scheduler.admissionCode(auth.accountId);
       if (admissionCode) throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
       const id = v7();
@@ -578,6 +590,207 @@ export class PublicPlaylists {
     return accepted;
   }
 
+  onOwnerRevoked(userId: string): void {
+    const notifyRooms: Array<{ roomId: string; version: number }> = [];
+    const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
+
+    this.database.transaction(tx => {
+      const ownedRooms = tx.select({ id: room.id }).from(room).where(eq(room.ownerUserId, userId)).all();
+      for (const r of ownedRooms) {
+        const ops = tx.select().from(operation).where(and(
+          eq(operation.roomId, r.id),
+          sql`${operation.status} IN ('queued', 'processing')`
+        )).all();
+
+        for (const op of ops) {
+          tx.update(operation).set({
+            status: "waitingAuthorization",
+            errorCode: "AUTH_UNAVAILABLE",
+            version: sql`${operation.version} + 1`,
+            updatedAt: this.now()
+          }).where(eq(operation.id, op.id)).run();
+
+          const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, op.id)).get()!;
+          notifyOps.push({ roomId: r.id, opId: op.id, version: updatedOp.version });
+        }
+
+        this.#bump(r.id);
+        const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, r.id)).get()!;
+        notifyRooms.push({ roomId: r.id, version: updatedRoom.version });
+      }
+    });
+
+    for (const op of notifyOps) {
+      this.eventStream.notifyRoom(this.database, op.roomId, { type: "operation", resourceId: op.opId, version: op.version });
+    }
+    for (const r of notifyRooms) {
+      this.eventStream.notifyRoom(this.database, r.roomId, { type: "room", resourceId: r.roomId, version: r.version });
+    }
+  }
+
+  onReauthorized(userId: string, authId: string, accountId: string, generation: number): void {
+    const notifyRooms: Array<{ roomId: string; version: number }> = [];
+    const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
+    const checksToSchedule: Array<{ opId: string; delayMs: number }> = [];
+
+    this.database.transaction(tx => {
+      const ownedRooms = tx.select({ id: room.id }).from(room).where(eq(room.ownerUserId, userId)).all();
+      for (const r of ownedRooms) {
+        let roomChanged = false;
+
+        const createOps = tx.select().from(operation).where(and(
+          eq(operation.roomId, r.id),
+          eq(operation.kind, "createPublicPlaylist"),
+          sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`
+        )).all();
+
+        for (const op of createOps) {
+          const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, op.id)).get();
+          if (!detail) continue;
+
+          if (op.status === "needsAdministrator" && detail.step === "unknown") {
+            // 创建未知只刷新证据而不猜测关联，保持 needsAdministrator
+            tx.update(operation).set({
+              accountId,
+              authorizationId: authId,
+              generation,
+              updatedAt: this.now()
+            }).where(eq(operation.id, op.id)).run();
+            void this.#refreshUnknownCreationEvidence(op.id, accountId, authId, generation);
+            continue;
+          }
+
+          if (op.status === "needsAdministrator") continue;
+
+          if (["ready", "verified"].includes(detail.step)) {
+            const condition = this.#conditions({ ...op, accountId, authorizationId: authId, generation });
+            if (condition === "valid") {
+              tx.update(publicPlaylistCreation).set({ step: "ready" }).where(eq(publicPlaylistCreation.operationId, op.id)).run();
+              tx.update(operation).set({
+                accountId,
+                authorizationId: authId,
+                generation,
+                status: "queued",
+                errorCode: null,
+                version: sql`${operation.version} + 1`,
+                updatedAt: this.now()
+              }).where(eq(operation.id, op.id)).run();
+              roomChanged = true;
+            } else if (condition === "stopped") {
+              tx.update(operation).set({
+                accountId: null,
+                authorizationId: null,
+                generation: null,
+                status: "stopped",
+                version: sql`${operation.version} + 1`,
+                updatedAt: this.now()
+              }).where(eq(operation.id, op.id)).run();
+              tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, op.id)).run();
+              roomChanged = true;
+            }
+          } else if (detail.step === "confirming") {
+            const condition = this.#conditions({ ...op, accountId, authorizationId: authId, generation });
+            if (condition === "valid") {
+              tx.update(operation).set({
+                accountId,
+                authorizationId: authId,
+                generation,
+                status: "queued",
+                version: sql`${operation.version} + 1`,
+                updatedAt: this.now()
+              }).where(eq(operation.id, op.id)).run();
+              roomChanged = true;
+            }
+          }
+          const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, op.id)).get();
+          if (updatedOp) notifyOps.push({ roomId: r.id, opId: op.id, version: updatedOp.version });
+        }
+
+        const songOps = tx.select().from(operation).where(and(
+          eq(operation.roomId, r.id),
+          eq(operation.kind, "requestPublicSong"),
+          sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`
+        )).all();
+
+        for (const op of songOps) {
+          if (op.status === "needsAdministrator") continue;
+          if (op.errorCode === "ACCOUNT_PAUSED" || op.errorCode === "TARGET_PERMISSION") continue;
+
+          const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
+          if (!detail) continue;
+
+          if (detail.songConfirmed && !detail.tagConfirmed) {
+            continue;
+          }
+
+          if (["ready", "verified"].includes(detail.step) && op.status === "waitingAuthorization") {
+            const condition = this.#conditionsForSongRequest({ ...op, accountId, authorizationId: authId, generation });
+            if (condition === "valid") {
+              tx.update(publicSongRequest).set({ step: "ready" }).where(eq(publicSongRequest.operationId, op.id)).run();
+              tx.update(operation).set({
+                accountId,
+                authorizationId: authId,
+                generation,
+                status: "queued",
+                errorCode: null,
+                version: sql`${operation.version} + 1`,
+                updatedAt: this.now()
+              }).where(eq(operation.id, op.id)).run();
+              roomChanged = true;
+            } else if (condition === "stopped") {
+              tx.update(publicSongRequest).set({ step: "stopped" }).where(eq(publicSongRequest.operationId, op.id)).run();
+              tx.update(operation).set({
+                accountId: null,
+                authorizationId: null,
+                generation: null,
+                status: "stopped",
+                version: sql`${operation.version} + 1`,
+                updatedAt: this.now()
+              }).where(eq(operation.id, op.id)).run();
+              roomChanged = true;
+            }
+          } else if (["sending", "confirming", "unknown"].includes(detail.step) || op.status === "awaitingConfirmation") {
+            tx.update(publicSongRequest).set({
+              step: "unknown",
+              checkRound: 0,
+              nextCheckAt: this.now() + 5000
+            }).where(eq(publicSongRequest.operationId, op.id)).run();
+            tx.update(operation).set({
+              accountId,
+              authorizationId: authId,
+              generation,
+              status: "awaitingConfirmation",
+              version: sql`${operation.version} + 1`,
+              updatedAt: this.now()
+            }).where(eq(operation.id, op.id)).run();
+            roomChanged = true;
+            checksToSchedule.push({ opId: op.id, delayMs: 5000 });
+          }
+          const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, op.id)).get();
+          if (updatedOp) notifyOps.push({ roomId: r.id, opId: op.id, version: updatedOp.version });
+        }
+
+        if (roomChanged) {
+          this.#bump(r.id);
+          const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, r.id)).get()!;
+          notifyRooms.push({ roomId: r.id, version: updatedRoom.version });
+        }
+      }
+    });
+
+    for (const check of checksToSchedule) {
+      this.#scheduleConfirmationCheck(check.opId, check.delayMs);
+    }
+    for (const op of notifyOps) {
+      this.eventStream.notifyRoom(this.database, op.roomId, { type: "operation", resourceId: op.opId, version: op.version });
+    }
+    for (const r of notifyRooms) {
+      this.eventStream.notifyRoom(this.database, r.roomId, { type: "room", resourceId: r.roomId, version: r.version });
+      this.eventStream.notifyRoom(this.database, r.roomId, { type: "snapshot", resourceId: r.roomId, version: r.version });
+    }
+    this.scheduler.kick();
+  }
+
   #bump(roomId: string): void {
     this.database.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
   }
@@ -586,6 +799,10 @@ export class PublicPlaylists {
     const notifyInfo = this.database.transaction(tx => {
       const row = tx.select().from(operation).where(eq(operation.id, id)).get();
       if (!row || (row.status === status && row.errorCode === errorCode)) return null;
+      // 处于 waitingAuthorization 时，旧凭据晚到响应不能覆盖为 processing 或 failed
+      if (row.status === "waitingAuthorization" && status !== "waitingAuthorization" && status !== "stopped" && status !== "queued") {
+        return null;
+      }
       tx.update(operation).set({
         status,
         errorCode,
@@ -644,7 +861,7 @@ export class PublicPlaylists {
   #recover(): void {
     this.#prune();
     for (const row of this.database.select().from(operation).where(eq(operation.kind, "createPublicPlaylist")).all()) {
-      if (terminal(row.status)) continue;
+      if (terminal(row.status) || row.status === "waitingAuthorization") continue;
       const detail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
       if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
       if (["sending", "unknown"].includes(detail.step)) {
@@ -655,9 +872,7 @@ export class PublicPlaylists {
       } else if (detail.step === "confirming") {
         this.database.transaction(tx => {
           tx.update(publicPlaylistCreation).set({ recovered: true }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
-          if (row.status !== "waitingAuthorization") {
-            this.#status(row.id, "queued", row.errorCode);
-          }
+          this.#status(row.id, "queued", row.errorCode);
         });
       } else if (detail.step === "verified") {
         this.database.update(publicPlaylistCreation).set({ step: "ready" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
@@ -682,6 +897,10 @@ export class PublicPlaylists {
     const condition = this.#conditions(row);
     if (condition !== "valid") { this.#conditionStatus(row, condition); return false; }
     const auth = this.#authorization(row.userId)!;
+    if (!auth.credentials) {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return false;
+    }
     try {
       this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
     } catch {
@@ -711,7 +930,7 @@ export class PublicPlaylists {
     const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, row.roomId)).get();
     if (!current || !member || current.ownerUserId !== row.userId || binding) return "stopped";
     const auth = this.#authorization(row.userId);
-    if (!auth || auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation) return "waitingAuthorization";
+    if (!auth || auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation || auth.status !== "active" || !auth.credentials) return "waitingAuthorization";
     return "valid";
   }
 
@@ -812,6 +1031,26 @@ export class PublicPlaylists {
     return list;
   }
 
+  async #refreshUnknownCreationEvidence(opId: string, accountId: string, authId: string, generation: number): Promise<void> {
+    try {
+      const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.id, authId)).get();
+      if (!auth || auth.status !== "active" || !auth.credentials) return;
+      const cookie = this.vault.decrypt(auth.credentials, { authorizationId: authId, accountId, generation });
+      const afterList = await this.#fetchAccountPlaylists(cookie, accountId);
+      if (!afterList) return;
+      this.database.transaction(tx => {
+        const op = tx.select().from(operation).where(eq(operation.id, opId)).get();
+        if (!op || op.status !== "needsAdministrator" || op.generation !== generation) return;
+        tx.update(publicPlaylistCreation).set({
+          afterPlaylists: JSON.stringify(afterList)
+        }).where(eq(publicPlaylistCreation.operationId, opId)).run();
+        this.#bump(op.roomId);
+      });
+    } catch {
+      // 忽略只读补查失败，不影响记录
+    }
+  }
+
   async #transitionToUnknownCreation(row: Operation, errorCode: Operation["errorCode"], cookie: string): Promise<void> {
     let afterList: Array<{ id: string; name: string }> | null = null;
     try {
@@ -848,6 +1087,10 @@ export class PublicPlaylists {
   async #execute(row: Operation): Promise<void> {
     const detail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get()!;
     const auth = this.#authorization(row.userId)!;
+    if (!auth.credentials) {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
     const cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
     try {
       if (detail.step === "ready") {
@@ -1118,7 +1361,7 @@ export class PublicPlaylists {
 
     const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get()!;
     const auth = this.#authorization(currentRoom.ownerUserId);
-    if (!auth) {
+    if (!auth || !auth.credentials) {
       this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
       return false;
     }
@@ -1362,7 +1605,7 @@ export class PublicPlaylists {
 
     const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get()!;
     const auth = this.#authorization(currentRoom.ownerUserId);
-    if (!auth) {
+    if (!auth || !auth.credentials) {
       this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
       return;
     }
@@ -1414,7 +1657,7 @@ export class PublicPlaylists {
 
   #recoverSongRequests(): void {
     for (const row of this.database.select().from(operation).where(eq(operation.kind, "requestPublicSong")).all()) {
-      if (terminal(row.status)) continue;
+      if (terminal(row.status) || row.status === "waitingAuthorization") continue;
       const detail = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get();
       if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
       if (detail.songConfirmed && !detail.tagConfirmed) {
@@ -1448,6 +1691,10 @@ export class PublicPlaylists {
     const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get()!;
     const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, row.roomId)).get()!;
     const auth = this.#authorization(currentRoom.ownerUserId)!;
+    if (!auth || !auth.credentials) {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
     const cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
 
     try {

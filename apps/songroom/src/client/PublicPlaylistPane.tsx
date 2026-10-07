@@ -230,9 +230,9 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         void client.invalidateQueries({ queryKey });
         break;
       case "waitingAuthorization":
-        setRequestErrorMessage("房主网易云授权失效，正在等待房主恢复授权。");
+        setRequestStatusMessage("房主网易云授权失效，正在等待房主恢复授权...");
+        setRequestErrorMessage("");
         setIsRequesting(false);
-        setActiveOperationId(null);
         break;
       case "needsAdministrator":
         setRequestErrorMessage("点歌操作异常，需要管理员处理。");

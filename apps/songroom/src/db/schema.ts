@@ -61,13 +61,13 @@ export const neteaseAuthorization = sqliteTable("netease_authorization", {
   accountId: text("account_id").notNull(),
   nickname: text("nickname").notNull(),
   generation: integer("generation").notNull(),
-  status: text("status", { enum: ["active"] }).notNull(),
-  credentials: text("credentials").notNull()
+  status: text("status", { enum: ["active", "waitingAuthorization"] }).notNull(),
+  credentials: text("credentials")
 }, table => [
   uniqueIndex("netease_authorization_user_unique").on(table.userId),
   uniqueIndex("netease_authorization_account_unique").on(table.accountId),
   check("netease_authorization_generation_valid", sql`${table.generation} > 0`),
-  check("netease_authorization_status_valid", sql`${table.status} = 'active'`),
+  check("netease_authorization_status_valid", sql`${table.status} IN ('active', 'waitingAuthorization')`),
   check("netease_authorization_account_valid", sql`length(${table.accountId}) > 0`)
 ]);
 

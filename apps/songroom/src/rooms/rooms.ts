@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { room, roomInvite, roomMembership, joinApplication } from "../db/schema.js";
+import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization } from "../db/schema.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
@@ -55,25 +55,41 @@ export class Rooms {
 
   readCreateView(principal: SessionPrincipal): RoomCreateView {
     const current = this.binding.readBinding(principal).binding;
-    let disabledReason: RoomCreateView["disabledReason"] = current ? null : "NETEASE_AUTH_REQUIRED";
+    let disabledReason: RoomCreateView["disabledReason"] = current && current.status === "active" ? null : "NETEASE_AUTH_REQUIRED";
     if (!disabledReason) {
       try { assertRoomCapacity(this.#counts(principal.userId)); }
       catch (error) { if (!(error instanceof BusinessError)) throw error; disabledReason = roomCreateDisabledReason.parse(error.code); }
     }
-    return { authorization: current ? { id: current.id, identity: current.identity } : null,
+    return { authorization: current && current.status === "active" ? { id: current.id, identity: current.identity } : null,
       allowedActions: disabledReason ? [] : ["createRoom"], disabledReason };
   }
 
   #visible(userId: string, roomId?: string) {
     return this.database.select({ id: room.id, name: room.name, nickname: roomMembership.nickname,
+      ownerUserId: room.ownerUserId,
       role: sql<"owner" | "roommate">`CASE WHEN ${room.ownerUserId} = ${roomMembership.userId} THEN 'owner' ELSE 'roommate' END`, version: room.version
     }).from(roomMembership).innerJoin(room, eq(room.id, roomMembership.roomId))
       .where(and(eq(roomMembership.userId, userId), roomId ? eq(room.id, roomId) : undefined)).orderBy(asc(room.id));
   }
 
   readList(userId: string): z.infer<typeof roomListView> {
-    return { rooms: this.#visible(userId).all().map(summary => ({ ...summary, allowedActions: ["enterRoom"], disabledReasons: {} })),
-      allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} };
+    const list = this.#visible(userId).all();
+    const ownerAuths = this.database.select({
+      userId: neteaseAuthorization.userId,
+      status: neteaseAuthorization.status
+    }).from(neteaseAuthorization).all();
+    const authMap = new Map(ownerAuths.map(a => [a.userId, a.status]));
+
+    return {
+      rooms: list.map(({ ownerUserId, ...summary }) => ({
+        ...summary,
+        allowedActions: ["enterRoom"],
+        disabledReasons: {},
+        ...(authMap.get(ownerUserId) === "waitingAuthorization" ? { authorizationStatus: "waitingAuthorization" as const } : {})
+      })),
+      allowedActions: ["openCreateRoom", "openJoin"],
+      disabledReasons: {}
+    };
   }
 
   readShell(userId: string, roomId: string) {

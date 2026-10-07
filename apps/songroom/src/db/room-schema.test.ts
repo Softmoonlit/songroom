@@ -5,7 +5,7 @@ import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "./database.js";
 import { sql } from "drizzle-orm";
-import { operation, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
+import { neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
 import { roomNickname } from "../shared/room-contracts.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase }> = [];
@@ -155,3 +155,29 @@ it("操作信封支持 requestPublicSong 且严格限制同一成员同一房间
     updatedAt: Date.now()
   }).run()).toThrow();
 });
+
+it("网易云授权状态约束支持 active 与 waitingAuthorization，拒绝非法状态", () => {
+  const { database } = fixture();
+  const authId = v7();
+  database.insert(neteaseAuthorization).values({
+    id: authId,
+    userId: "owner",
+    accountId: "cloud-owner",
+    nickname: "网易云",
+    generation: 1,
+    status: "active",
+    credentials: "enc"
+  }).run();
+
+  database.update(neteaseAuthorization).set({
+    status: "waitingAuthorization",
+    credentials: null
+  }).where(sql`${neteaseAuthorization.id} = ${authId}`).run();
+
+  expect(database.select().from(neteaseAuthorization).where(sql`${neteaseAuthorization.id} = ${authId}`).get()?.status).toBe("waitingAuthorization");
+
+  expect(() => database.update(neteaseAuthorization).set({
+    status: "invalid" as any
+  }).where(sql`${neteaseAuthorization.id} = ${authId}`).run()).toThrow();
+});
+

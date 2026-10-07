@@ -63,7 +63,7 @@ export class SongSearchService {
     if (!binding) throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单，无法搜索");
 
     const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, currentRoom.ownerUserId)).get();
-    if (!auth || auth.status !== "active") throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
+    if (!auth || auth.status !== "active" || !auth.credentials) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
 
     const code = this.scheduler.admissionCode(auth.accountId);
     if (code) {

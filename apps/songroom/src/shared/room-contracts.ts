@@ -9,7 +9,12 @@ export const roomName = normalizedText(16);
 export const roomNickname = normalizedText(12);
 export const roomRole = z.enum(["owner", "roommate"]);
 export const roomSummary = z.object({ id: uuidv7, name: roomName, role: roomRole, nickname: roomNickname });
-export const roomListItem = roomSummary.extend({ version: z.number().int().positive(), allowedActions: z.array(z.literal("enterRoom")), disabledReasons: z.strictObject({}) });
+export const roomListItem = roomSummary.extend({
+  version: z.number().int().positive(),
+  allowedActions: z.array(z.literal("enterRoom")),
+  disabledReasons: z.strictObject({}),
+  authorizationStatus: z.enum(["active", "waitingAuthorization"]).optional()
+});
 export const roomListView = z.object({ rooms: z.array(roomListItem), allowedActions: z.array(z.enum(["openCreateRoom", "openJoin"])), disabledReasons: z.strictObject({}) });
 export const roomCreateDisabledReason = z.enum(["NETEASE_AUTH_REQUIRED", "OWNED_ROOM_LIMIT", "JOINED_ROOM_LIMIT", "GLOBAL_ROOM_LIMIT"]);
 export const roomCreateView = z.object({

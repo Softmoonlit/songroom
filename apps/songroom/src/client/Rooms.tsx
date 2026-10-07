@@ -42,6 +42,9 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
                 <p>
                   {roleLabels[room.role]} · {room.nickname}
                 </p>
+                {room.authorizationStatus === "waitingAuthorization" && (
+                  <p className="room-auth-warning" role="status">网易云授权已退出，等待房主重新授权</p>
+                )}
               </div>
               {room.allowedActions.includes("enterRoom") && <Link
                 className="secondary-button inline-button"

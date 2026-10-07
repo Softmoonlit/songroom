@@ -844,6 +844,37 @@ h1 {
   font-weight: 750;
 }
 
+.netease-status.warning {
+  color: #a85817;
+}
+
+.revoke-confirm-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #f6d2a2;
+  border-radius: 10px;
+  background: #fff9f0;
+}
+
+.revoke-confirm-card p {
+  margin: 0;
+  color: #7a3e0b;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.room-auth-warning {
+  margin: 6px 0 0;
+  color: #a85817;
+  font-weight: 700;
+  font-size: .84rem;
+}
+
 .netease-identity {
   display: grid;
   width: 100%;

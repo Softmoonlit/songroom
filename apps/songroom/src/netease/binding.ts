@@ -34,10 +34,22 @@ export class NeteaseBinding {
   readonly #flows = new Map<string, Flow>();
   #generation = 0;
   #stopped = false;
+  onRevoke?: (userId: string) => void;
+  onReauthorize?: (userId: string, authId: string, accountId: string, generation: number) => void;
 
   constructor(readonly database: AppDatabase, readonly adapter: NeteaseAdapter, readonly vault: CredentialVault, readonly now = () => Date.now()) {
     for (const row of database.select().from(neteaseAuthorization).all()) {
-      vault.decrypt(row.credentials, { authorizationId: row.id, accountId: row.accountId, generation: row.generation });
+      try {
+        if (row.credentials) {
+          vault.decrypt(row.credentials, { authorizationId: row.id, accountId: row.accountId, generation: row.generation });
+        } else if (row.status === "active") {
+          database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.id, row.id)).run();
+        }
+      } catch {
+        if (row.status === "active") {
+          database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.id, row.id)).run();
+        }
+      }
     }
   }
 
@@ -70,14 +82,17 @@ export class NeteaseBinding {
     }
   }
 
-  #acceptCommand(principal: SessionPrincipal, key: string, kind: "start" | "confirm", flowId?: string) {
+  #acceptCommand(principal: SessionPrincipal, key: string, kind: "start" | "confirm" | "revoke", flowId?: string) {
     const command = { accountId: principal.userId, key,
       digest: canonicalDigest({ intent: kind, sessionId: principal.sessionId, ...(kind === "confirm" ? { flowId } : {}) }) };
     return this.database.transaction(tx => {
       this.#assertSession(principal);
       const existing = readCommandResource(tx, command, this.now());
       if (existing) return { flowId: existing, replay: true };
-      if (kind === "start" && this.#authorization(principal.userId)) throw new BusinessError(409, "NETEASE_ALREADY_BOUND", "已绑定网易云账号，本页仅提供首次绑定");
+      const current = this.#authorization(principal.userId);
+      if (kind === "start" && current && current.status === "active") {
+        throw new BusinessError(409, "NETEASE_ALREADY_BOUND", "已绑定网易云账号，本页仅提供首次绑定");
+      }
       const receipt = recordCommandResource(tx, command, flowId ?? v7(), this.now());
       return { flowId: receipt.resourceId, replay: receipt.replay };
     });
@@ -86,14 +101,36 @@ export class NeteaseBinding {
   readBinding(principal: SessionPrincipal): NeteaseBindingView {
     this.#assertSession(principal);
     const row = this.#authorization(principal.userId);
-    return row ? { binding: { id: row.id, identity: { accountId: row.accountId, nickname: row.nickname }, status: "active" }, allowedActions: [] }
-      : { binding: null, allowedActions: ["startQr"] };
+    if (!row) return { binding: null, allowedActions: ["startQr"] };
+    let status = row.status;
+    if (status === "active") {
+      try {
+        if (!row.credentials) {
+          status = "waitingAuthorization";
+          this.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.id, row.id)).run();
+        } else {
+          this.vault.decrypt(row.credentials, { authorizationId: row.id, accountId: row.accountId, generation: row.generation });
+        }
+      } catch {
+        status = "waitingAuthorization";
+        this.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.id, row.id)).run();
+      }
+    }
+    const allowedActions: Array<"startQr" | "revoke"> = status === "active" ? ["revoke"] : ["startQr"];
+    return {
+      binding: {
+        id: row.id,
+        identity: { accountId: row.accountId, nickname: row.nickname },
+        status
+      },
+      allowedActions
+    };
   }
 
   assertAuthorization(principal: SessionPrincipal, authorizationId: string, version?: string): void {
     this.#assertSession(principal);
     const row = this.#authorization(principal.userId);
-    if (!row) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
+    if (!row || row.status !== "active") throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
     if (row.id !== authorizationId || (version !== undefined && version !== this.#authorizationVersion(principal.userId))) {
       throw new BusinessError(409, "AUTHORIZATION_CHANGED", "网易云授权已变化，请重新确认身份");
     }
@@ -103,6 +140,7 @@ export class NeteaseBinding {
     this.assertAuthorization(principal, authorizationId);
     const row = this.#authorization(principal.userId)!;
     const version = this.#authorizationVersion(principal.userId);
+    if (!row.credentials) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请先完成网易云授权");
     const cookie = this.vault.decrypt(row.credentials, { authorizationId: row.id, accountId: row.accountId, generation: row.generation });
     const result = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId });
     this.assertAuthorization(principal, authorizationId, version);
@@ -223,21 +261,78 @@ export class NeteaseBinding {
       const identity = await this.#call({ operation: "identity", cookie: flow.cookie, expectedAccountId: flow.identity.accountId }, flow);
       this.#assertCurrent(flow);
       if (identity.accountId !== flow.identity.accountId) throw new BusinessError(409, "ACCOUNT_MISMATCH", "真实网易云账号已变化，请重新扫码");
-      this.database.transaction(tx => {
+      const reauthorizedDetails = this.database.transaction(tx => {
         this.#assertCurrent(flow);
         const existing = this.#authorization(principal.userId);
-        if (existing) throw new BusinessError(409, "NETEASE_ALREADY_BOUND", "已绑定网易云账号，当前扫码流程不能更新授权");
-        const authorizationId = v7();
-        const credentials = this.vault.encrypt(flow.cookie!, { authorizationId, accountId: identity.accountId, generation: 1 });
-        const inserted = tx.insert(neteaseAuthorization).values({ id: authorizationId, userId: principal.userId, accountId: identity.accountId, nickname: identity.name, generation: 1, status: "active", credentials }).onConflictDoNothing().returning({ id: neteaseAuthorization.id }).get();
-        if (!inserted) throw new BusinessError(409, "NETEASE_ACCOUNT_OWNED", "此网易云账号已绑定其他点歌台账号");
+        if (!existing) {
+          const authorizationId = v7();
+          const credentials = this.vault.encrypt(flow.cookie!, { authorizationId, accountId: identity.accountId, generation: 1 });
+          const inserted = tx.insert(neteaseAuthorization).values({
+            id: authorizationId,
+            userId: principal.userId,
+            accountId: identity.accountId,
+            nickname: identity.name,
+            generation: 1,
+            status: "active",
+            credentials
+          }).onConflictDoNothing().returning({ id: neteaseAuthorization.id }).get();
+          if (!inserted) throw new BusinessError(409, "NETEASE_ACCOUNT_OWNED", "此网易云账号已绑定其他点歌台账号");
+          return null;
+        } else {
+          if (existing.accountId !== identity.accountId) {
+            throw new BusinessError(409, "ACCOUNT_MISMATCH", "扫码账号与当前绑定不一致，原绑定已保留");
+          }
+          const nextGeneration = existing.generation + 1;
+          const credentials = this.vault.encrypt(flow.cookie!, {
+            authorizationId: existing.id,
+            accountId: existing.accountId,
+            generation: nextGeneration
+          });
+          tx.update(neteaseAuthorization).set({
+            credentials,
+            generation: nextGeneration,
+            status: "active",
+            nickname: identity.name
+          }).where(eq(neteaseAuthorization.id, existing.id)).run();
+
+          return {
+            authId: existing.id,
+            accountId: existing.accountId,
+            generation: nextGeneration
+          };
+        }
       });
+      if (reauthorizedDetails) {
+        this.onReauthorize?.(principal.userId, reauthorizedDetails.authId, reauthorizedDetails.accountId, reauthorizedDetails.generation);
+      }
       flow.status = "completed";
       flow.confirmationKey = key;
       delete flow.cookie;
       flow.qrImage = null;
       return this.readBinding(principal);
     } finally { flow.busy = false; }
+  }
+
+  revoke(principal: SessionPrincipal, key: string): NeteaseBindingView {
+    this.#assertSession(principal);
+    validateCommandKey(key, this.now());
+    const command = this.#acceptCommand(principal, key, "revoke");
+    if (command.replay) return this.readBinding(principal);
+
+    const row = this.#authorization(principal.userId);
+    if (!row) throw new BusinessError(404, "NETEASE_AUTH_REQUIRED", "尚未绑定网易云账号");
+
+    this.database.transaction(tx => {
+      this.#assertSession(principal);
+      this.#discardFlow(principal.userId);
+      tx.update(neteaseAuthorization).set({
+        status: "waitingAuthorization",
+        credentials: null
+      }).where(eq(neteaseAuthorization.userId, principal.userId)).run();
+    });
+
+    this.onRevoke?.(principal.userId);
+    return this.readBinding(principal);
   }
 
   clear(): void {

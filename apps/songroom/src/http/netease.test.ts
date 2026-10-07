@@ -108,7 +108,7 @@ it("扫码后服务端核实真实身份，只有最终确认才持久绑定且�
   expect(confirmed.status).toBe(200);
   const body = await confirmed.text();
   expect(body).not.toMatch(/private-cookie|private-qr-key|credentials|generation/);
-  expect(JSON.parse(body)).toMatchObject({ binding: { identity: { accountId: "000123", nickname: "真实网易云称呼" }, status: "active" }, allowedActions: [] });
+  expect(JSON.parse(body)).toMatchObject({ binding: { identity: { accountId: "000123", nickname: "真实网易云称呼" }, status: "active" }, allowedActions: ["revoke"] });
   expect(adapter.inputs.filter(input => input.operation === "identity")).toEqual([
     expect.objectContaining({ operation: "identity", cookie: "MUSIC_U=private-cookie" }),
     expect.objectContaining({ operation: "identity", cookie: "MUSIC_U=private-cookie", expectedAccountId: "000123" })
@@ -275,14 +275,49 @@ it("允许的小幅未来操作标识在自己的24小时有效期内仍不会�
   expect(await expired.json()).toMatchObject({ error: { code: "IDEMPOTENCY_KEY_EXPIRED" } });
 });
 
-it("替换凭据主密钥后启动明确失败，原绑定不能被静默忽略", async () => {
+it("替换凭据主密钥后启动服务，原绑定不被静默忽略且进入 waitingAuthorization，同账号重新授权后能以新密钥解密", async () => {
   const { app, config, adapter } = await fixture();
   const cookie = await signUp(config, "lost-key@example.com");
   const id = await scan(config, cookie);
   expect((await request(config, `/api/netease/qr-flows/${id}/confirm`, cookie, { idempotencyKey: v7() })).status).toBe(200);
   await app.close();
   await fs.writeFile(config.credentialKeyPath, Buffer.alloc(32, 2));
-  await expect(createApp(config, { neteaseAdapter: adapter })).rejects.toThrow("凭据无法解密");
+  const restarted = await createApp(config, { neteaseAdapter: adapter });
+  apps.push(restarted);
+  await restarted.listen();
+
+  // 原绑定保留但处于 waitingAuthorization
+  const res = await (await request(config, "/api/netease/binding", cookie)).json();
+  expect(res).toMatchObject({
+    binding: { identity: { accountId: "000123" }, status: "waitingAuthorization" },
+    allowedActions: ["startQr"]
+  });
+
+  // 扫其他账号被拒绝
+  adapter.identity = { accountId: "000999", name: "其他账号" };
+  const otherStarted = await startFlow(config, cookie);
+  expect(otherStarted.status).toBe(200);
+  const otherFlow = await otherStarted.json() as { id: string };
+  const mismatchCheck = await request(config, `/api/netease/qr-flows/${otherFlow.id}/check`, cookie, {});
+  expect(mismatchCheck.status).toBe(409);
+  expect(await mismatchCheck.json()).toMatchObject({ error: { code: "ACCOUNT_MISMATCH" } });
+
+  // 原绑定仍保留
+  const stillRes = await (await request(config, "/api/netease/binding", cookie)).json();
+  expect(stillRes).toMatchObject({
+    binding: { identity: { accountId: "000123" }, status: "waitingAuthorization" },
+    allowedActions: ["startQr"]
+  });
+
+  // 扫原账号重新授权成功
+  adapter.identity = { accountId: "000123", name: "真实网易云称呼" };
+  const sameFlowId = await scan(config, cookie);
+  const confirmRes = await request(config, `/api/netease/qr-flows/${sameFlowId}/confirm`, cookie, { idempotencyKey: v7() });
+  expect(confirmRes.status).toBe(200);
+  expect(await confirmRes.json()).toMatchObject({
+    binding: { identity: { accountId: "000123" }, status: "active" },
+    allowedActions: ["revoke"]
+  });
 });
 
 it("扫码检查区分等待、已扫码及上游过期状态", async () => {
@@ -320,4 +355,94 @@ it.each(["ACCOUNT_EMPTY", "AUTH_UNAVAILABLE", "TARGET_PERMISSION", "RATE_LIMITED
   expect(response.status).toBe(502);
   expect(await response.json()).toMatchObject({ error: { code } });
   expect(await (await request(config, "/api/netease/binding", cookie)).json()).toMatchObject({ binding: null });
+});
+
+it("退出网易云授权将状态转为 waitingAuthorization，保留账号昵称但清空凭据，支持幂等重放", async () => {
+  const { config, adapter } = await fixture();
+  const cookie = await signUp(config, "revoke@example.com");
+
+  // 未绑定时退出返回 404
+  const notBound = await request(config, "/api/netease/binding/revoke", cookie, { idempotencyKey: v7() });
+  expect(notBound.status).toBe(404);
+  expect(await notBound.json()).toMatchObject({ error: { code: "NETEASE_AUTH_REQUIRED" } });
+
+  // 绑定网易云
+  const flowId = await scan(config, cookie);
+  await request(config, `/api/netease/qr-flows/${flowId}/confirm`, cookie, { idempotencyKey: v7() });
+
+  // 未认证退出返回 401
+  const unauth = await request(config, "/api/netease/binding/revoke", undefined, { idempotencyKey: v7() });
+  expect(unauth.status).toBe(401);
+
+  // 退出授权
+  const revokeKey = v7();
+  const revoked = await request(config, "/api/netease/binding/revoke", cookie, { idempotencyKey: revokeKey });
+  expect(revoked.status).toBe(200);
+  const revokeView = await revoked.json();
+  expect(revokeView).toMatchObject({
+    binding: {
+      identity: { accountId: "000123", nickname: "真实网易云称呼" },
+      status: "waitingAuthorization"
+    },
+    allowedActions: ["startQr"]
+  });
+
+  // 读取绑定视图
+  const readView = await (await request(config, "/api/netease/binding", cookie)).json();
+  expect(readView).toEqual(revokeView);
+
+  // 幂等重放返回原结果
+  const replay = await request(config, "/api/netease/binding/revoke", cookie, { idempotencyKey: revokeKey });
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toEqual(revokeView);
+});
+
+it("退出网易云授权与 Better Auth 会话正交解耦", async () => {
+  const { config } = await fixture();
+  const cookie = await signUp(config, "session-decoupling@example.com");
+  const flowId = await scan(config, cookie);
+  await request(config, `/api/netease/qr-flows/${flowId}/confirm`, cookie, { idempotencyKey: v7() });
+
+  // 退出网易云授权不影响点歌台会话
+  await request(config, "/api/netease/binding/revoke", cookie, { idempotencyKey: v7() });
+  const sessionRes = await request(config, "/api/auth/get-session", cookie);
+  expect(sessionRes.status).toBe(200);
+  expect((await sessionRes.json()).session).toBeTruthy();
+
+  // Better Auth 登出不改变网易云授权记录
+  await request(config, "/api/auth/sign-out", cookie, {});
+  const reLogin = await request(config, "/api/auth/sign-in/email", undefined, {
+    email: "session-decoupling@example.com",
+    password: "correct horse battery staple"
+  });
+  const newCookie = reLogin.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+  const bindingAfterLogin = await (await request(config, "/api/netease/binding", newCookie)).json();
+  expect(bindingAfterLogin).toMatchObject({
+    binding: {
+      identity: { accountId: "000123", nickname: "真实网易云称呼" },
+      status: "waitingAuthorization"
+    },
+    allowedActions: ["startQr"]
+  });
+});
+
+it("在途扫码流程与退出授权并发时，旧流程因授权状态变化被中止", async () => {
+  const { config, adapter } = await fixture();
+  const cookie = await signUp(config, "concurrent-revoke@example.com");
+  const flowId = await scan(config, cookie);
+  await request(config, `/api/netease/qr-flows/${flowId}/confirm`, cookie, { idempotencyKey: v7() });
+
+  // 退出授权
+  await request(config, "/api/netease/binding/revoke", cookie, { idempotencyKey: v7() });
+
+  // 发起新扫码流程
+  const reauthFlowId = await scan(config, cookie);
+
+  // 并发退出授权（再次 revoke）
+  await request(config, "/api/netease/binding/revoke", cookie, { idempotencyKey: v7() });
+
+  // 原在途流程被撤销丢弃，尝试提交确认返回 404 QR_FLOW_UNAVAILABLE
+  const lateConfirm = await request(config, `/api/netease/qr-flows/${reauthFlowId}/confirm`, cookie, { idempotencyKey: v7() });
+  expect(lateConfirm.status).toBe(404);
+  expect(await lateConfirm.json()).toMatchObject({ error: { code: "QR_FLOW_UNAVAILABLE" } });
 });

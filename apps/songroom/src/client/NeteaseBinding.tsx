@@ -17,7 +17,7 @@ const errorMessages: Record<string, string> = {
   NETEASE_ACCOUNT_OWNED: "此网易云账号已绑定其他点歌台账号。",
   NETEASE_ALREADY_BOUND: "已绑定网易云账号，请重新读取绑定状态。",
   ACCOUNT_EMPTY: "暂时无法核实网易云账号身份，请重新扫码。",
-  ACCOUNT_MISMATCH: "扫码账号身份不一致，原绑定已保留，请重新扫码。",
+  ACCOUNT_MISMATCH: "扫码账号与当前绑定不一致，原绑定已保留，请重新扫码。",
   AUTH_UNAVAILABLE: "网易云授权不可用，请重新开始扫码。",
   TARGET_PERMISSION: "网易云未允许此次操作，请检查账号授权。",
   RATE_LIMITED: "网易云请求受到限制，请稍后再试。",
@@ -70,18 +70,20 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
   });
   // QR material belongs only to this mounted session component, never a query or storage.
   const [flow, setFlow] = useState<QrFlowView | null>(null);
-  const [pending, setPending] = useState<"start" | "check" | "confirm" | null>(null);
+  const [pending, setPending] = useState<"start" | "check" | "confirm" | "revoke" | null>(null);
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false);
   const [message, setMessage] = useState("");
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const startKey = useRef<string | null>(null);
   const confirmKey = useRef<string | null>(null);
+  const revokeKey = useRef<string | null>(null);
   useEffect(() => () => {
     generation.current += 1;
     controller.current?.abort();
   }, []);
 
-  async function act(action: "start" | "check" | "confirm") {
+  async function act(action: "start" | "check" | "confirm" | "revoke") {
     controller.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
@@ -91,16 +93,30 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
     setMessage("");
     if (action === "start") setFlow(null);
     try {
-      if (action === "confirm" && flow) {
+      if (action === "revoke") {
+        revokeKey.current ??= uuidv7();
+        const nextBinding = await request("/binding/revoke", neteaseBindingView, abort.signal, { idempotencyKey: revokeKey.current });
+        if (!stillCurrent()) return;
+        await queryClient.cancelQueries({ queryKey: bindingKey });
+        if (!stillCurrent()) return;
+        queryClient.setQueryData(bindingKey, nextBinding);
+        void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+        setConfirmingRevoke(false);
+        setFlow(null);
+        revokeKey.current = null;
+        setMessage("已退出网易云授权，房间进入等待授权状态。");
+      } else if (action === "confirm" && flow) {
         confirmKey.current ??= uuidv7();
-        const binding = await request(`/qr-flows/${flow.id}/confirm`, neteaseBindingView, abort.signal, { idempotencyKey: confirmKey.current });
+        const nextBinding = await request(`/qr-flows/${flow.id}/confirm`, neteaseBindingView, abort.signal, { idempotencyKey: confirmKey.current });
         if (!stillCurrent()) return;
         // Cancel a concurrent binding read so it cannot replace this confirmed result.
         await queryClient.cancelQueries({ queryKey: bindingKey });
         if (!stillCurrent()) return;
-        queryClient.setQueryData(bindingKey, binding);
+        queryClient.setQueryData(bindingKey, nextBinding);
+        void queryClient.invalidateQueries({ queryKey: ["rooms"] });
         setFlow(null);
         confirmKey.current = null;
+        setMessage(binding?.status === "waitingAuthorization" ? "已恢复网易云授权。" : "已成功绑定网易云账号。");
       } else {
         if (action === "start") startKey.current ??= uuidv7();
         const nextFlow = action === "start"
@@ -115,13 +131,18 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
         if (nextFlow.status === "completed") {
           setFlow(null);
           void bindingQuery.refetch();
+          void queryClient.invalidateQueries({ queryKey: ["rooms"] });
         }
       }
     } catch (error) {
       if (stillCurrent()) {
         if (error instanceof BindingRequestError) {
           if (action === "start") startKey.current = null;
-          if (error.code === "IDEMPOTENCY_KEY_EXPIRED") confirmKey.current = null;
+          if (action === "revoke") revokeKey.current = null;
+          if (error.code === "IDEMPOTENCY_KEY_EXPIRED") {
+            confirmKey.current = null;
+            revokeKey.current = null;
+          }
           if ([
             "QR_FLOW_EXPIRED", "QR_FLOW_UNAVAILABLE", "QR_FLOW_USED", "AUTHORIZATION_CHANGED",
             "SESSION_REQUIRED", "ACCOUNT_EMPTY", "ACCOUNT_MISMATCH", "AUTH_UNAVAILABLE", "IDEMPOTENCY_CONFLICT", "NETEASE_ALREADY_BOUND"
@@ -132,6 +153,7 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
           }
           if (["QR_FLOW_USED", "AUTHORIZATION_CHANGED", "ACCOUNT_MISMATCH", "NETEASE_ALREADY_BOUND"].includes(error.code)) {
             void bindingQuery.refetch();
+            void queryClient.invalidateQueries({ queryKey: ["rooms"] });
           }
         }
         setMessage(errorMessage(error));
@@ -153,8 +175,56 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
         </>
       ) : binding ? (
         <>
-          <p className="netease-status" role="status">已绑定网易云账号</p>
-          <Identity identity={binding.identity} />
+          {binding.status === "active" ? (
+            <>
+              <p className="netease-status" role="status">已绑定网易云账号</p>
+              <Identity identity={binding.identity} />
+              {confirmingRevoke ? (
+                <div className="revoke-confirm-card">
+                  <p>确定要退出网易云授权吗？退出后，你创建的全部房间将暂停与网易云的同步，直到你重新授权同一个网易云账号。</p>
+                  <div className="action-row">
+                    <button className="primary-button" type="button" disabled={pending === "revoke"} onClick={() => void act("revoke")}>
+                      {pending === "revoke" ? "正在退出…" : "确认退出授权"}
+                    </button>
+                    <button className="secondary-button" type="button" disabled={pending === "revoke"} onClick={() => setConfirmingRevoke(false)}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                bindingQuery.data?.allowedActions.includes("revoke") && (
+                  <button className="secondary-button" type="button" disabled={pending !== null} onClick={() => setConfirmingRevoke(true)}>
+                    退出网易云授权
+                  </button>
+                )
+              )}
+            </>
+          ) : (
+            <>
+              <p className="netease-status warning" role="status">网易云授权已退出，等待重新授权</p>
+              <Identity identity={binding.identity} />
+              <p className="field-help">原账号绑定已保留。请使用同一个网易云账号重新扫码恢复授权。</p>
+              {flow && (
+                <div className="netease-flow">
+                  <p role="status">{flow.status === "awaitingConfirmation" ? "身份已核实，请确认重新授权。" : flow.status === "scanned" ? "已扫码，请在网易云中确认授权，再检查状态。" : "请用同一个网易云音乐 App 扫码并确认授权。"}</p>
+                  {flow.qrImage && <img className="netease-qr" src={flow.qrImage} alt="网易云授权二维码" />}
+                  <p className="field-help">二维码有效至 <time dateTime={flow.expiresAt}>{new Date(flow.expiresAt).toLocaleTimeString("zh-CN")}</time>，过期后请重新扫码。</p>
+                  {flow.identity && <Identity identity={flow.identity} />}
+                  {flow.allowedActions.includes("check") && (
+                    <button className="primary-button" type="button" disabled={pending !== null} onClick={() => void act("check")}>{pending === "check" ? "检查中…" : "检查扫码状态"}</button>
+                  )}
+                  {flow.identity && flow.allowedActions.includes("confirm") && (
+                    <button className="primary-button" type="button" disabled={pending !== null} onClick={() => void act("confirm")}>{pending === "confirm" ? "确认中…" : "确认重新授权"}</button>
+                  )}
+                </div>
+              )}
+              {bindingQuery.data?.allowedActions.includes("startQr") && (
+                <button className="secondary-button" type="button" disabled={pending === "start" || pending === "confirm"} onClick={() => void act("start")}>
+                  {pending === "start" ? "正在生成二维码…" : flow ? "重新扫码（替代当前流程）" : "重新扫码授权"}
+                </button>
+              )}
+            </>
+          )}
         </>
       ) : (
         <>
