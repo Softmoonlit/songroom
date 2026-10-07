@@ -569,17 +569,26 @@ export class PublicPlaylists {
     this.#status(row.id, authorizationErrors.has(code) ? "waitingAuthorization" : ["RATE_LIMITED", "TARGET_PERMISSION"].includes(code) ? "needsAdministrator" : "failed", code);
   }
 
-  async #transitionToUnknownCreation(row: Operation, errorCode: Operation["errorCode"], cookie?: string): Promise<void> {
+  async #fetchAccountPlaylists(cookie: string, accountId: string): Promise<Array<{ id: string; name: string }> | null> {
+    const list: Array<{ id: string; name: string }> = [];
+    let offset = 0;
+    const limit = 1000;
+    while (true) {
+      const res = await this.adapter.call({ operation: "userPlaylists", cookie, accountId, offset, limit });
+      if (!res.ok) return null;
+      for (const p of res.data.playlists) list.push({ id: p.id, name: p.name });
+      if (!res.data.more || res.data.playlists.length === 0) break;
+      offset += res.data.playlists.length;
+    }
+    return list;
+  }
+
+  async #transitionToUnknownCreation(row: Operation, errorCode: Operation["errorCode"], cookie: string): Promise<void> {
     let afterList: Array<{ id: string; name: string }> | null = null;
-    if (cookie) {
-      try {
-        const afterRes = await this.adapter.call({ operation: "userPlaylists", cookie, accountId: row.accountId!, offset: 0, limit: 1000 });
-        if (afterRes.ok) {
-          afterList = afterRes.data.playlists.map(p => ({ id: p.id, name: p.name }));
-        }
-      } catch {
-        // 忽略只读补查失败，不影响记录 unknown 证据
-      }
+    try {
+      afterList = await this.#fetchAccountPlaylists(cookie, row.accountId!);
+    } catch {
+      // 忽略只读补查失败，不影响记录 unknown 证据
     }
 
     this.database.transaction(tx => {
@@ -605,34 +614,25 @@ export class PublicPlaylists {
       if (detail.step === "ready") {
         const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
         if (!identity.ok) {
-          this.database.transaction(() => {
-            this.#readFailure(row, identity.error.code);
-          });
+          this.#readFailure(row, identity.error.code);
           return;
         }
         if (identity.data.accountId !== row.accountId) {
-          this.database.transaction(() => {
-            this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH");
-          });
+          this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH");
           return;
         }
         const condition = this.#conditions(row);
         if (condition !== "valid") {
-          this.database.transaction(() => {
-            this.#conditionStatus(row, condition);
-          });
+          this.#conditionStatus(row, condition);
           return;
         }
 
-        const playlists = await this.adapter.call({ operation: "userPlaylists", cookie, accountId: row.accountId!, offset: 0, limit: 1000 });
-        if (!playlists.ok) {
-          this.database.transaction(() => {
-            this.#readFailure(row, playlists.error.code);
-          });
+        const beforeList = await this.#fetchAccountPlaylists(cookie, row.accountId!);
+        if (!beforeList) {
+          this.#readFailure(row, "NETWORK_ERROR");
           return;
         }
 
-        const beforeList = playlists.data.playlists.map(p => ({ id: p.id, name: p.name }));
         this.database.transaction(tx => {
           tx.update(publicPlaylistCreation).set({
             step: "verified",

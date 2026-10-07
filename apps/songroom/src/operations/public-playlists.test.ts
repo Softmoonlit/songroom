@@ -557,12 +557,19 @@ it("未知创建超过 24 小时仍保存全部最小恢复证据、不允许旧
 
 it("崩溃矩阵 1: 发送前崩溃（step=ready/verified），重启恢复为 ready，不重复发送，最终成功绑定且 playlistCreate 仅调用 1 次", async () => {
   const f = fixture();
+  let resolvePlaylists: () => void = () => {};
+  const playlistCompleted = new Promise<void>(resolve => { resolvePlaylists = resolve; });
+  const origPlaylists = f.adapter.userPlaylists;
+  f.adapter.userPlaylists = async input => {
+    const res = await origPlaylists(input);
+    resolvePlaylists();
+    return res;
+  };
+
   const service = f.module();
   service.create("owner", f.roomId, { idempotencyKey: v7() });
   service.start();
-  while (f.database.select().from(publicPlaylistCreation).get()?.step !== "verified") {
-    await new Promise(r => setTimeout(r, 10));
-  }
+  await playlistCompleted;
   service.stop();
   await service.settle();
 
