@@ -1,4 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createServer } from "node:net";
+import { initializeDatabase } from "../../src/db/database.js";
+import { createApp, type SongRoomApp } from "../../src/http/app.js";
+import { offlineAdapter } from "../netease/offline-adapter.js";
 import { publicPlaylistView, type PublicPlaylistView } from "../../src/shared/public-playlist-contracts.js";
 
 const roomId = "018f3a2c-4e89-7000-8000-000000000001";
@@ -172,5 +179,131 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
 
     await expect(page.getByRole("status")).toContainText(/创建结果待核查/);
     await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
+  });
+
+  test("真实运行应用（无 route 拦截）：经历公开刷新核查失效并成功重建为新代次", async ({ page }) => {
+    test.setTimeout(60_000);
+    let playlistState: "initial" | "deleted" | "recreated" = "initial";
+    let createCount = 0;
+
+    const fixture = await offlineAdapter(request => {
+      if (request.url.includes("qrcode/unikey")) return { body: { code: 200, unikey: "reconfig-qr" } };
+      if (request.url.includes("qrcode/client/login")) return { body: { code: 803 }, cookies: ["MUSIC_U=offline-reconfig; Domain=music.163.com; Path=/"] };
+      if (request.url.includes("user/account")) return { body: { code: 200, account: { id: "offline-reconfig-owner" }, profile: { userId: "offline-reconfig-owner", nickname: "离线房主" } } };
+      if (request.url.includes("playlist/create")) {
+        createCount++;
+        return { body: { code: 200, id: createCount === 1 ? "cloud-pl-v1" : "cloud-pl-v2" } };
+      }
+      if (request.url.includes("user/playlist")) {
+        if (playlistState === "deleted") {
+          return { body: { code: 200, playlist: [], more: false } };
+        }
+        const id = createCount <= 1 ? "cloud-pl-v1" : "cloud-pl-v2";
+        return {
+          body: {
+            code: 200,
+            playlist: [{
+              id,
+              name: "songroom-离线重建房-公共",
+              status: 0,
+              creator: { userId: "offline-reconfig-owner" }
+            }],
+            more: false
+          }
+        };
+      }
+      if (request.url.includes("playlist/detail") || request.url.includes("v6/playlist/detail")) {
+        const id = createCount <= 1 ? "cloud-pl-v1" : "cloud-pl-v2";
+        const status = playlistState === "deleted" ? 10 : 0;
+        return {
+          body: {
+            code: 200,
+            playlist: {
+              id,
+              name: "songroom-离线重建房-公共",
+              status,
+              creator: { userId: "offline-reconfig-owner" },
+              trackIds: [],
+              tracks: []
+            },
+            privileges: []
+          }
+        };
+      }
+      throw new Error(`Unexpected offline call: ${request.url}`);
+    });
+
+    const root = await mkdtemp(path.join(tmpdir(), "songroom-reconfig-e2e-"));
+    let app: SongRoomApp | undefined;
+    try {
+      const socket = createServer();
+      await new Promise<void>(resolve => socket.listen(0, "127.0.0.1", resolve));
+      const port = (socket.address() as { port: number }).port;
+      await new Promise<void>(resolve => socket.close(() => resolve()));
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const dbPath = path.join(root, "app.sqlite");
+      const credentialKeyPath = path.join(root, "netease.key");
+      initializeDatabase(dbPath);
+      await writeFile(credentialKeyPath, Buffer.alloc(32, 9), { mode: 0o600 });
+      app = await createApp({ nodeEnv: "test", host: "127.0.0.1", port, baseUrl, dbPath, credentialKeyPath, staticRoot: path.resolve("dist/client"), authSecret: "reconfig-e2e-secret-with-at-least-32-chars" }, { neteaseAdapter: fixture.adapter });
+      await app.listen();
+
+      await page.setViewportSize({ width: 320, height: 800 });
+      await page.goto(`${baseUrl}/register`);
+      await page.getByLabel("账号称呼").fill("重建房主");
+      await page.getByLabel("邮箱").fill("reconfig@example.com");
+      await page.getByLabel("密码").fill("correct horse battery staple");
+      await page.getByRole("button", { name: "注册并进入房间列表" }).click();
+
+      await page.getByRole("link", { name: "账号设置", exact: true }).click();
+      await page.getByRole("button", { name: "开始扫码绑定" }).click();
+      await page.getByRole("button", { name: "检查扫码状态" }).click();
+      await page.getByRole("button", { name: "确认绑定此网易云账号" }).click();
+      await expect(page.getByText("已绑定网易云账号", { exact: true })).toBeVisible();
+
+      await page.getByRole("link", { name: "我的房间", exact: true }).click();
+      await page.getByRole("link", { name: "创建房间", exact: true }).click();
+      await page.getByLabel("房间名称").fill("离线重建房");
+      await page.getByLabel("我的房间昵称").fill("房主");
+      await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
+      await page.getByRole("button", { name: "创建并进入房间" }).click();
+
+      // 1. 创建初始公共歌单
+      await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
+      await page.getByRole("button", { name: "创建公共歌单" }).click();
+      await expect.poll(async () => {
+        const res = await page.request.get(`${page.url().replace("/rooms/", "/api/rooms/")}/public-playlist`);
+        return (await res.json()).playlist?.id;
+      }, { timeout: 15_000 }).toBe("cloud-pl-v1");
+
+      await page.getByRole("button", { name: "更新状态" }).click();
+      await expect(page.getByRole("heading", { name: "songroom-离线重建房-公共" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "刷新歌单" })).toBeVisible();
+
+      // 2. 模拟网易云端歌单被删除，用户点击刷新歌单
+      playlistState = "deleted";
+      await page.getByRole("button", { name: "刷新歌单" }).click();
+
+      // 3. 验证页面更新为已确认失效，并出现重新创建按钮
+      await expect(page.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "重新创建公共歌单" })).toBeVisible();
+
+      // 4. 房主点击重新创建公共歌单
+      playlistState = "recreated";
+      await page.getByRole("button", { name: "重新创建公共歌单" }).click();
+      await expect.poll(async () => {
+        const res = await page.request.get(`${page.url().replace("/rooms/", "/api/rooms/")}/public-playlist`);
+        return (await res.json()).playlist?.id;
+      }, { timeout: 15_000 }).toBe("cloud-pl-v2");
+
+      // 5. 更新状态验证新歌单绑定生效
+      await page.getByRole("button", { name: "更新状态" }).click();
+      await expect(page.getByText("cloud-pl-v2")).toBeVisible();
+      await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
+    } finally {
+      await app?.close();
+      await fixture.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

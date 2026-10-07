@@ -1,5 +1,5 @@
 import { v7 } from "uuid";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
 import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCreation, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
@@ -241,9 +241,9 @@ export class PublicPlaylists {
     });
   }
 
-  async #executeRefresh(ownerUserId: string, accountId: string, playlistId: string, generation: number): Promise<void> {
+  async #executeRefresh(ownerUserId: string, accountId: string, playlistId: string, bindingGeneration: number): Promise<void> {
     const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, ownerUserId)).get();
-    if (!auth || auth.accountId !== accountId || auth.generation !== generation) {
+    if (!auth || auth.accountId !== accountId || auth.status !== "active") {
       this.#recordRefreshError(accountId, playlistId, "AUTH_UNAVAILABLE");
       return;
     }
@@ -277,7 +277,7 @@ export class PublicPlaylists {
       if (result.error.code === "TARGET_PERMISSION") {
         const deleted = await this.#verifyTargetDeleted(cookie, accountId, playlistId);
         if (deleted) {
-          this.#invalidateBinding(accountId, playlistId, generation);
+          this.#invalidateBinding(accountId, playlistId, bindingGeneration);
           return;
         }
       }
@@ -289,13 +289,13 @@ export class PublicPlaylists {
     if (data.playlist.status !== 0) {
       const deleted = await this.#verifyTargetDeleted(cookie, accountId, playlistId);
       if (deleted) {
-        this.#invalidateBinding(accountId, playlistId, generation);
+        this.#invalidateBinding(accountId, playlistId, bindingGeneration);
         return;
       }
       this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION");
       return;
     }
-    this.#commitSnapshot(accountId, playlistId, generation, data, readStartedAt);
+    this.#commitSnapshot(accountId, playlistId, bindingGeneration, data, readStartedAt);
   }
 
   async #verifyTargetDeleted(cookie: string, accountId: string, playlistId: string): Promise<boolean> {
@@ -676,6 +676,17 @@ export class PublicPlaylists {
         return;
       }
 
+      // 检查不能跨房间共用其他房间的活跃公共歌单
+      const sharedOtherRoom = tx.select({ roomId: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
+        .where(and(
+          eq(publicPlaylistBinding.playlistId, targetPlaylistId),
+          ne(publicPlaylistBinding.roomId, row.roomId)
+        )).get();
+      if (sharedOtherRoom) {
+        this.#status(row.id, "needsAdministrator", "TARGET_PERMISSION");
+        return;
+      }
+
       const maxRetired = tx.select({ gen: retiredPublicPlaylistBinding.generation })
         .from(retiredPublicPlaylistBinding)
         .where(eq(retiredPublicPlaylistBinding.roomId, row.roomId))
@@ -714,11 +725,14 @@ export class PublicPlaylists {
     const list: Array<{ id: string; name: string }> = [];
     let offset = 0;
     const limit = 1000;
+    let pages = 0;
     while (true) {
+      if (++pages > 50) return null;
       const res = await this.adapter.call({ operation: "userPlaylists", cookie, accountId, offset, limit });
       if (!res.ok) return null;
       for (const p of res.data.playlists) list.push({ id: p.id, name: p.name });
-      if (!res.data.more || res.data.playlists.length === 0) break;
+      if (!res.data.more) break;
+      if (res.data.playlists.length === 0) return null;
       offset += res.data.playlists.length;
     }
     return list;

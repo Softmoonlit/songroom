@@ -146,16 +146,25 @@ it("经由公开刷新核查失效，清空旧快照与标签并允许房主重�
   const refreshUrl = `${url}/refresh`;
   const roomId = url.split("/")[3];
 
-  app.database.insert(publicPlaylistBinding).values({
-    roomId,
-    accountId: "test",
-    playlistId: "cloud-pl-stale",
-    name: "songroom-测试宿舍-公共",
-    creationOperationId: v7(),
-    generation: 1
-  }).run();
+  // 1. 房主经由公开创建接口创建初始公共歌单 (代次 1)
+  adapter.playlistCreate = async () => ({
+    ok: true,
+    data: { playlistId: "cloud-pl-stale" }
+  });
+  adapter.userPlaylists = async () => ({
+    ok: true,
+    data: { playlists: [{ id: "cloud-pl-stale", name: "songroom-测试宿舍-公共", creatorId: "test", subscribed: false, status: 0 }], more: false }
+  });
 
-  // 墓碑旧详情 (status 10)，身份匹配，完整清单确认无该歌单
+  const initCreateRes = await request(app, url, owner.cookie, { idempotencyKey: v7() });
+  expect(initCreateRes.statusCode).toBe(202);
+  await app.scheduler.settle();
+
+  const initViewRes = await request(app, url, owner.cookie);
+  expect(initViewRes.statusCode).toBe(200);
+  expect(publicPlaylistView.parse(initViewRes.json()).playlist?.id).toBe("cloud-pl-stale");
+
+  // 2. 上游详情返回墓碑状态，但清单由于分页异常不完整 (more: true 且 playlists 为空) -> 不解除绑定
   adapter.playlistDetail = async () => ({
     ok: true,
     data: {
@@ -166,10 +175,22 @@ it("经由公开刷新核查失效，清空旧快照与标签并允许房主重�
   });
   adapter.userPlaylists = async () => ({
     ok: true,
+    data: { playlists: [], more: true }
+  });
+
+  const incompleteRefreshRes = await request(app, refreshUrl, owner.cookie, {});
+  expect(incompleteRefreshRes.statusCode).toBe(200);
+  const incompleteView = publicPlaylistView.parse(incompleteRefreshRes.json());
+  expect(incompleteView.playlist?.id).toBe("cloud-pl-stale");
+  expect(incompleteView.lastRefreshError).toBe("TARGET_PERMISSION");
+  expect(incompleteView.invalidatedTarget).toBeNull();
+
+  // 3. 完整清单确认目标歌单不存在且详情墓碑 -> 确认失效并解除绑定
+  adapter.userPlaylists = async () => ({
+    ok: true,
     data: { playlists: [], more: false }
   });
 
-  // 刷新触发核查并确认失效
   const refreshRes = await request(app, refreshUrl, owner.cookie, {});
   expect(refreshRes.statusCode).toBe(200);
   const invalidatedView = publicPlaylistView.parse(refreshRes.json());
@@ -183,7 +204,7 @@ it("经由公开刷新核查失效，清空旧快照与标签并允许房主重�
   });
   expect(invalidatedView.allowedActions).toEqual(["createPublicPlaylist"]);
 
-  // 室友读取：无创建权限，显示 OWNER_ONLY
+  // 4. 室友读取：无创建权限，显示 OWNER_ONLY
   const memberGetRes = await request(app, url, member.cookie);
   expect(memberGetRes.statusCode).toBe(200);
   const memberView = publicPlaylistView.parse(memberGetRes.json());
@@ -192,11 +213,11 @@ it("经由公开刷新核查失效，清空旧快照与标签并允许房主重�
   expect(memberView.allowedActions).toEqual([]);
   expect(memberView.disabledReason).toBe("OWNER_ONLY");
 
-  // 室友尝试重建：拒绝
+  // 5. 室友尝试重建：拒绝
   const memberRecreateRes = await request(app, url, member.cookie, { idempotencyKey: v7() });
   expect(memberRecreateRes.statusCode).toBe(404);
 
-  // 房主提交重新创建
+  // 6. 房主提交重新创建代次 2
   adapter.playlistCreate = async () => ({
     ok: true,
     data: { playlistId: "cloud-pl-v2" }
@@ -207,13 +228,30 @@ it("经由公开刷新核查失效，清空旧快照与标签并允许房主重�
   // 等待调度执行完成
   await app.scheduler.settle();
 
-  // 查询新状态：绑定已恢复为代次 2，invalidatedTarget 为空
+  // 查询新状态：绑定已建立为代次 2，invalidatedTarget 为空
   const newViewRes = await request(app, url, owner.cookie);
   expect(newViewRes.statusCode).toBe(200);
   const newView = publicPlaylistView.parse(newViewRes.json());
   expect(newView.playlist?.id).toBe("cloud-pl-v2");
   expect(newView.invalidatedTarget).toBeNull();
 
+  // 7. 刷新新歌单代次 2：正常向上游读取详情并确认空快照，无 AUTH_UNAVAILABLE 错误
+  adapter.playlistDetail = async () => ({
+    ok: true,
+    data: {
+      playlist: { id: "cloud-pl-v2", name: "songroom-测试宿舍-公共", creatorId: "test", subscribed: false, status: 0 },
+      songIds: [],
+      songs: []
+    }
+  });
+
+  const newRefreshRes = await request(app, refreshUrl, owner.cookie, {});
+  expect(newRefreshRes.statusCode).toBe(200);
+  const refreshedNewView = publicPlaylistView.parse(newRefreshRes.json());
+  expect(refreshedNewView.lastRefreshError).toBeNull();
+  expect(refreshedNewView.snapshot?.trackCount).toBe(0);
+  expect(refreshedNewView.snapshot?.tracks).toEqual([]);
+
   const newBinding = app.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get()!;
   expect(newBinding.generation).toBe(2);
-});
+}, 20000);

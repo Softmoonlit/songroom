@@ -430,6 +430,7 @@ describe("失效公共歌单识别与重新创建 (ticket 13)", () => {
       }
     });
     const refreshed = await service.refresh("owner", f.roomId);
+    expect(refreshed.lastRefreshError).toBeNull();
     expect(refreshed.snapshot?.trackCount).toBe(0);
     expect(refreshed.snapshot?.tracks).toEqual([]);
 
@@ -563,5 +564,82 @@ describe("失效公共歌单识别与重新创建 (ticket 13)", () => {
     expect(finalSongOp.status).toBe("stopped");
     const tags = f.database.select().from(requesterTag).where(eq(requesterTag.roomId, f.roomId)).all();
     expect(tags).toHaveLength(0);
+  });
+
+  it("不完整歌单清单（more 为 true 但页空）视为核查不确定，绝不解除绑定", async () => {
+    const f = fixture();
+    const service = f.module();
+    service.start();
+
+    // 绑定公共歌单代次 1
+    f.database.insert(publicPlaylistBinding).values({
+      roomId: f.roomId,
+      accountId: "cloud-owner",
+      playlistId: "cloud-playlist-1",
+      name: "songroom-宿舍-公共",
+      creationOperationId: v7(),
+      generation: 1
+    }).run();
+
+    // 目标详情返回 TARGET_PERMISSION 墓碑，身份正确
+    f.adapter.detail = async () => ({
+      ok: false,
+      error: { code: "TARGET_PERMISSION", outcome: "failed" }
+    });
+    f.adapter.identity = async () => ({
+      ok: true,
+      data: { accountId: "cloud-owner", name: "房主" }
+    });
+    // 上游返回 more 为 true 但数据为空（分页停滞或异常）
+    f.adapter.userPlaylists = async () => ({
+      ok: true,
+      data: { playlists: [], more: true }
+    });
+
+    const view = await service.refresh("owner", f.roomId);
+
+    // 绑定依然保留，记录错误为 TARGET_PERMISSION，绝不误标失效
+    expect(view.playlist?.id).toBe("cloud-playlist-1");
+    expect(view.lastRefreshError).toBe("TARGET_PERMISSION");
+    expect(view.invalidatedTarget).toBeNull();
+    expect(f.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, f.roomId)).get()).toBeDefined();
+  });
+
+  it("跨房间禁止共用活跃公共歌单：若上游返回其他房间活跃歌单 ID 则进入 needsAdministrator 并拒绝绑定", async () => {
+    const f = fixture();
+    const service = f.module();
+    service.start();
+
+    // 房主在另一个房间拥有活跃公共歌单
+    const otherRoomId = v7();
+    f.database.insert(room).values({ id: otherRoomId, name: "二号房间", ownerUserId: "owner" }).run();
+    f.database.insert(roomMembership).values({ id: v7(), roomId: otherRoomId, userId: "owner", nickname: "房主" }).run();
+    f.database.insert(publicPlaylistBinding).values({
+      roomId: otherRoomId,
+      accountId: "cloud-owner",
+      playlistId: "cloud-playlist-active-other",
+      name: "songroom-二号房间-公共",
+      creationOperationId: v7(),
+      generation: 1
+    }).run();
+
+    // 在本房间重新创建时，上游返回了二号房间的活跃 ID
+    f.adapter.create = async () => ({
+      ok: true,
+      data: { playlistId: "cloud-playlist-active-other" }
+    });
+    f.adapter.userPlaylists = async () => ({
+      ok: true,
+      data: { playlists: [], more: false }
+    });
+
+    service.create("owner", f.roomId, { idempotencyKey: v7() });
+    await service.settle();
+
+    // 本房间绑定未建立，操作进入 needsAdministrator
+    expect(f.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, f.roomId)).get()).toBeUndefined();
+    const op = f.database.select().from(operation).where(and(eq(operation.roomId, f.roomId), eq(operation.kind, "createPublicPlaylist"))).get()!;
+    expect(op.status).toBe("needsAdministrator");
+    expect(op.errorCode).toBe("TARGET_PERMISSION");
   });
 });
