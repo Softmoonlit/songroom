@@ -87,7 +87,7 @@ for (const [status, text] of [
   });
 }
 
-for (const [reason, text] of [["OWNER_ONLY", "只有房主"], ["NETEASE_AUTH_REQUIRED", "绑定有效"], ["PUBLIC_PLAYLIST_EXISTS", "已经绑定"], ["OPERATION_PENDING", "未完成"], ["UPSTREAM_QUEUE_FULL", "20 项"], ["ACCOUNT_PAUSED", "已暂停"], ["TARGET_BLOCKED", "权限需要处理"]] as const) {
+for (const [reason, text] of [["OWNER_ONLY", "只有房主"], ["NETEASE_AUTH_REQUIRED", "绑定有效"], ["PUBLIC_PLAYLIST_EXISTS", "已经绑定"], ["OPERATION_PENDING", "未完成"], ["UPSTREAM_QUEUE_FULL", "20 项"], ["ACCOUNT_PAUSED", "已暂停"], ["TARGET_BLOCKED", "其他房间可继续使用"]] as const) {
   test(`禁用原因 ${reason} 以中文展示，动作只来自 read model`, async ({ page }) => {
     await roomPage(page);
     await page.route(endpoint, route => route.fulfill({ json: { ...empty, allowedActions: [], disabledReason: reason } }));

@@ -3,7 +3,7 @@ import type { z } from "zod";
 export const errorMessages: Record<string, string> = {
   UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
   ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员明确恢复。",
-  TARGET_BLOCKED: "当前歌单目标已阻塞，等待权限处理。",
+  TARGET_BLOCKED: "当前歌单目标有待确认的写入操作，请稍后刷新查看。",
   RATE_LIMITED: "网易云风控或频繁请求已暂停整个账号，请联系管理员。",
   ACCOUNT_EMPTY: "网易云返回的账号为空，请房主恢复授权。",
   TARGET_PERMISSION: "当前歌单目标权限不足，等待处理。",

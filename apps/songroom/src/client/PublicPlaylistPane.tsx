@@ -36,7 +36,7 @@ const disabledMessages = {
   NETEASE_AUTH_REQUIRED: "请房主先在账号设置中绑定有效的网易云账号。",
   PUBLIC_PLAYLIST_EXISTS: "此房间已经绑定公共歌单。",
   ACCOUNT_PAUSED: "网易云账号因风控或频繁请求已暂停，请联系管理员恢复。",
-  TARGET_BLOCKED: "当前目标权限需要处理，其他房间可继续使用。",
+  TARGET_BLOCKED: "当前目标有待确认的写入操作，其他房间可继续使用。",
   UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
   OPERATION_PENDING: "已有未完成的创建操作，不能再次创建。"
 };
@@ -191,7 +191,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     queryKey: ["song-request-operation", activeOperationId],
     queryFn: ({ signal }) => request(`/${roomId}/song-requests/${activeOperationId}`, songRequestOperationView, signal),
     enabled: Boolean(activeOperationId && active),
-    refetchInterval: q => (q.state.data?.status && ["queued", "processing"].includes(q.state.data.status) ? 10000 : false),
+    refetchInterval: q => (q.state.data?.status && ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status) ? 10000 : false),
     ...queryOptions
   });
 
@@ -207,9 +207,12 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         void client.invalidateQueries({ queryKey });
         break;
       case "awaitingConfirmation":
-        setRequestStatusMessage(`《${op.name}》已发送至网易云，正在等待云端确认，请稍后刷新查看。`);
+        if (op.songConfirmed && !op.tagConfirmed) {
+          setRequestStatusMessage(`《${op.name}》网易云已确认，但点歌人标签待补记。`);
+        } else {
+          setRequestStatusMessage(`《${op.name}》已发送至网易云，正在等待云端确认，请稍后刷新查看。`);
+        }
         setIsRequesting(false);
-        setActiveOperationId(null);
         setSelectedCandidate(null);
         void client.invalidateQueries({ queryKey });
         break;

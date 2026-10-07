@@ -234,11 +234,19 @@ export const publicSongRequest = sqliteTable("public_song_request", {
   album: text("album").notNull(),
   step: text("step", { enum: ["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
   songConfirmed: integer("song_confirmed", { mode: "boolean" }).notNull().default(false),
-  tagConfirmed: integer("tag_confirmed", { mode: "boolean" }).notNull().default(false)
+  tagConfirmed: integer("tag_confirmed", { mode: "boolean" }).notNull().default(false),
+  playlistId: text("playlist_id").notNull(),
+  bindingGeneration: integer("binding_generation").notNull(),
+  checkRound: integer("check_round").notNull().default(0),
+  nextCheckAt: integer("next_check_at")
 }, table => [
+  index("public_song_request_target_index").on(table.playlistId),
   check("public_song_request_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'tagging', 'succeeded', 'rejected', 'unknown', 'stopped')`),
   check("public_song_request_song_id_valid", sql`length(${table.songId}) > 0`),
-  check("public_song_request_name_valid", sql`length(${table.name}) > 0`)
+  check("public_song_request_name_valid", sql`length(${table.name}) > 0`),
+  check("public_song_request_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
+  check("public_song_request_binding_generation_valid", sql`${table.bindingGeneration} > 0`),
+  check("public_song_request_check_round_valid", sql`${table.checkRound} >= 0 AND ${table.checkRound} <= 3`)
 ]);
 
 export const requesterTag = sqliteTable("requester_tag", {

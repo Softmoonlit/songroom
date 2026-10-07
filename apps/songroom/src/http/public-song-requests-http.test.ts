@@ -5,7 +5,8 @@ import { createServer } from "node:net";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase } from "../db/database.js";
-import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, playlistTrack } from "../db/schema.js";
+import { eq } from "drizzle-orm";
+import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, playlistTrack, operation, publicSongRequest } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
@@ -117,4 +118,59 @@ it("通过 HTTP 提交点歌并在歌曲已有或新增时正确返回", async (
   const opRes = await request(app, `/api/rooms/${roomId}/song-requests/${data.operation.id}`, member.cookie, undefined, "GET");
   expect(opRes.statusCode).toBe(200);
   expect(opRes.json().id).toBe(data.operation.id);
+});
+
+it("HTTP: 目标处于待确认时返回 409 TARGET_BLOCKED，非成员或他人无法读取操作", async () => {
+  const { app, owner, member, outsider, roomId } = await fixture();
+
+  // 1. 模拟插入一个处于 awaitingConfirmation 的点歌操作
+  const opId = v7();
+  app.database.insert(operation).values({
+    id: opId, kind: "requestPublicSong", userId: owner.userId, roomId, accountId: "test", authorizationId: v7(), generation: 1, status: "awaitingConfirmation", createdAt: Date.now(), updatedAt: Date.now()
+  }).run();
+  app.database.insert(publicSongRequest).values({
+    operationId: opId, songId: "s-blocked", name: "待确认歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "unknown", songConfirmed: false, tagConfirmed: false,
+    playlistId: "pl-test", bindingGeneration: 1, checkRound: 0, nextCheckAt: Date.now() + 5000
+  }).run();
+
+  // 室友尝试点歌，因目标阻塞返回 409 TARGET_BLOCKED
+  const blockedRes = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
+    idempotencyKey: v7(),
+    songId: "s-2",
+    name: "新歌",
+    artists: ["歌手"],
+    album: "专辑"
+  });
+  expect(blockedRes.statusCode).toBe(409);
+  expect(blockedRes.json().error.code).toBe("TARGET_BLOCKED");
+
+  // 2. 权限控制：局外人读取房主的待确认操作 -> 404
+  const outsiderRes = await request(app, `/api/rooms/${roomId}/song-requests/${opId}`, outsider.cookie, undefined, "GET");
+  expect(outsiderRes.statusCode).toBe(404);
+
+  // 室友读取房主的操作 -> 404
+  const memberReadOwnerOpRes = await request(app, `/api/rooms/${roomId}/song-requests/${opId}`, member.cookie, undefined, "GET");
+  expect(memberReadOwnerOpRes.statusCode).toBe(404);
+
+  // 房主本人读取自己的操作 -> 200
+  const ownerReadOpRes = await request(app, `/api/rooms/${roomId}/song-requests/${opId}`, owner.cookie, undefined, "GET");
+  expect(ownerReadOpRes.statusCode).toBe(200);
+  expect(ownerReadOpRes.json().id).toBe(opId);
+  expect(ownerReadOpRes.json().status).toBe("awaitingConfirmation");
+
+  // 3. 幂等冲突测试：同一 key 不同内容返回 409
+  const keySame = v7();
+  // 房主自己的待确认操作阻碍了同房间新点歌，清理后测试幂等
+  app.database.delete(operation).where(eq(operation.id, opId)).run();
+
+  const req1 = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
+    idempotencyKey: keySame, songId: "s-idem", name: "歌A", artists: ["歌手"], album: "专辑"
+  });
+  expect(req1.statusCode).toBe(202);
+
+  const reqConflict = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
+    idempotencyKey: keySame, songId: "s-idem", name: "不同歌名", artists: ["歌手"], album: "专辑"
+  });
+  expect(reqConflict.statusCode).toBe(409);
+  expect(reqConflict.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
 });

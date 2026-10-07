@@ -110,7 +110,9 @@ it("操作信封支持 requestPublicSong 且严格限制同一成员同一房间
     name: "稻香",
     artists: JSON.stringify(["周杰伦"]),
     album: "魔杰座",
-    step: "ready"
+    step: "ready",
+    playlistId: "pl-1",
+    bindingGeneration: 1
   }).run();
 
   // 同一成员在同一房间尝试插入第二项未完成操作被唯一索引拒绝
