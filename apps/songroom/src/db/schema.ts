@@ -290,6 +290,10 @@ export const publicPlaylistCleanup = sqliteTable("public_playlist_cleanup", {
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   accountId: text("account_id").notNull(),
   playlistId: text("playlist_id").notNull(),
+  creationOperationId: text("creation_operation_id"),
+  hasSent: integer("has_sent", { mode: "boolean" }).notNull().default(false),
+  checkFact: text("check_fact"),
+  checkRound: integer("check_round").notNull().default(0),
   status: text("status", { enum: ["ready", "sending", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded"] }).notNull(),
   lastErrorCode: text("last_error_code"),
   version: integer("version").notNull().default(1),
@@ -301,7 +305,8 @@ export const publicPlaylistCleanup = sqliteTable("public_playlist_cleanup", {
   check("public_playlist_cleanup_account_id_valid", sql`length(${table.accountId}) > 0`),
   check("public_playlist_cleanup_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
   check("public_playlist_cleanup_version_valid", sql`${table.version} > 0`),
-  check("public_playlist_cleanup_status_valid", sql`${table.status} IN ('ready', 'sending', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded')`)
+  check("public_playlist_cleanup_status_valid", sql`${table.status} IN ('ready', 'sending', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded')`),
+  check("public_playlist_cleanup_check_round_valid", sql`${table.checkRound} >= 0`)
 ]);
 
 export const authSchema = { user, session, account, verification };

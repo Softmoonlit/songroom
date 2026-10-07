@@ -627,13 +627,13 @@ it("服务重启恢复：持久化的待清理任务在服务重启后自动调�
   restartedApp.playlists.start();
   await restartedApp.playlists.settle();
 
-  // 验证重启后 sending 任务安全收敛为 awaitingConfirmation（不盲目重发）
+  // 验证重启后待清理任务在服务重启后自动调度执行完成
   const cleanupsRes = await request(restartedApp, `/api/cleanups/public-playlists`, owner, undefined, "GET");
   expect(cleanupsRes.statusCode).toBe(200);
   const cleanups = cleanupsRes.json().cleanups;
   expect(cleanups).toHaveLength(1);
   expect(cleanups[0].playlistId).toBe("cloud-pl-restart");
-  expect(cleanups[0].status).toBe("awaitingConfirmation");
+  expect(cleanups[0].status).toBe("succeeded");
 });
 
 it("授权退出与重新授权：删房待清理任务在重新授权同一账号后自动调度恢复执行", async () => {

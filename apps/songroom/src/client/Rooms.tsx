@@ -36,6 +36,17 @@ const cleanupStatusPresentation: Record<PublicPlaylistCleanupStatus, { label: st
     nextStep: "系统正在调度执行网易云删除请求，请稍候。"
   }
 };
+
+export function getCleanupPresentation(item: { status: PublicPlaylistCleanupStatus; lastErrorCode?: string | null }) {
+  if (item.status === "needsAdministrator" && item.lastErrorCode === "TARGET_PERMISSION") {
+    return {
+      label: "需官方客户端处理",
+      badgeClass: "status-badge danger",
+      nextStep: "网易云已拒绝删除该歌单，请在原账号网易云官方客户端手工删除该歌单，后续由系统管理员核验完成。"
+    };
+  }
+  return cleanupStatusPresentation[item.status];
+}
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
 import { joinApplicationList } from "../shared/invite-contracts";
@@ -120,7 +131,7 @@ function PendingApplications({ sessionId }: { sessionId: string }) {
   </section>;
 }
 
-function PublicPlaylistCleanups({ sessionId }: { sessionId: string }) {
+export function PublicPlaylistCleanups({ sessionId }: { sessionId: string }) {
   const query = useQuery({
     queryKey: ["public-playlist-cleanups", sessionId],
     queryFn: ({ signal }) => cleanupRequest("/public-playlists", publicPlaylistCleanupList, signal),
@@ -135,7 +146,7 @@ function PublicPlaylistCleanups({ sessionId }: { sessionId: string }) {
       <p>已删除房间专用公共歌单的网易云清理进度（与已删除房间分离，房间不可恢复）。</p>
       <ul className="cleanup-list">
         {query.data.cleanups.map(item => {
-          const presentation = cleanupStatusPresentation[item.status];
+          const presentation = getCleanupPresentation(item);
           return (
             <li className="cleanup-card" key={item.id}>
               <div>

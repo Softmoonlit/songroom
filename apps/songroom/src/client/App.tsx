@@ -5,7 +5,7 @@ import { ArrowLeft, CircleAlert, CircleCheck, LogOut, Music2, UserRound } from "
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router";
 import { healthResponse, type HealthResponse } from "../shared/contracts";
 import { NeteaseBinding } from "./NeteaseBinding";
-import { RoomsPage } from "./Rooms";
+import { RoomsPage, PublicPlaylistCleanups } from "./Rooms";
 import { RoomCreatePage } from "./RoomCreatePage";
 import { RoomPage } from "./RoomWorkspace";
 import { InviteProvider, JoinEntry, useInviteContext } from "./InviteContext";
@@ -533,6 +533,7 @@ function AccountPage({ session }: { session?: SessionData | null }) {
         </form>
       </div>
       <NeteaseBinding key={session.session.id} sessionId={session.session.id} />
+      <PublicPlaylistCleanups sessionId={session.session.id} />
       {message && (
         <p
           className={`form-message account-message ${messageError ? "error" : ""}`}

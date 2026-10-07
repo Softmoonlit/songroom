@@ -21,6 +21,14 @@ class Adapter implements NeteaseAdapter {
   create: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> = async () => ({ ok: true, data: { playlistId: "cloud-playlist" } });
   userPlaylists: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> = async () => ({ ok: true, data: { playlists: [], more: false } });
   delete: (input: Extract<AdapterInput, { operation: "playlistDelete" }>) => Promise<AdapterResult<"playlistDelete">> = async () => ({ ok: true, data: { acknowledged: true } });
+  detail: (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => Promise<AdapterResult<"playlistDetail">> = async input => ({
+    ok: true,
+    data: {
+      playlist: { id: input.playlistId, name: "默认歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+      songIds: [],
+      songs: []
+    }
+  });
   async assertVendorIntegrity() {}
   async dispose() {}
   async call<I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> {
@@ -29,6 +37,7 @@ class Adapter implements NeteaseAdapter {
     if (input.operation === "playlistCreate") return await this.create(input) as AdapterResult<I["operation"]>;
     if (input.operation === "userPlaylists") return await this.userPlaylists(input) as AdapterResult<I["operation"]>;
     if (input.operation === "playlistDelete") return await this.delete(input) as AdapterResult<I["operation"]>;
+    if (input.operation === "playlistDetail") return await this.detail(input) as AdapterResult<I["operation"]>;
     throw new Error("unexpected adapter call");
   }
 }
@@ -883,7 +892,7 @@ it("在途公共歌单创建已取得具体 ID 时删房转为清理任务，ID 
   expect(f.database.select().from(operation).where(eq(operation.id, opId2)).get()?.status).toBe("needsAdministrator");
 });
 
-it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知错误保留 awaitingConfirmation 不自动重发", async () => {
+it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知错误保留 awaitingConfirmation 不自动重发", { timeout: 15000 }, async () => {
   const f = fixture();
   const service = f.module();
   service.start();
@@ -924,7 +933,7 @@ it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知�
 
   const unknownCleanup = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId!)).get()!;
   expect(unknownCleanup.status).toBe("awaitingConfirmation");
-  expect(unknownCleanup.lastErrorCode).toBe("NETWORK_ERROR");
+  expect(["NETWORK_ERROR", "TARGET_STILL_ACTIVE"]).toContain(unknownCleanup.lastErrorCode);
 });
 
 

@@ -201,7 +201,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       }
       return reply.type("text/html; charset=utf-8").send(html);
     });
-    fastify.addHook("onListen", async () => { state = "ready"; scheduler.start(); fastify.log.info({ state }, "application lifecycle"); });
+    fastify.addHook("onListen", async () => { state = "ready"; scheduler.start(); playlists.start(); fastify.log.info({ state }, "application lifecycle"); });
     await fastify.ready();
   } catch (error) {
     await fastify.close();
@@ -235,5 +235,13 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     })();
     return closing;
   };
-  return { fastify, database, auth, eventStream, searchService, playlists, scheduler, getState: () => state, listen: () => fastify.listen({ host: config.host, port: config.port }), drain, close };
+  const listen = async (): Promise<string> => {
+    const address = await fastify.listen({ host: config.host, port: config.port });
+    state = "ready";
+    scheduler.start();
+    playlists.start();
+    fastify.log.info({ state, address }, "application lifecycle");
+    return address;
+  };
+  return { fastify, database, auth, eventStream, searchService, playlists, scheduler, getState: () => state, listen, drain, close };
 }

@@ -120,6 +120,13 @@
       "when": 1791370000000,
       "tag": "0016_public_playlist_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1791380000000,
+      "tag": "0017_public_playlist_cleanup_recovery",
+      "breakpoints": true
     }
   ]
 }

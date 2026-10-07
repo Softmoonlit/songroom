@@ -159,6 +159,30 @@ describe("database lifecycle", () => {
     expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
+  it("公共歌单清理表迁移升级时保守保留发送状态，非 ready 状态任务升级为 has_sent=1", () => {
+    const filePath = temporaryDatabasePath();
+    createOldDatabase(filePath, 17);
+    const now = Date.now();
+    const old = new Database(filePath, { fileMustExist: true });
+    old.prepare("INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)").run("mig-user", "迁移测试", "migration-clean@example.com", now, now);
+    old.prepare("INSERT INTO public_playlist_cleanup (id, user_id, account_id, playlist_id, status, last_error_code, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("cl-ready", "mig-user", "acc-1", "pl-1", "ready", null, 1, now, now);
+    old.prepare("INSERT INTO public_playlist_cleanup (id, user_id, account_id, playlist_id, status, last_error_code, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("cl-sending", "mig-user", "acc-1", "pl-2", "sending", null, 1, now, now);
+    old.prepare("INSERT INTO public_playlist_cleanup (id, user_id, account_id, playlist_id, status, last_error_code, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("cl-waiting", "mig-user", "acc-1", "pl-3", "waitingAuthorization", null, 1, now, now);
+    old.close();
+
+    migrateDatabase(filePath);
+
+    const current = openDatabase(filePath);
+    expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    const rows = current.$client.prepare("SELECT id, has_sent FROM public_playlist_cleanup ORDER BY id").all() as Array<{ id: string; has_sent: number }>;
+    expect(rows).toEqual([
+      { id: "cl-ready", has_sent: 0 },
+      { id: "cl-sending", has_sent: 1 },
+      { id: "cl-waiting", has_sent: 1 }
+    ]);
+    current.$client.close();
+  });
+
   it.each(["DELETE FROM schema_meta", "DROP TABLE schema_meta"])("缺少版本事实时，迁移在写入前拒绝并保留原库：%s", sql => {
     const filePath = temporaryDatabasePath();
     createOldDatabase(filePath);

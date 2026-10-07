@@ -207,16 +207,33 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
     updatedAt: now
   }).run()).toThrow();
 
-  // 相同账号不同歌单允许
+  // 相同账号不同歌单允许，且支持保留专用创建证据、发送状态与确认事实
+  const opId = v7();
   expect(() => database.insert(publicPlaylistCleanup).values({
     id: v7(),
     userId: "owner",
     accountId: "cloud-owner",
     playlistId: "pl-delete-2",
+    creationOperationId: opId,
+    hasSent: true,
+    checkFact: "tombstone_confirmed_deleted",
+    checkRound: 1,
     status: "waitingAuthorization",
     createdAt: now,
     updatedAt: now
   }).run()).not.toThrow();
+
+  // checkRound 必须是非负数
+  expect(() => database.insert(publicPlaylistCleanup).values({
+    id: v7(),
+    userId: "owner",
+    accountId: "cloud-owner",
+    playlistId: "pl-delete-round-invalid",
+    checkRound: -1,
+    status: "ready",
+    createdAt: now,
+    updatedAt: now
+  }).run()).toThrow();
 
   // 非法状态拒绝
   expect(() => database.insert(publicPlaylistCleanup).values({

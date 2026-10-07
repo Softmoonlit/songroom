@@ -6,7 +6,7 @@ import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import { CredentialVault } from "../netease/credentials.js";
-import type { AdapterErrorCode, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
+import type { AdapterErrorCode, AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { BusinessError } from "../shared/errors.js";
 import { publicPlaylistCreateCommand, type PublicPlaylistCreateCommand, type PublicPlaylistView, publicSongRequestCommand, type PublicSongRequestCommand, type SongRequestOperationView } from "../shared/public-playlist-contracts.js";
 import type { PublicPlaylistCleanupList } from "../shared/room-contracts.js";
@@ -621,7 +621,7 @@ export class PublicPlaylists {
       }
 
       const cleanups = tx.select().from(publicPlaylistCleanup)
-        .where(and(eq(publicPlaylistCleanup.userId, userId), sql`${publicPlaylistCleanup.status} IN ('ready', 'sending')`)).all();
+        .where(and(eq(publicPlaylistCleanup.userId, userId), sql`${publicPlaylistCleanup.status} IN ('ready', 'sending', 'awaitingConfirmation')`)).all();
       for (const c of cleanups) {
         tx.update(publicPlaylistCleanup).set({
           status: "waitingAuthorization",
@@ -647,6 +647,7 @@ export class PublicPlaylists {
     const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
     const checksToSchedule: Array<{ opId: string; delayMs: number }> = [];
     const cleanupsToDispatch: string[] = [];
+    const cleanupsToCheck: string[] = [];
 
     this.database.transaction(tx => {
       const ownedRooms = tx.select({ id: room.id }).from(room).where(eq(room.ownerUserId, userId)).all();
@@ -795,20 +796,37 @@ export class PublicPlaylists {
       const waitingCleanups = tx.select().from(publicPlaylistCleanup)
         .where(and(eq(publicPlaylistCleanup.userId, userId), eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.status, "waitingAuthorization"))).all();
       for (const c of waitingCleanups) {
-        tx.update(publicPlaylistCleanup).set({
-          status: "ready",
-          lastErrorCode: null,
-          version: sql`${publicPlaylistCleanup.version} + 1`,
-          updatedAt: this.now()
-        }).where(eq(publicPlaylistCleanup.id, c.id)).run();
-        const updatedCleanup = tx.select({ version: publicPlaylistCleanup.version }).from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, c.id)).get()!;
-        this.eventStream.notifyUser(userId, { type: "cleanup", resourceId: c.id, version: updatedCleanup.version });
-        cleanupsToDispatch.push(c.id);
+        if (!c.hasSent) {
+          tx.update(publicPlaylistCleanup).set({
+            status: "ready",
+            lastErrorCode: null,
+            version: sql`${publicPlaylistCleanup.version} + 1`,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, c.id)).run();
+          const updatedCleanup = tx.select({ version: publicPlaylistCleanup.version }).from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, c.id)).get()!;
+          this.eventStream.notifyUser(userId, { type: "cleanup", resourceId: c.id, version: updatedCleanup.version });
+          cleanupsToDispatch.push(c.id);
+        } else {
+          tx.update(publicPlaylistCleanup).set({
+            status: "awaitingConfirmation",
+            lastErrorCode: null,
+            version: sql`${publicPlaylistCleanup.version} + 1`,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, c.id)).run();
+          const updatedCleanup = tx.select({ version: publicPlaylistCleanup.version }).from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, c.id)).get()!;
+          this.eventStream.notifyUser(userId, { type: "cleanup", resourceId: c.id, version: updatedCleanup.version });
+          if (c.checkRound === 0 || c.lastErrorCode === "AUTH_UNAVAILABLE") {
+            cleanupsToCheck.push(c.id);
+          }
+        }
       }
     });
 
     for (const cId of cleanupsToDispatch) {
       this.dispatchCleanup(cId);
+    }
+    for (const cId of cleanupsToCheck) {
+      this.checkCleanupStatus(cId);
     }
 
     for (const check of checksToSchedule) {
@@ -883,10 +901,15 @@ export class PublicPlaylists {
       if (c.status === "sending") {
         this.database.update(publicPlaylistCleanup).set({
           status: "awaitingConfirmation",
+          checkFact: "interrupted_sending",
+          version: sql`${publicPlaylistCleanup.version} + 1`,
           updatedAt: this.now()
         }).where(eq(publicPlaylistCleanup.id, c.id)).run();
-      } else if (c.status === "ready") {
+        this.checkCleanupStatus(c.id);
+      } else if (c.status === "ready" && !c.hasSent) {
         this.dispatchCleanup(c.id);
+      } else if (c.status === "awaitingConfirmation" && c.checkRound === 0) {
+        this.checkCleanupStatus(c.id);
       }
     }
   }
@@ -994,7 +1017,7 @@ export class PublicPlaylists {
       if (condition !== "valid") {
         const roomExists = tx.select({ id: room.id }).from(room).where(eq(room.id, row.roomId)).get();
         if (!roomExists && detail.playlistId) {
-          lateCleanupId = this.#ensureCleanupInTx(tx, row.userId, row.accountId!, detail.playlistId);
+          lateCleanupId = this.#ensureCleanupInTx(tx, row.userId, row.accountId!, detail.playlistId, row.id);
         }
         this.#conditionStatus(row, condition, true);
         return;
@@ -1923,7 +1946,7 @@ export class PublicPlaylists {
     };
   }
 
-  #ensureCleanupInTx(tx: any, userId: string, accountId: string, playlistId: string): string {
+  #ensureCleanupInTx(tx: any, userId: string, accountId: string, playlistId: string, creationOperationId?: string | null): string {
     const existing = tx.select().from(publicPlaylistCleanup)
       .where(and(eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.playlistId, playlistId)))
       .get();
@@ -1951,6 +1974,10 @@ export class PublicPlaylists {
       userId,
       accountId,
       playlistId,
+      creationOperationId: creationOperationId ?? null,
+      hasSent: false,
+      checkFact: null,
+      checkRound: 0,
       status,
       lastErrorCode,
       version: 1,
@@ -2022,7 +2049,7 @@ export class PublicPlaylists {
 
     let cleanupId: string | null = null;
     if (target) {
-      cleanupId = this.#ensureCleanupInTx(tx, ownerUserId, target.accountId, target.playlistId);
+      cleanupId = this.#ensureCleanupInTx(tx, ownerUserId, target.accountId, target.playlistId, target.creationOperationId);
 
       const otherRoomUsingPlaylist = tx.select({ roomId: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
         .where(and(eq(publicPlaylistBinding.playlistId, target.playlistId), ne(publicPlaylistBinding.roomId, roomId))).get();
@@ -2039,22 +2066,184 @@ export class PublicPlaylists {
     return { cleanupId };
   }
 
+  #handleCleanupTaskError(cleanupId: string, row: typeof publicPlaylistCleanup.$inferSelect, err: unknown): void {
+    const code = err instanceof BusinessError ? err.code : "MODULE_ERROR";
+    const status = code === "ACCOUNT_PAUSED" ? "needsAdministrator" : row.status;
+    const finalVersion = row.version + 1;
+    this.database.update(publicPlaylistCleanup).set({
+      status,
+      lastErrorCode: code,
+      version: finalVersion,
+      updatedAt: this.now()
+    }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+    this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+  }
+
+  async #callNeteaseInScheduler<T extends AdapterInput>(
+    accountId: string,
+    input: T
+  ): Promise<AdapterResult<T["operation"]>> {
+    return await this.scheduler.executeMemoryTask(accountId, async (): Promise<AdapterResult<T["operation"]>> => {
+      return await this.adapter.call(input);
+    });
+  }
+
   dispatchCleanup(cleanupId: string): void {
     const row = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
-    if (!row || row.status !== "ready") return;
+    if (!row || row.status !== "ready" || row.hasSent) return;
 
-    void this.scheduler.executeMemoryTask(row.accountId, async () => {
-      // 调度唤醒时重新核验授权有效性
-      const currentAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, row.userId)).get();
-      if (!currentAuth || currentAuth.status !== "active" || !currentAuth.credentials || currentAuth.accountId !== row.accountId) {
-        const v = row.version + 1;
+    try {
+      void this.scheduler.executeMemoryTask(row.accountId, async () => {
+        // 调度唤醒时重新核验，防止并发重复
+        const current = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
+        if (!current || current.status !== "ready" || current.hasSent) return;
+
+        // 调度唤醒时重新核验授权有效性
+        const currentAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.userId)).get();
+        if (!currentAuth || currentAuth.status !== "active" || !currentAuth.credentials || currentAuth.accountId !== current.accountId) {
+          const v = current.version + 1;
+          this.database.update(publicPlaylistCleanup).set({
+            status: "waitingAuthorization",
+            lastErrorCode: "AUTH_UNAVAILABLE",
+            version: v,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+          this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+          return;
+        }
+
+        let cookie: string;
+        try {
+          cookie = this.vault.decrypt(currentAuth.credentials, {
+            authorizationId: currentAuth.id,
+            accountId: currentAuth.accountId,
+            generation: currentAuth.generation
+          });
+        } catch {
+          const v = current.version + 1;
+          this.database.update(publicPlaylistCleanup).set({
+            status: "waitingAuthorization",
+            lastErrorCode: "AUTH_UNAVAILABLE",
+            version: v,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+          this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+          return;
+        }
+
+        // 请求发出前持久记录发送意图，进入发送中后视为可能已发
+        const sendingVersion = current.version + 1;
+        this.database.update(publicPlaylistCleanup).set({
+          status: "sending",
+          hasSent: true,
+          version: sendingVersion,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: sendingVersion });
+
+        let shouldCheck = false;
+        try {
+          const res = await this.adapter.call({
+            operation: "playlistDelete",
+            cookie,
+            playlistId: current.playlistId
+          });
+
+          const finalVersion = sendingVersion + 1;
+          if (res.ok) {
+            // 明确业务成功，直接完成清理，不强制等待详情变为 404
+            this.database.update(publicPlaylistCleanup).set({
+              status: "succeeded",
+              lastErrorCode: null,
+              checkFact: "deleted_confirmed",
+              version: finalVersion,
+              updatedAt: this.now()
+            }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+            this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+          } else {
+            if (res.error.code === "RATE_LIMITED") {
+              this.scheduler.pause(current.accountId);
+              this.database.update(publicPlaylistCleanup).set({
+                status: "needsAdministrator",
+                lastErrorCode: "ACCOUNT_PAUSED",
+                checkFact: "rate_limited",
+                version: finalVersion,
+                updatedAt: this.now()
+              }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+              this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+            } else if (res.error.code === "TARGET_PERMISSION") {
+              // 上游明确拒绝：保持 needsAdministrator，房主看到官方客户端处理指引，普通用户无核验入口
+              this.database.update(publicPlaylistCleanup).set({
+                status: "needsAdministrator",
+                lastErrorCode: "TARGET_PERMISSION",
+                checkFact: "upstream_rejected",
+                version: finalVersion,
+                updatedAt: this.now()
+              }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+              this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+            } else if (authorizationErrors.has(res.error.code)) {
+              this.database.update(publicPlaylistCleanup).set({
+                status: "waitingAuthorization",
+                lastErrorCode: res.error.code,
+                version: finalVersion,
+                updatedAt: this.now()
+              }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+              this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+            } else {
+              // 未知结果（超时、进程退出、网络错误、502 等）：进入 awaitingConfirmation
+              this.database.update(publicPlaylistCleanup).set({
+                status: "awaitingConfirmation",
+                lastErrorCode: res.error.code,
+                checkFact: "unknown_delete_result",
+                version: finalVersion,
+                updatedAt: this.now()
+              }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+              this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+              shouldCheck = true;
+            }
+          }
+        } catch {
+          const finalVersion = sendingVersion + 1;
+          this.database.update(publicPlaylistCleanup).set({
+            status: "awaitingConfirmation",
+            lastErrorCode: "MODULE_ERROR",
+            checkFact: "unknown_delete_result",
+            version: finalVersion,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+          this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+          shouldCheck = true;
+        }
+
+        if (shouldCheck) {
+          this.checkCleanupStatus(cleanupId);
+        }
+      }).catch(err => {
+        this.#handleCleanupTaskError(cleanupId, row, err);
+      });
+    } catch (err) {
+      this.#handleCleanupTaskError(cleanupId, row, err);
+    }
+  }
+
+  checkCleanupStatus(cleanupId: string): void {
+    const row = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
+    if (!row || row.status !== "awaitingConfirmation") return;
+
+    void (async () => {
+      const current = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
+      if (!current || current.status !== "awaitingConfirmation") return;
+
+      const currentAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.userId)).get();
+      if (!currentAuth || currentAuth.status !== "active" || !currentAuth.credentials || currentAuth.accountId !== current.accountId) {
+        const v = current.version + 1;
         this.database.update(publicPlaylistCleanup).set({
           status: "waitingAuthorization",
           lastErrorCode: "AUTH_UNAVAILABLE",
           version: v,
           updatedAt: this.now()
         }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
         return;
       }
 
@@ -2066,86 +2255,215 @@ export class PublicPlaylists {
           generation: currentAuth.generation
         });
       } catch {
-        const v = row.version + 1;
+        const v = current.version + 1;
         this.database.update(publicPlaylistCleanup).set({
           status: "waitingAuthorization",
           lastErrorCode: "AUTH_UNAVAILABLE",
           version: v,
           updatedAt: this.now()
         }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
         return;
       }
 
-      const sendingVersion = row.version + 1;
-      this.database.update(publicPlaylistCleanup).set({
-        status: "sending",
-        version: sendingVersion,
-        updatedAt: this.now()
-      }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: sendingVersion });
+      const nextRound = current.checkRound + 1;
 
+      // 1. 真实账号身份核验（独立调度上游，服从 1 秒间隔）
+      let idRes: AdapterResult<"identity">;
       try {
-        const res = await this.adapter.call({
-          operation: "playlistDelete",
-          cookie,
-          playlistId: row.playlistId
-        });
+        idRes = await this.#callNeteaseInScheduler(current.accountId, { operation: "identity", cookie });
+      } catch (err) {
+        this.#handleCleanupTaskError(cleanupId, current, err);
+        return;
+      }
 
-        const finalVersion = sendingVersion + 1;
-        if (res.ok) {
+      if (!idRes.ok) {
+        const v = current.version + 1;
+        if (idRes.error.code === "RATE_LIMITED") {
+          this.scheduler.pause(current.accountId);
           this.database.update(publicPlaylistCleanup).set({
-            status: "succeeded",
-            lastErrorCode: null,
-            version: finalVersion,
+            status: "needsAdministrator",
+            lastErrorCode: "ACCOUNT_PAUSED",
+            checkFact: "rate_limited",
+            version: v,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        } else if (authorizationErrors.has(idRes.error.code)) {
+          this.database.update(publicPlaylistCleanup).set({
+            status: "waitingAuthorization",
+            lastErrorCode: idRes.error.code,
+            version: v,
             updatedAt: this.now()
           }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
         } else {
-          if (res.error.outcome === "unknown") {
-            this.database.update(publicPlaylistCleanup).set({
-              status: "awaitingConfirmation",
-              lastErrorCode: res.error.code,
-              version: finalVersion,
-              updatedAt: this.now()
-            }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-          } else if (authorizationErrors.has(res.error.code)) {
-            this.database.update(publicPlaylistCleanup).set({
-              status: "waitingAuthorization",
-              lastErrorCode: res.error.code,
-              version: finalVersion,
-              updatedAt: this.now()
-            }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-          } else {
-            this.database.update(publicPlaylistCleanup).set({
-              status: "needsAdministrator",
-              lastErrorCode: res.error.code,
-              version: finalVersion,
-              updatedAt: this.now()
-            }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-          }
+          this.database.update(publicPlaylistCleanup).set({
+            checkRound: nextRound,
+            checkFact: "identity_check_failed",
+            lastErrorCode: idRes.error.code,
+            version: v,
+            updatedAt: this.now()
+          }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
         }
-        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
-      } catch {
-        const finalVersion = sendingVersion + 1;
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      if (idRes.data.accountId !== current.accountId) {
+        const v = current.version + 1;
         this.database.update(publicPlaylistCleanup).set({
-          status: "needsAdministrator",
-          lastErrorCode: "MODULE_ERROR",
-          version: finalVersion,
+          status: "waitingAuthorization",
+          lastErrorCode: "ACCOUNT_MISMATCH",
+          checkFact: "account_mismatch",
+          version: v,
           updatedAt: this.now()
         }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
       }
-    }).catch(err => {
-      const code = err instanceof BusinessError ? err.code : "MODULE_ERROR";
-      const status = code === "ACCOUNT_PAUSED" ? "needsAdministrator" : "awaitingConfirmation";
-      const finalVersion = row.version + 1;
+
+      // 2. 完整歌单清单核查（每页独立调度上游，服从 1 秒间隔）
+      const allPlaylists: Array<{ id: string; name: string; status?: number }> = [];
+      let offset = 0;
+      let playlistsOk = false;
+      let playlistsErrorCode: string | null = null;
+      let pages = 0;
+      while (true) {
+        if (++pages > 50) {
+          playlistsErrorCode = "INCOMPLETE_PLAYLISTS";
+          break;
+        }
+        let plRes: AdapterResult<"userPlaylists">;
+        try {
+          plRes = await this.#callNeteaseInScheduler(current.accountId, {
+            operation: "userPlaylists",
+            cookie,
+            accountId: current.accountId,
+            offset,
+            limit: 100
+          });
+        } catch (err) {
+          this.#handleCleanupTaskError(cleanupId, current, err);
+          return;
+        }
+
+        if (!plRes.ok) {
+          if (plRes.error.code === "RATE_LIMITED") {
+            this.scheduler.pause(current.accountId);
+            const v = current.version + 1;
+            this.database.update(publicPlaylistCleanup).set({
+              status: "needsAdministrator",
+              lastErrorCode: "ACCOUNT_PAUSED",
+              checkFact: "rate_limited",
+              version: v,
+              updatedAt: this.now()
+            }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+            this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+            return;
+          }
+          playlistsErrorCode = plRes.error.code;
+          break;
+        }
+
+        for (const p of plRes.data.playlists) {
+          allPlaylists.push(p);
+        }
+
+        if (!plRes.data.more) {
+          playlistsOk = true;
+          break;
+        }
+        if (plRes.data.playlists.length === 0) {
+          playlistsErrorCode = "INCOMPLETE_PLAYLISTS";
+          break;
+        }
+        offset += plRes.data.playlists.length;
+      }
+
+      if (!playlistsOk) {
+        const v = current.version + 1;
+        this.database.update(publicPlaylistCleanup).set({
+          checkRound: nextRound,
+          checkFact: "playlists_fetch_failed",
+          lastErrorCode: playlistsErrorCode ?? "MODULE_ERROR",
+          version: v,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      const inPlaylists = allPlaylists.some(p => p.id === current.playlistId);
+
+      // 3. 目标详情核查（独立调度上游，服从 1 秒间隔）
+      let detailRes: AdapterResult<"playlistDetail">;
+      try {
+        detailRes = await this.#callNeteaseInScheduler(current.accountId, {
+          operation: "playlistDetail",
+          cookie,
+          playlistId: current.playlistId
+        });
+      } catch (err) {
+        this.#handleCleanupTaskError(cleanupId, current, err);
+        return;
+      }
+
+      const v = current.version + 1;
+
+      if (!detailRes.ok && detailRes.error.code === "RATE_LIMITED") {
+        this.scheduler.pause(current.accountId);
+        this.database.update(publicPlaylistCleanup).set({
+          status: "needsAdministrator",
+          lastErrorCode: "ACCOUNT_PAUSED",
+          checkFact: "rate_limited",
+          version: v,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      // 判定已删除：清单无此目标，且详情返回 404 或返回墓碑状态 status=10（CONSTRAINTS #274）
+      const is404 = !detailRes.ok && (detailRes.error.businessCode === 404 || detailRes.error.httpStatus === 404);
+      const isTombstone = detailRes.ok && detailRes.data.playlist.status === 10;
+
+      if (!inPlaylists && (is404 || isTombstone)) {
+        this.database.update(publicPlaylistCleanup).set({
+          status: "succeeded",
+          lastErrorCode: null,
+          checkFact: is404 ? "not_found_confirmed" : "tombstone_confirmed_deleted",
+          checkRound: nextRound,
+          version: v,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      // 判定目标仍存活：清单中仍有该歌单，或者详情为正常有效歌单 status=0
+      const isNormalLiving = detailRes.ok && detailRes.data.playlist.status === 0;
+      if (inPlaylists || isNormalLiving) {
+        this.database.update(publicPlaylistCleanup).set({
+          checkFact: "target_still_active",
+          lastErrorCode: "TARGET_STILL_ACTIVE",
+          checkRound: nextRound,
+          version: v,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      // 其余情况（如详情 502 读取失败、清单有但详情返回墓碑等矛盾证据）：证据不足，停止自动试探
       this.database.update(publicPlaylistCleanup).set({
-        status,
-        lastErrorCode: code,
-        version: finalVersion,
+        checkFact: "insufficient_evidence",
+        lastErrorCode: detailRes.ok ? "CONFLICTING_EVIDENCE" : detailRes.error.code,
+        checkRound: nextRound,
+        version: v,
         updatedAt: this.now()
       }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
+      this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+    })().catch(err => {
+      this.#handleCleanupTaskError(cleanupId, row, err);
     });
   }
 }

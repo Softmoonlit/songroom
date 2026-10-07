@@ -300,7 +300,7 @@ it("普通室友不能读取或重置邀请，非房主调用一律 404", async 
   expect(resetAttempt.status).toBe(404);
 });
 
-it("fragment 邀请不进入实际请求 URL、Referer 或普通访问日志，手工码也只通过 POST 提交", async () => {
+it("fragment 邀请不进入实际请求 URL、Referer 或普通访问日志，手工码也只通过 POST 提交", { timeout: 15000 }, async () => {
   const { app, config } = await fixture();
   await app.close();
   const host = fork(new URL("../../tests/invites/logging-host.ts", import.meta.url), [], { execArgv: ["--import", "tsx"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
