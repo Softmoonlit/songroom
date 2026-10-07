@@ -191,7 +191,6 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
     userId: "owner",
     accountId: "cloud-owner",
     playlistId: "pl-delete-1",
-    creationOperationId: v7(),
     status: "ready",
     createdAt: now,
     updatedAt: now
@@ -203,7 +202,6 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
     userId: "owner",
     accountId: "cloud-owner",
     playlistId: "pl-delete-1",
-    creationOperationId: v7(),
     status: "ready",
     createdAt: now,
     updatedAt: now
@@ -215,7 +213,6 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
     userId: "owner",
     accountId: "cloud-owner",
     playlistId: "pl-delete-2",
-    creationOperationId: v7(),
     status: "waitingAuthorization",
     createdAt: now,
     updatedAt: now
@@ -227,7 +224,6 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
     userId: "owner",
     accountId: "cloud-owner",
     playlistId: "pl-delete-3",
-    creationOperationId: v7(),
     status: "invalid_status" as any,
     createdAt: now,
     updatedAt: now
@@ -241,7 +237,6 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
     userId: tempUser,
     accountId: "cloud-owner-temp",
     playlistId: "pl-delete-temp",
-    creationOperationId: v7(),
     status: "ready",
     createdAt: now,
     updatedAt: now

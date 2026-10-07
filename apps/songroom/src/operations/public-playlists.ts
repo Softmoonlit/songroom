@@ -619,6 +619,19 @@ export class PublicPlaylists {
         const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, r.id)).get()!;
         notifyRooms.push({ roomId: r.id, version: updatedRoom.version });
       }
+
+      const cleanups = tx.select().from(publicPlaylistCleanup)
+        .where(and(eq(publicPlaylistCleanup.userId, userId), sql`${publicPlaylistCleanup.status} IN ('ready', 'sending')`)).all();
+      for (const c of cleanups) {
+        tx.update(publicPlaylistCleanup).set({
+          status: "waitingAuthorization",
+          lastErrorCode: "AUTH_UNAVAILABLE",
+          version: sql`${publicPlaylistCleanup.version} + 1`,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, c.id)).run();
+        const updatedCleanup = tx.select({ version: publicPlaylistCleanup.version }).from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, c.id)).get()!;
+        this.eventStream.notifyUser(userId, { type: "cleanup", resourceId: c.id, version: updatedCleanup.version });
+      }
     });
 
     for (const op of notifyOps) {
@@ -633,6 +646,7 @@ export class PublicPlaylists {
     const notifyRooms: Array<{ roomId: string; version: number }> = [];
     const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
     const checksToSchedule: Array<{ opId: string; delayMs: number }> = [];
+    const cleanupsToDispatch: string[] = [];
 
     this.database.transaction(tx => {
       const ownedRooms = tx.select({ id: room.id }).from(room).where(eq(room.ownerUserId, userId)).all();
@@ -777,7 +791,25 @@ export class PublicPlaylists {
           notifyRooms.push({ roomId: r.id, version: updatedRoom.version });
         }
       }
+
+      const waitingCleanups = tx.select().from(publicPlaylistCleanup)
+        .where(and(eq(publicPlaylistCleanup.userId, userId), eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.status, "waitingAuthorization"))).all();
+      for (const c of waitingCleanups) {
+        tx.update(publicPlaylistCleanup).set({
+          status: "ready",
+          lastErrorCode: null,
+          version: sql`${publicPlaylistCleanup.version} + 1`,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, c.id)).run();
+        const updatedCleanup = tx.select({ version: publicPlaylistCleanup.version }).from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, c.id)).get()!;
+        this.eventStream.notifyUser(userId, { type: "cleanup", resourceId: c.id, version: updatedCleanup.version });
+        cleanupsToDispatch.push(c.id);
+      }
     });
+
+    for (const cId of cleanupsToDispatch) {
+      this.dispatchCleanup(cId);
+    }
 
     for (const check of checksToSchedule) {
       this.#scheduleConfirmationCheck(check.opId, check.delayMs);
@@ -962,37 +994,7 @@ export class PublicPlaylists {
       if (condition !== "valid") {
         const roomExists = tx.select({ id: room.id }).from(room).where(eq(room.id, row.roomId)).get();
         if (!roomExists && detail.playlistId) {
-          const existingCleanup = tx.select().from(publicPlaylistCleanup)
-            .where(and(eq(publicPlaylistCleanup.accountId, row.accountId!), eq(publicPlaylistCleanup.playlistId, detail.playlistId))).get();
-          if (!existingCleanup) {
-            const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, row.userId)).get();
-            const isAuthActive = auth && auth.status === "active" && auth.accountId === row.accountId;
-            const isPaused = isAuthActive ? this.scheduler.paused(row.accountId!) : false;
-            let status: typeof publicPlaylistCleanup.$inferSelect["status"] = "waitingAuthorization";
-            let lastErrorCode: string | null = null;
-            if (!isAuthActive) {
-              status = "waitingAuthorization";
-              lastErrorCode = "AUTH_UNAVAILABLE";
-            } else if (isPaused) {
-              status = "needsAdministrator";
-              lastErrorCode = "ACCOUNT_PAUSED";
-            } else {
-              status = "ready";
-            }
-            const cleanupId = v7();
-            tx.insert(publicPlaylistCleanup).values({
-              id: cleanupId,
-              userId: row.userId,
-              accountId: row.accountId!,
-              playlistId: detail.playlistId,
-              creationOperationId: row.id,
-              status,
-              lastErrorCode,
-              createdAt: this.now(),
-              updatedAt: this.now()
-            }).run();
-            lateCleanupId = cleanupId;
-          }
+          lateCleanupId = this.#ensureCleanupInTx(tx, row.userId, row.accountId!, detail.playlistId);
         }
         this.#conditionStatus(row, condition, true);
         return;
@@ -1914,10 +1916,48 @@ export class PublicPlaylists {
         playlistId: r.playlistId,
         status: r.status,
         lastErrorCode: r.lastErrorCode,
+        version: r.version,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt
       }))
     };
+  }
+
+  #ensureCleanupInTx(tx: any, userId: string, accountId: string, playlistId: string): string {
+    const existing = tx.select().from(publicPlaylistCleanup)
+      .where(and(eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.playlistId, playlistId)))
+      .get();
+    if (existing) return existing.id;
+
+    const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, userId)).get();
+    const isAuthActive = auth && auth.status === "active" && auth.accountId === accountId;
+    const isPaused = isAuthActive ? this.scheduler.paused(accountId) : false;
+
+    let status: typeof publicPlaylistCleanup.$inferSelect["status"] = "waitingAuthorization";
+    let lastErrorCode: string | null = null;
+    if (!isAuthActive) {
+      status = "waitingAuthorization";
+      lastErrorCode = "AUTH_UNAVAILABLE";
+    } else if (isPaused) {
+      status = "needsAdministrator";
+      lastErrorCode = "ACCOUNT_PAUSED";
+    } else {
+      status = "ready";
+    }
+
+    const id = v7();
+    tx.insert(publicPlaylistCleanup).values({
+      id,
+      userId,
+      accountId,
+      playlistId,
+      status,
+      lastErrorCode,
+      version: 1,
+      createdAt: this.now(),
+      updatedAt: this.now()
+    }).run();
+    return id;
   }
 
   terminateRoomInTx(tx: any, roomId: string, ownerUserId: string): { cleanupId: string | null } {
@@ -1982,41 +2022,13 @@ export class PublicPlaylists {
 
     let cleanupId: string | null = null;
     if (target) {
-      const existing = tx.select().from(publicPlaylistCleanup)
-        .where(and(eq(publicPlaylistCleanup.accountId, target.accountId), eq(publicPlaylistCleanup.playlistId, target.playlistId)))
-        .get();
-      if (!existing) {
-        const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, ownerUserId)).get();
-        const isAuthActive = auth && auth.status === "active" && auth.accountId === target.accountId;
-        const isPaused = isAuthActive ? this.scheduler.paused(target.accountId) : false;
+      cleanupId = this.#ensureCleanupInTx(tx, ownerUserId, target.accountId, target.playlistId);
 
-        let status: typeof publicPlaylistCleanup.$inferSelect["status"] = "waitingAuthorization";
-        let lastErrorCode: string | null = null;
-        if (!isAuthActive) {
-          status = "waitingAuthorization";
-          lastErrorCode = "AUTH_UNAVAILABLE";
-        } else if (isPaused) {
-          status = "needsAdministrator";
-          lastErrorCode = "ACCOUNT_PAUSED";
-        } else {
-          status = "ready";
-        }
-
-        const id = v7();
-        tx.insert(publicPlaylistCleanup).values({
-          id,
-          userId: ownerUserId,
-          accountId: target.accountId,
-          playlistId: target.playlistId,
-          creationOperationId: target.creationOperationId,
-          status,
-          lastErrorCode,
-          createdAt: this.now(),
-          updatedAt: this.now()
-        }).run();
-        cleanupId = id;
-      } else {
-        cleanupId = existing.id;
+      const otherRoomUsingPlaylist = tx.select({ roomId: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
+        .where(and(eq(publicPlaylistBinding.playlistId, target.playlistId), ne(publicPlaylistBinding.roomId, roomId))).get();
+      if (!otherRoomUsingPlaylist) {
+        tx.delete(playlistTrack).where(eq(playlistTrack.playlistId, target.playlistId)).run();
+        tx.delete(playlistSnapshot).where(eq(playlistSnapshot.playlistId, target.playlistId)).run();
       }
     }
 
@@ -2031,40 +2043,47 @@ export class PublicPlaylists {
     const row = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
     if (!row || row.status !== "ready") return;
 
-    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, row.userId)).get();
-    if (!auth || auth.status !== "active" || !auth.credentials || auth.accountId !== row.accountId) {
-      this.database.update(publicPlaylistCleanup).set({
-        status: "waitingAuthorization",
-        lastErrorCode: "AUTH_UNAVAILABLE",
-        updatedAt: this.now()
-      }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: 1 });
-      return;
-    }
-
-    let cookie: string;
-    try {
-      cookie = this.vault.decrypt(auth.credentials, {
-        authorizationId: auth.id,
-        accountId: auth.accountId,
-        generation: auth.generation
-      });
-    } catch {
-      this.database.update(publicPlaylistCleanup).set({
-        status: "waitingAuthorization",
-        lastErrorCode: "AUTH_UNAVAILABLE",
-        updatedAt: this.now()
-      }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: 1 });
-      return;
-    }
-
     void this.scheduler.executeMemoryTask(row.accountId, async () => {
+      // 调度唤醒时重新核验授权有效性
+      const currentAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, row.userId)).get();
+      if (!currentAuth || currentAuth.status !== "active" || !currentAuth.credentials || currentAuth.accountId !== row.accountId) {
+        const v = row.version + 1;
+        this.database.update(publicPlaylistCleanup).set({
+          status: "waitingAuthorization",
+          lastErrorCode: "AUTH_UNAVAILABLE",
+          version: v,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      let cookie: string;
+      try {
+        cookie = this.vault.decrypt(currentAuth.credentials, {
+          authorizationId: currentAuth.id,
+          accountId: currentAuth.accountId,
+          generation: currentAuth.generation
+        });
+      } catch {
+        const v = row.version + 1;
+        this.database.update(publicPlaylistCleanup).set({
+          status: "waitingAuthorization",
+          lastErrorCode: "AUTH_UNAVAILABLE",
+          version: v,
+          updatedAt: this.now()
+        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: v });
+        return;
+      }
+
+      const sendingVersion = row.version + 1;
       this.database.update(publicPlaylistCleanup).set({
         status: "sending",
+        version: sendingVersion,
         updatedAt: this.now()
       }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: 1 });
+      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: sendingVersion });
 
       try {
         const res = await this.adapter.call({
@@ -2073,10 +2092,12 @@ export class PublicPlaylists {
           playlistId: row.playlistId
         });
 
+        const finalVersion = sendingVersion + 1;
         if (res.ok) {
           this.database.update(publicPlaylistCleanup).set({
             status: "succeeded",
             lastErrorCode: null,
+            version: finalVersion,
             updatedAt: this.now()
           }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
         } else {
@@ -2084,40 +2105,47 @@ export class PublicPlaylists {
             this.database.update(publicPlaylistCleanup).set({
               status: "awaitingConfirmation",
               lastErrorCode: res.error.code,
+              version: finalVersion,
               updatedAt: this.now()
             }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
           } else if (authorizationErrors.has(res.error.code)) {
             this.database.update(publicPlaylistCleanup).set({
               status: "waitingAuthorization",
               lastErrorCode: res.error.code,
+              version: finalVersion,
               updatedAt: this.now()
             }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
           } else {
             this.database.update(publicPlaylistCleanup).set({
               status: "needsAdministrator",
               lastErrorCode: res.error.code,
+              version: finalVersion,
               updatedAt: this.now()
             }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
           }
         }
+        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
       } catch {
+        const finalVersion = sendingVersion + 1;
         this.database.update(publicPlaylistCleanup).set({
-          status: "awaitingConfirmation",
+          status: "needsAdministrator",
           lastErrorCode: "MODULE_ERROR",
+          version: finalVersion,
           updatedAt: this.now()
         }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      } finally {
-        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: 1 });
+        this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
       }
     }).catch(err => {
       const code = err instanceof BusinessError ? err.code : "MODULE_ERROR";
       const status = code === "ACCOUNT_PAUSED" ? "needsAdministrator" : "awaitingConfirmation";
+      const finalVersion = row.version + 1;
       this.database.update(publicPlaylistCleanup).set({
         status,
         lastErrorCode: code,
+        version: finalVersion,
         updatedAt: this.now()
       }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
-      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: 1 });
+      this.eventStream.notifyUser(row.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
     });
   }
 }

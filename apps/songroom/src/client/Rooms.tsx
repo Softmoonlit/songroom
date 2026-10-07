@@ -34,11 +34,6 @@ const cleanupStatusPresentation: Record<PublicPlaylistCleanupStatus, { label: st
     label: "正在清理…",
     badgeClass: "status-badge info",
     nextStep: "系统正在调度执行网易云删除请求，请稍候。"
-  },
-  failed: {
-    label: "清理失败",
-    badgeClass: "status-badge danger",
-    nextStep: "清理遇到错误，等待后续处理。"
   }
 };
 import { QueryError } from "./RoomQueryError";

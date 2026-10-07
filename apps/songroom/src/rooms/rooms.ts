@@ -328,8 +328,12 @@ export class Rooms {
     const outcome = this.database.transaction(tx => {
       const replay = readCommandResource(tx, prepared, this.now());
       if (replay) {
-        const [rId, cId] = replay.split(":");
-        return { kind: "replayed" as const, roomId: rId, cleanupId: cId || null };
+        try {
+          const parsed = JSON.parse(replay) as { roomId: string; cleanupId: string | null };
+          return { kind: "replayed" as const, roomId: parsed.roomId, cleanupId: parsed.cleanupId };
+        } catch {
+          return { kind: "replayed" as const, roomId: replay, cleanupId: null };
+        }
       }
 
       const current = this.readShell(userId, roomId);
@@ -351,8 +355,8 @@ export class Rooms {
       tx.delete(roomMembership).where(eq(roomMembership.roomId, roomId)).run();
       tx.delete(room).where(eq(room.id, roomId)).run();
 
-      const receiptResourceId = cleanupId ? `${roomId}:${cleanupId}` : roomId;
-      recordCommandResource(tx, prepared, receiptResourceId, this.now());
+      const receiptPayload = JSON.stringify({ roomId, cleanupId });
+      recordCommandResource(tx, prepared, receiptPayload, this.now());
 
       return {
         kind: "deleted" as const,

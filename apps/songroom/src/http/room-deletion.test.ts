@@ -66,7 +66,16 @@ async function signUp(app: SongRoomApp, email: string) {
   return response.cookies.map(c => `${c.name}=${c.value}`).join("; ");
 }
 
-async function bindNetease(app: SongRoomApp, cookie: string) {
+const userAccounts = new Map<string, string>();
+async function bindNetease(app: SongRoomApp, cookie: string, adapter?: ScriptedNeteaseAdapter) {
+  if (adapter) {
+    let acc = userAccounts.get(cookie);
+    if (!acc) {
+      acc = `acc-${v7()}`;
+      userAccounts.set(cookie, acc);
+    }
+    adapter.identityAccount = acc;
+  }
   const started = await request(app, "/api/netease/qr-flows", cookie, { idempotencyKey: v7() });
   expect(started.statusCode).toBe(200);
   const flowId = started.json().id as string;
@@ -76,8 +85,8 @@ async function bindNetease(app: SongRoomApp, cookie: string) {
   return result.json().binding.id as string;
 }
 
-async function createRoomViaHttp(app: SongRoomApp, ownerCookie: string, name = "测试音乐间") {
-  const authId = await bindNetease(app, ownerCookie);
+async function createRoomViaHttp(app: SongRoomApp, ownerCookie: string, name = "测试音乐间", adapter?: ScriptedNeteaseAdapter) {
+  const authId = await bindNetease(app, ownerCookie, adapter);
   const res = await request(app, "/api/rooms", ownerCookie, {
     idempotencyKey: v7(),
     authorizationId: authId,
@@ -137,14 +146,27 @@ function createSseReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
   };
 }
 
-it("权限控制：仅房主可查看影响范围并提交删房，室友/非成员拒绝，房主不可退出替代删房", async () => {
-  const { app } = await fixture();
+it("权限控制：仅房主可查看影响范围并提交删房，室友/非成员/待审批申请人/其他房主/管理员拒绝，房主不可退出替代删房", async () => {
+  const { app, adapter } = await fixture();
   const owner = await signUp(app, "owner@example.com");
   const roommate = await signUp(app, "roommate@example.com");
   const outsider = await signUp(app, "outsider@example.com");
+  const applicant = await signUp(app, "applicant@example.com");
+  const otherOwner = await signUp(app, "otherowner@example.com");
+  const admin = await signUp(app, "admin@example.com");
 
-  const roomId = await createRoomViaHttp(app, owner, "测试权限宿舍");
+  const roomId = await createRoomViaHttp(app, owner, "测试权限宿舍", adapter);
   await addRoommateViaHttp(app, owner, roommate, roomId);
+  const otherRoomId = await createRoomViaHttp(app, otherOwner, "其他房主的宿舍", adapter);
+
+  // 待审批申请人
+  const inviteRes = await request(app, `/api/rooms/${roomId}/invite`, owner, undefined, "GET");
+  const code = inviteRes.json().code as string;
+  await request(app, "/api/join-applications", applicant, {
+    idempotencyKey: v7(),
+    code,
+    nickname: "申请人"
+  });
 
   // 1. 室友查询影响范围 -> 404 ROOM_OWNER_REQUIRED
   const rmViewRes = await request(app, `/api/rooms/${roomId}/deletion`, roommate, undefined, "GET");
@@ -164,20 +186,58 @@ it("权限控制：仅房主可查看影响范围并提交删房，室友/非成
   expect(outsiderViewRes.statusCode).toBe(404);
   expect(outsiderViewRes.json().error.code).toBe("ROOM_UNAVAILABLE");
 
-  // 4. 房主试图以 leave 替代删房 -> 403 OWNER_CANNOT_LEAVE
+  // 4. 待审批申请人查询影响范围 -> 404 ROOM_UNAVAILABLE
+  const applicantViewRes = await request(app, `/api/rooms/${roomId}/deletion`, applicant, undefined, "GET");
+  expect(applicantViewRes.statusCode).toBe(404);
+  expect(applicantViewRes.json().error.code).toBe("ROOM_UNAVAILABLE");
+
+  // 5. 待审批申请人提交删房 -> 404 ROOM_UNAVAILABLE
+  const applicantDelRes = await request(app, `/api/rooms/${roomId}/delete`, applicant, {
+    idempotencyKey: v7(),
+    version: 1
+  });
+  expect(applicantDelRes.statusCode).toBe(404);
+  expect(applicantDelRes.json().error.code).toBe("ROOM_UNAVAILABLE");
+
+  // 6. 其他房间房主查询影响范围 -> 404 ROOM_UNAVAILABLE
+  const otherOwnerViewRes = await request(app, `/api/rooms/${roomId}/deletion`, otherOwner, undefined, "GET");
+  expect(otherOwnerViewRes.statusCode).toBe(404);
+  expect(otherOwnerViewRes.json().error.code).toBe("ROOM_UNAVAILABLE");
+
+  // 7. 其他房间房主提交删房 -> 404 ROOM_UNAVAILABLE
+  const otherOwnerDelRes = await request(app, `/api/rooms/${roomId}/delete`, otherOwner, {
+    idempotencyKey: v7(),
+    version: 1
+  });
+  expect(otherOwnerDelRes.statusCode).toBe(404);
+  expect(otherOwnerDelRes.json().error.code).toBe("ROOM_UNAVAILABLE");
+
+  // 8. 普通管理员账号（非本房房主）查询与删除 -> 404 ROOM_UNAVAILABLE
+  const adminViewRes = await request(app, `/api/rooms/${roomId}/deletion`, admin, undefined, "GET");
+  expect(adminViewRes.statusCode).toBe(404);
+  expect(adminViewRes.json().error.code).toBe("ROOM_UNAVAILABLE");
+
+  const adminDelRes = await request(app, `/api/rooms/${roomId}/delete`, admin, {
+    idempotencyKey: v7(),
+    version: 1
+  });
+  expect(adminDelRes.statusCode).toBe(404);
+  expect(adminDelRes.json().error.code).toBe("ROOM_UNAVAILABLE");
+
+  // 9. 房主试图以 leave 替代删房 -> 403 OWNER_CANNOT_LEAVE
   const leaveRes = await request(app, `/api/rooms/${roomId}/leave`, owner, {
     idempotencyKey: v7()
   });
   expect(leaveRes.statusCode).toBe(403);
   expect(leaveRes.json().error.code).toBe("OWNER_CANNOT_LEAVE");
 
-  // 5. 房主查询影响范围 -> 200 成功
+  // 10. 房主查询影响范围 -> 200 成功
   const ownerViewRes = await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET");
   expect(ownerViewRes.statusCode).toBe(200);
   const deletionView = ownerViewRes.json();
   expect(deletionView.room.name).toBe("测试权限宿舍");
   expect(deletionView.memberCount).toBe(2);
-  expect(deletionView.pendingApplicationCount).toBe(0);
+  expect(deletionView.pendingApplicationCount).toBe(1);
   expect(deletionView.allowedActions).toContain("deleteRoom");
 });
 
@@ -574,4 +634,37 @@ it("服务重启恢复：持久化的待清理任务在服务重启后自动调�
   expect(cleanups).toHaveLength(1);
   expect(cleanups[0].playlistId).toBe("cloud-pl-restart");
   expect(cleanups[0].status).toBe("awaitingConfirmation");
+});
+
+it("授权退出与重新授权：删房待清理任务在重新授权同一账号后自动调度恢复执行", async () => {
+  const { app, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "重授权测试宿舍", adapter);
+
+  // 创建公共歌单
+  adapter.playlistCreate = () => ({ ok: true, data: { playlistId: "cloud-pl-reauth" } });
+  await request(app, `/api/rooms/${roomId}/public-playlist`, owner, { idempotencyKey: v7() });
+  await app.playlists.settle();
+
+  // 房主网易云授权退出
+  await request(app, "/api/netease/binding/revoke", owner, { idempotencyKey: v7() });
+
+  // 房主删房：产生 waitingAuthorization 的清理任务
+  const viewRes = await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET");
+  await request(app, `/api/rooms/${roomId}/delete`, owner, {
+    idempotencyKey: v7(),
+    version: viewRes.json().version
+  });
+
+  const cleanupsBefore = await request(app, `/api/cleanups/public-playlists`, owner, undefined, "GET");
+  expect(cleanupsBefore.json().cleanups[0].status).toBe("waitingAuthorization");
+
+  // 重新绑定网易云账号
+  adapter.playlistDelete = () => ({ ok: true, data: { acknowledged: true } });
+  await bindNetease(app, owner, adapter);
+  await app.playlists.settle();
+
+  // 清理任务自动唤醒并执行完成
+  const cleanupsAfter = await request(app, `/api/cleanups/public-playlists`, owner, undefined, "GET");
+  expect(cleanupsAfter.json().cleanups[0].status).toBe("succeeded");
 });

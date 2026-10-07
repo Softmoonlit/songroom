@@ -255,6 +255,7 @@ test("删除确认后返回房间列表，房间已移除，且显示独立的�
         playlistId: "pl-cloud-1",
         status: "waitingAuthorization",
         lastErrorCode: "AUTH_UNAVAILABLE",
+        version: 1,
         createdAt: Date.now(),
         updatedAt: Date.now()
       }
