@@ -19,12 +19,14 @@ class Adapter implements NeteaseAdapter {
   inputs: AdapterInput[] = [];
   identity: (input: Extract<AdapterInput, { operation: "identity" }>) => Promise<AdapterResult<"identity">> = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "房主" } });
   create: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> = async () => ({ ok: true, data: { playlistId: "cloud-playlist" } });
+  userPlaylists: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> = async () => ({ ok: true, data: { playlists: [], more: false } });
   async assertVendorIntegrity() {}
   async dispose() {}
   async call<I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> {
     this.inputs.push(input);
     if (input.operation === "identity") return await this.identity(input) as AdapterResult<I["operation"]>;
     if (input.operation === "playlistCreate") return await this.create(input) as AdapterResult<I["operation"]>;
+    if (input.operation === "userPlaylists") return await this.userPlaylists(input) as AdapterResult<I["operation"]>;
     throw new Error("unexpected adapter call");
   }
 }
@@ -130,16 +132,16 @@ it("重开 SQLite 后仍等待持久的下一次启动时间，不突发请求",
   const f = fixture(); const first = f.module();
   first.create("owner", f.roomId, { idempotencyKey: v7() });
   first.start(); await vi.advanceTimersByTimeAsync(0);
-  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists"]);
   first.stop(); await first.settle();
   const reopened = openDatabase(f.dbPath);
   const restartedScheduler = new UpstreamScheduler(reopened);
   const restarted = new PublicPlaylists(reopened, f.adapter, f.vault, restartedScheduler, new EventStreamService());
   try {
     restarted.start(); await vi.advanceTimersByTimeAsync(999);
-    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
+    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists"]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "identity"]);
+    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "identity", "userPlaylists"]);
     await vi.advanceTimersByTimeAsync(1000); await restarted.settle();
     expect(restarted.read("owner", f.roomId).operation?.status).toBe("succeeded");
   } finally { restarted.stop(); await restarted.settle(); reopened.$client.close(); }
@@ -177,8 +179,8 @@ it("目标权限只阻塞当前房间，待确认创建不阻挡其他目标且�
   service.create("owner", f.roomId, { idempotencyKey: v7() });
   service.create("owner", second, { idempotencyKey: v7() });
   service.start(); await vi.runAllTimersAsync(); await service.settle();
-  expect(service.read("owner", f.roomId)).toMatchObject({ disabledReason: "TARGET_BLOCKED", operation: { status: "awaitingConfirmation", errorCode: "TARGET_PERMISSION" } });
-  expect(service.read("owner", second).operation).toMatchObject({ status: "awaitingConfirmation", errorCode: "NETWORK_ERROR" });
+  expect(service.read("owner", f.roomId)).toMatchObject({ disabledReason: "TARGET_BLOCKED", operation: { status: "needsAdministrator", errorCode: "TARGET_PERMISSION" } });
+  expect(service.read("owner", second).operation).toMatchObject({ status: "needsAdministrator", errorCode: "NETWORK_ERROR" });
   f.database.update(room).set({ name: "成功目标" }).where(eq(room.id, third)).run();
   f.adapter.create = async () => ({ ok: true, data: { playlistId: "success" } });
   service.create("owner", third, { idempotencyKey: v7() }); await vi.runAllTimersAsync(); await service.settle();
@@ -208,7 +210,7 @@ it("发送后风控保留待确认事实并暂停整个账号，未知步骤不�
   service.create("owner", f.roomId, { idempotencyKey: v7() });
   service.create("owner", second, { idempotencyKey: v7() });
   service.start(); await vi.runAllTimersAsync(); await service.settle();
-  expect(service.read("owner", f.roomId).operation).toMatchObject({ status: "awaitingConfirmation", errorCode: "RATE_LIMITED" });
+  expect(service.read("owner", f.roomId).operation).toMatchObject({ status: "needsAdministrator", errorCode: "RATE_LIMITED" });
   expect(service.read("owner", second).operation).toMatchObject({ status: "needsAdministrator", errorCode: "ACCOUNT_PAUSED" });
   service.stop(); const restarted = f.module(); restarted.start(); await vi.runAllTimersAsync(); await restarted.settle();
   expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(1);
@@ -230,7 +232,7 @@ it("新到达操作不能饿死已核查的旧操作，同一房间所有幂等�
   f.adapter.create = async () => ({ ok: true, data: { playlistId: "second" } });
   await vi.runAllTimersAsync(); await service.settle();
   expect(service.read("owner", second).operation?.status).toBe("succeeded");
-  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "playlistCreate", "identity", "playlistCreate"]);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "playlistCreate", "identity", "userPlaylists", "playlistCreate"]);
 });
 
 it("执行中和已核查的多请求操作只占一项，等待授权后释放队列容量并保留任务", async () => {
@@ -278,7 +280,7 @@ it("事务受理、成员权限、不同键合并和原键重放，监听前不�
   expect(f.adapter.inputs).toEqual([]);
   service.start(); await service.settle();
   expect(service.read("owner", f.roomId)).toMatchObject({ playlist: { id: "cloud-playlist", name: "songroom-宿舍-公共" }, operation: { id: accepted.view.operation!.id, status: "succeeded" }, disabledReason: "PUBLIC_PLAYLIST_EXISTS" });
-  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "playlistCreate"]);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "playlistCreate"]);
   expect(service.create("owner", f.roomId, { idempotencyKey: otherKey }).view.operation?.id).toBe(accepted.view.operation!.id);
   expect(() => service.create("owner", f.roomId, { idempotencyKey: v7() })).toThrowError("PUBLIC_PLAYLIST_EXISTS");
 });
@@ -335,21 +337,21 @@ it("身份不一致后保持等待授权，重启不自动核验或创建", asyn
   expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity"]);
 });
 
-it.each(["failed", "unknown"] as const)("发送后 adapter outcome=%s 也只待确认，重启与新键不重发", async outcome => {
+it.each(["failed", "unknown"] as const)("发送后 adapter outcome=%s 也需管理员处理，重启与新键不重发", async outcome => {
   const f = fixture(); const service = f.module();
   f.adapter.create = async () => ({ ok: false, error: { code: "MODULE_ERROR", outcome } });
   const first = service.create("owner", f.roomId, { idempotencyKey: v7() }); service.start(); await service.settle(); service.stop();
   const restarted = f.module(); restarted.start(); await restarted.settle();
-  expect(restarted.create("owner", f.roomId, { idempotencyKey: v7() })).toMatchObject({ replay: true, view: { operation: { id: first.view.operation!.id, status: "awaitingConfirmation" } } });
+  expect(restarted.create("owner", f.roomId, { idempotencyKey: v7() })).toMatchObject({ replay: true, view: { operation: { id: first.view.operation!.id, status: "needsAdministrator" } } });
   await restarted.settle();
   expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(1);
 });
 
-it("发送调用抛异常仍待确认", async () => {
+it("发送调用抛异常仍需管理员处理", async () => {
   const f = fixture(); const service = f.module();
   f.adapter.create = async () => { throw new Error("interrupted"); };
   service.create("owner", f.roomId, { idempotencyKey: v7() }); service.start(); await service.settle();
-  expect(service.read("owner", f.roomId).operation?.status).toBe("awaitingConfirmation");
+  expect(service.read("owner", f.roomId).operation?.status).toBe("needsAdministrator");
 });
 
 it("持久未发送操作重启恢复，stop 不启动后续写且 settle 等待在途读取", async () => {
@@ -406,7 +408,7 @@ it("关联事务失败不丢 ID；重启只完成关联而不再创建", async (
   service.stop(); f.database.$client.exec("DROP TRIGGER test_binding_fault");
   const restarted = f.module(); restarted.start(); await restarted.settle();
   expect(restarted.read("owner", f.roomId)).toMatchObject({ playlist: { id: "cloud-playlist" }, operation: { status: "succeeded" } });
-  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "playlistCreate"]);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "playlistCreate"]);
 });
 
 it("受理事务任何一步失败均回滚操作与 receipt", () => {
@@ -448,6 +450,7 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
     const adapter = {
       async call(input) {
         if (input.operation === 'identity') return { ok: true, data: { accountId: 'cloud-owner', name: 'owner' } };
+        if (input.operation === 'userPlaylists') return { ok: true, data: { playlists: [], more: false } };
         process.send('sending');
         return new Promise(() => {});
       }, async assertVendorIntegrity() {}, async dispose() {}
@@ -464,7 +467,7 @@ it("真正杀死发送进程后重启，只保留待确认且不再次创建", a
     });
     const exited = new Promise<void>(resolve => child.once("exit", () => resolve())); child.kill("SIGKILL"); await exited;
     const restarted = f.module(); restarted.start(); await restarted.settle();
-    expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "awaitingConfirmation", errorCode: null });
+    expect(restarted.read("owner", f.roomId).operation).toMatchObject({ id: accepted.view.operation!.id, status: "needsAdministrator", errorCode: null });
     expect(f.adapter.inputs).toEqual([]);
     expect(restarted.create("owner", f.roomId, { idempotencyKey: v7() }).view.operation?.id).toBe(accepted.view.operation!.id);
     await restarted.settle(); expect(f.adapter.inputs).toEqual([]);
@@ -543,11 +546,213 @@ it("未知创建超过 24 小时仍保存全部最小恢复证据、不允许旧
   const key = v7({ msecs: now }); const accepted = service.create("owner", f.roomId, { idempotencyKey: key }); service.start(); await service.settle(); service.stop();
   now += 2 * 86_400_000;
   const restarted = f.module(() => now); restarted.start(); await restarted.settle();
-  expect(restarted.read("owner", f.roomId)).toMatchObject({ operation: { id: accepted.view.operation!.id, status: "awaitingConfirmation" }, disabledReason: "OPERATION_PENDING" });
+  expect(restarted.read("owner", f.roomId)).toMatchObject({ operation: { id: accepted.view.operation!.id, status: "needsAdministrator" }, disabledReason: "OPERATION_PENDING" });
   expect(f.database.select().from(operation).get()).toMatchObject({ accountId: "cloud-owner", authorizationId: f.authorizationId, generation: 1 });
   expect(f.database.select().from(publicPlaylistCreation).get()).toMatchObject({ step: "unknown", name: "songroom-宿舍-公共" });
   expect(() => restarted.create("owner", f.roomId, { idempotencyKey: key })).toThrowError("IDEMPOTENCY_KEY_EXPIRED");
-  expect(restarted.create("owner", f.roomId, { idempotencyKey: v7({ msecs: now }) })).toMatchObject({ replay: true, view: { operation: { id: accepted.view.operation!.id, status: "awaitingConfirmation" } } });
+  expect(restarted.create("owner", f.roomId, { idempotencyKey: v7({ msecs: now }) })).toMatchObject({ replay: true, view: { operation: { id: accepted.view.operation!.id, status: "needsAdministrator" } } });
   await restarted.settle();
   expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(1);
+});
+
+it("崩溃矩阵 1: 发送前崩溃（step=ready/verified），重启恢复为 ready，不重复发送，最终成功绑定且 playlistCreate 仅调用 1 次", async () => {
+  const f = fixture();
+  const service = f.module();
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.start();
+  while (f.database.select().from(publicPlaylistCreation).get()?.step !== "verified") {
+    await new Promise(r => setTimeout(r, 10));
+  }
+  service.stop();
+  await service.settle();
+
+  expect(f.database.select().from(publicPlaylistCreation).get()?.step).toBe("verified");
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistCreate")).toHaveLength(0);
+
+  const restarted = f.module();
+  restarted.start();
+  await restarted.settle();
+
+  expect(restarted.read("owner", f.roomId)).toMatchObject({
+    playlist: { id: "cloud-playlist" },
+    operation: { status: "succeeded" }
+  });
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistCreate")).toHaveLength(1);
+});
+
+it("崩溃矩阵 2: step=sending 提交后但在调用创建前崩溃，重启恢复为 needsAdministrator (step=unknown)，绝不调用 playlistCreate", async () => {
+  const f = fixture();
+  const service = f.module();
+  const op = service.create("owner", f.roomId, { idempotencyKey: v7() });
+  f.database.update(publicPlaylistCreation).set({
+    step: "sending",
+    sentAt: Date.now(),
+    beforePlaylists: JSON.stringify([{ id: "p1", name: "原歌单" }])
+  }).where(eq(publicPlaylistCreation.operationId, op.view.operation!.id)).run();
+  f.database.update(operation).set({ status: "processing" }).where(eq(operation.id, op.view.operation!.id)).run();
+
+  const restarted = f.module();
+  restarted.start();
+  await restarted.settle();
+
+  const view = restarted.read("owner", f.roomId);
+  expect(view).toMatchObject({
+    operation: { status: "needsAdministrator", step: "unknown" },
+    disabledReason: "OPERATION_PENDING"
+  });
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistCreate")).toHaveLength(0);
+});
+
+it("崩溃矩阵 3: playlistCreate 调用期间中断/超时，进入 needsAdministrator 并保存完整清单证据与时间，脱敏无敏感信息且重启不重发", async () => {
+  const f = fixture();
+  f.adapter.userPlaylists = async () => {
+    const currentCreation = f.database.select().from(publicPlaylistCreation).get();
+    if (!currentCreation || currentCreation.step === "ready") {
+      return { ok: true, data: { playlists: [{ id: "before-1", name: "旧歌单", creatorId: "cloud-owner", subscribed: false, status: 0 }], more: false } };
+    }
+    return { ok: true, data: { playlists: [{ id: "before-1", name: "旧歌单", creatorId: "cloud-owner", subscribed: false, status: 0 }, { id: "after-maybe", name: "疑似新歌单", creatorId: "cloud-owner", subscribed: false, status: 0 }], more: false } };
+  };
+  f.adapter.create = async () => {
+    throw new Error("上游网络连接超时断开");
+  };
+
+  const service = f.module();
+  const key = v7();
+  const created = service.create("owner", f.roomId, { idempotencyKey: key });
+  service.start();
+  await service.settle();
+
+  const view = service.read("owner", f.roomId);
+  expect(view).toMatchObject({
+    operation: { id: created.view.operation!.id, status: "needsAdministrator", step: "unknown", errorCode: "MODULE_ERROR" },
+    disabledReason: "OPERATION_PENDING",
+    allowedActions: []
+  });
+
+  const creationRow = f.database.select().from(publicPlaylistCreation).get()!;
+  expect(creationRow.step).toBe("unknown");
+  expect(creationRow.playlistId).toBeNull();
+  expect(creationRow.name).toBe("songroom-宿舍-公共");
+  expect(creationRow.sentAt).toBeGreaterThan(0);
+  expect(JSON.parse(creationRow.beforePlaylists!)).toEqual([{ id: "before-1", name: "旧歌单" }]);
+  expect(JSON.parse(creationRow.afterPlaylists!)).toEqual([{ id: "before-1", name: "旧歌单" }, { id: "after-maybe", name: "疑似新歌单" }]);
+
+  const dumped = JSON.stringify({ creation: creationRow, op: f.database.select().from(operation).get() });
+  expect(dumped).not.toMatch(/MUSIC_U|cookie|token|secret|password|credentials/i);
+
+  service.stop();
+  const restarted = f.module();
+  restarted.start();
+  await restarted.settle();
+
+  expect(restarted.read("owner", f.roomId).operation?.status).toBe("needsAdministrator");
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistCreate")).toHaveLength(1);
+});
+
+it("崩溃矩阵 4: playlistCreate 成功取得具体 ID 后、绑定事务前崩溃，重启恢复并完成原具体目标关联，无重复创建", async () => {
+  const f = fixture();
+  const service = f.module();
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  f.database.$client.exec("CREATE TRIGGER test_bind_crash BEFORE INSERT ON public_playlist_binding BEGIN SELECT RAISE(ABORT, 'crash before bind'); END");
+  service.start();
+  await service.settle();
+
+  const creationBefore = f.database.select().from(publicPlaylistCreation).get()!;
+  expect(creationBefore.step).toBe("confirming");
+  expect(creationBefore.playlistId).toBe("cloud-playlist");
+
+  service.stop();
+  f.database.$client.exec("DROP TRIGGER test_bind_crash");
+
+  vi.useFakeTimers();
+  const restarted = f.module();
+  restarted.start();
+  const viewOnRestart = restarted.read("owner", f.roomId);
+  expect(viewOnRestart.operation).toMatchObject({
+    step: "confirming",
+    recovered: true,
+    playlistId: "cloud-playlist"
+  });
+
+  await vi.runAllTimersAsync();
+  await restarted.settle();
+
+  expect(restarted.read("owner", f.roomId)).toMatchObject({
+    playlist: { id: "cloud-playlist", name: "songroom-宿舍-公共" },
+    operation: { status: "succeeded" }
+  });
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistCreate")).toHaveLength(1);
+  expect(f.database.select().from(publicPlaylistBinding).get()?.playlistId).toBe("cloud-playlist");
+});
+
+it("ID 关联核验与隔离: 已获 ID 待关联时，若房主授权代次改变，暂停等待原代次授权，绝不错误关联", async () => {
+  const f = fixture();
+  const service = f.module();
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  f.database.$client.exec("CREATE TRIGGER test_bind_hold BEFORE INSERT ON public_playlist_binding BEGIN SELECT RAISE(ABORT, 'hold'); END");
+  service.start();
+  await service.settle();
+  service.stop();
+  f.database.$client.exec("DROP TRIGGER test_bind_hold");
+
+  f.database.update(neteaseAuthorization).set({ generation: 2 }).where(eq(neteaseAuthorization.userId, "owner")).run();
+
+  const restarted = f.module();
+  restarted.start();
+  await restarted.settle();
+
+  expect(f.database.select().from(publicPlaylistBinding).all()).toHaveLength(0);
+  expect(restarted.read("owner", f.roomId)).toMatchObject({
+    playlist: null,
+    operation: { status: "waitingAuthorization" }
+  });
+});
+
+it("ID 关联核验与隔离: 已获 ID 待关联时，若房主已非成员或房间已有绑定，转为 needsAdministrator，绝不覆盖或改认", async () => {
+  const f = fixture();
+  const service = f.module();
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  f.database.$client.exec("CREATE TRIGGER test_bind_hold2 BEFORE INSERT ON public_playlist_binding BEGIN SELECT RAISE(ABORT, 'hold'); END");
+  service.start();
+  await service.settle();
+  service.stop();
+  f.database.$client.exec("DROP TRIGGER test_bind_hold2");
+
+  f.database.delete(roomMembership).where(eq(roomMembership.userId, "owner")).run();
+
+  const restarted = f.module();
+  restarted.start();
+  await restarted.settle();
+
+  expect(f.database.select().from(publicPlaylistBinding).all()).toHaveLength(0);
+  const row = f.database.select().from(operation).get()!;
+  expect(row.status).toBe("needsAdministrator");
+  expect(f.database.select().from(publicPlaylistCreation).get()?.playlistId).toBe("cloud-playlist");
+});
+
+it("同账号其他目标不受阻塞且未知创建不占执行槽", async () => {
+  const f = fixture();
+  const service = f.module();
+  const second = extraRoom(f, "第二房间");
+
+  f.adapter.create = async input => {
+    if (input.name.includes("宿舍")) {
+      return { ok: false, error: { code: "DEADLINE", outcome: "unknown" } };
+    }
+    return { ok: true, data: { playlistId: "cloud-playlist-second" } };
+  };
+
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.start();
+  await service.settle();
+
+  expect(service.read("owner", f.roomId).operation?.status).toBe("needsAdministrator");
+
+  service.create("owner", second, { idempotencyKey: v7() });
+  await service.settle();
+
+  expect(service.read("owner", second)).toMatchObject({
+    playlist: { id: "cloud-playlist-second" },
+    operation: { status: "succeeded" }
+  });
 });

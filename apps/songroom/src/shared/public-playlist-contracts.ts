@@ -24,7 +24,10 @@ export type PublicPlaylistSnapshot = z.infer<typeof publicPlaylistSnapshot>;
 export const publicPlaylistOperation = z.strictObject({
   id: uuidv7,
   errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED")]).nullable(),
-  status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"])
+  status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
+  step: z.enum(["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
+  playlistId: z.string().nullable().optional(),
+  recovered: z.boolean().optional()
 });
 
 export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist", "requestSong"]);

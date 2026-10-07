@@ -25,11 +25,24 @@ const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["st
   processing: "正在创建公共歌单。",
   awaitingConfirmation: "创建结果待确认，可能已在网易云创建。请勿重试创建。",
   waitingAuthorization: "正在等待房主恢复网易云授权。",
-  needsAdministrator: "创建结果需要管理员处理，请联系管理员，不能重试创建。",
+  needsAdministrator: "创建结果未知，需要管理员处理，已阻止该房间再次创建。",
   succeeded: "公共歌单已创建并绑定。",
   failed: "创建明确失败，请查看当前可用操作。",
   stopped: "创建操作已停止。"
 };
+
+export function getOperationMessage(op: NonNullable<PublicPlaylistView["operation"]>): string {
+  if (op.step === "confirming") {
+    if (op.recovered) {
+      return "具体 ID 已恢复，正在核验并完成公共歌单关联。";
+    }
+    return "已获 ID 待关联，正在建立房间公共歌单绑定。";
+  }
+  if (op.step === "unknown" || op.status === "needsAdministrator") {
+    return "创建结果未知，需要管理员处理，已阻止该房间再次创建。";
+  }
+  return operationMessages[op.status];
+}
 
 const disabledMessages = {
   OWNER_ONLY: "只有房主可以创建公共歌单。",
@@ -346,7 +359,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         <h3>尚未创建公共歌单</h3>
         <p>创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
       </>}
-      {view.operation && <p className="netease-status" role="status">{operationMessages[view.operation.status]}</p>}
+      {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
       {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
       {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
       {!view.playlist && view.disabledReason === "PUBLIC_PLAYLIST_EXISTS" && <p className="field-help">{disabledMessages.PUBLIC_PLAYLIST_EXISTS}</p>}

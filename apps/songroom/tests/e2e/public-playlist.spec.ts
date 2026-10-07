@@ -87,6 +87,24 @@ for (const [status, text] of [
   });
 }
 
+for (const [title, op, text] of [
+  ["已获 ID 待关联", { id: operationId, status: "processing", step: "confirming", recovered: false, errorCode: null }, "已获 ID 待关联"],
+  ["具体 ID 已恢复", { id: operationId, status: "queued", step: "confirming", recovered: true, errorCode: null }, "具体 ID 已恢复"],
+  ["创建结果未知", { id: operationId, status: "needsAdministrator", step: "unknown", recovered: false, errorCode: "MODULE_ERROR" }, "创建结果未知"]
+] as const) {
+  test(`页面展示 ${title} 细分状态，不把未知包装成失败`, async ({ page }) => {
+    await roomPage(page);
+    await page.route(endpoint, route => {
+      expect(route.request().method()).toBe("GET");
+      return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: op, allowedActions: [], disabledReason: "OPERATION_PENDING" }) });
+    });
+    await page.goto(`/rooms/${roomId}`);
+    await expect(page.getByRole("status")).toContainText(text);
+    await expect(page.getByRole("status")).not.toContainText("创建明确失败");
+    await expect(page.getByRole("button", { name: /创建公共歌单|重试创建/ })).toHaveCount(0);
+  });
+}
+
 for (const [reason, text] of [["OWNER_ONLY", "只有房主"], ["NETEASE_AUTH_REQUIRED", "绑定有效"], ["PUBLIC_PLAYLIST_EXISTS", "已经绑定"], ["OPERATION_PENDING", "未完成"], ["UPSTREAM_QUEUE_FULL", "20 项"], ["ACCOUNT_PAUSED", "已暂停"], ["TARGET_BLOCKED", "其他房间可继续使用"]] as const) {
   test(`禁用原因 ${reason} 以中文展示，动作只来自 read model`, async ({ page }) => {
     await roomPage(page);
@@ -143,6 +161,7 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     if (request.url.includes("qrcode/unikey")) return { body: { code: 200, unikey: "public-offline-qr" } };
     if (request.url.includes("qrcode/client/login")) return { body: { code: 803 }, cookies: ["MUSIC_U=offline-only; Domain=music.163.com; Path=/"] };
     if (request.url.includes("playlist/create")) return { body: { code: 200, id: "cloud-public-071" } };
+    if (request.url.includes("user/playlist")) return { body: { code: 200, playlist: [], more: false } };
     if (request.url.includes("user/account")) return { body: { code: 200, account: { id: "offline-071" }, profile: { userId: "offline-071", nickname: "离线网易云" } } };
     if (request.url.includes("playlist/detail") || request.url.includes("v6/playlist/detail")) {
       return { body: { code: 200, playlist: { id: "cloud-public-071", name: "songroom-离线音乐间-公共", status: 0, trackIds: [] }, privileges: [] } };

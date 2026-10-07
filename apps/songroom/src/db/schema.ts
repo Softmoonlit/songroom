@@ -159,10 +159,16 @@ export const publicPlaylistCreation = sqliteTable("public_playlist_creation", {
   operationId: text("operation_id").primaryKey().references(() => operation.id),
   name: text("name").notNull(),
   step: text("step", { enum: ["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
-  playlistId: text("playlist_id")
+  playlistId: text("playlist_id"),
+  beforePlaylists: text("before_playlists"),
+  afterPlaylists: text("after_playlists"),
+  sentAt: integer("sent_at"),
+  recovered: integer("recovered", { mode: "boolean" }).notNull().default(false)
 }, table => [
   check("public_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
-  check("public_playlist_creation_returned_id_valid", sql`(${table.step} IN ('confirming', 'succeeded') AND ${table.playlistId} IS NOT NULL AND length(${table.playlistId}) > 0) OR (${table.step} NOT IN ('confirming', 'succeeded') AND ${table.playlistId} IS NULL)`)
+  check("public_playlist_creation_returned_id_valid", sql`(${table.step} IN ('confirming', 'succeeded') AND ${table.playlistId} IS NOT NULL AND length(${table.playlistId}) > 0) OR (${table.step} NOT IN ('confirming', 'succeeded') AND ${table.playlistId} IS NULL)`),
+  check("public_playlist_creation_sent_at_valid", sql`${table.sentAt} IS NULL OR ${table.sentAt} > 0`),
+  check("public_playlist_creation_recovered_valid", sql`${table.recovered} IN (0, 1)`)
 ]);
 
 export const publicPlaylistBinding = sqliteTable("public_playlist_binding", {

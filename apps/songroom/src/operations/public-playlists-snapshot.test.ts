@@ -34,12 +34,17 @@ class MockAdapter implements NeteaseAdapter {
       ]
     }
   });
+  userPlaylists: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> = async () => ({
+    ok: true,
+    data: { playlists: [], more: false }
+  });
 
   async assertVendorIntegrity() {}
   async dispose() {}
   async call<I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> {
     this.inputs.push(input);
     if (input.operation === "identity") return await this.identity(input) as AdapterResult<I["operation"]>;
+    if (input.operation === "userPlaylists") return await this.userPlaylists(input) as AdapterResult<I["operation"]>;
     if (input.operation === "playlistCreate") return await this.create(input) as AdapterResult<I["operation"]>;
     if (input.operation === "playlistDetail") return await this.detail(input) as AdapterResult<I["operation"]>;
     throw new Error(`unexpected adapter call ${input.operation}`);

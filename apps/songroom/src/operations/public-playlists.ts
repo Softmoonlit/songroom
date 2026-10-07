@@ -154,11 +154,28 @@ export class PublicPlaylists {
       }
     }
 
+    let opView: PublicPlaylistView["operation"] = null;
+    if (currentOperation) {
+      const creationDetail = currentOperation.kind === "createPublicPlaylist"
+        ? this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, currentOperation.id)).get()
+        : null;
+      opView = {
+        id: currentOperation.id,
+        status: currentOperation.status,
+        errorCode: currentOperation.errorCode,
+        ...(creationDetail ? {
+          step: creationDetail.step,
+          playlistId: creationDetail.playlistId ?? null,
+          recovered: Boolean(creationDetail.recovered)
+        } : {})
+      };
+    }
+
     return {
       playlist: binding ? { id: binding.playlistId, name: binding.name } : null,
       snapshot,
       lastRefreshError,
-      operation: currentOperation ? { id: currentOperation.id, status: currentOperation.status, errorCode: currentOperation.errorCode } : null,
+      operation: opView,
       allowedActions,
       disabledReason,
       version: current.version
@@ -411,8 +428,16 @@ export class PublicPlaylists {
       const row = tx.select().from(operation).where(eq(operation.id, id)).get();
       if (!row || (row.status === status && row.errorCode === errorCode)) return;
       tx.update(operation).set({ status, errorCode, updatedAt: this.now(), ...(terminal(status) ? { accountId: null, authorizationId: null, generation: null } : {}) }).where(eq(operation.id, id)).run();
-      if (terminal(status)) tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, id)).run();
-      else if (status === "awaitingConfirmation") tx.update(publicPlaylistCreation).set({ step: "unknown" }).where(eq(publicPlaylistCreation.operationId, id)).run();
+      if (terminal(status)) {
+        tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, id)).run();
+      } else if (status === "awaitingConfirmation") {
+        tx.update(publicPlaylistCreation).set({ step: "unknown" }).where(eq(publicPlaylistCreation.operationId, id)).run();
+      } else if (status === "needsAdministrator") {
+        const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, id)).get();
+        if (detail && detail.step !== "confirming") {
+          tx.update(publicPlaylistCreation).set({ step: "unknown" }).where(eq(publicPlaylistCreation.operationId, id)).run();
+        }
+      }
       this.#bump(row.roomId);
     });
   }
@@ -447,9 +472,24 @@ export class PublicPlaylists {
       if (terminal(row.status)) continue;
       const detail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
       if (!detail) { this.#status(row.id, "needsAdministrator"); continue; }
-      if (["sending", "unknown"].includes(detail.step)) this.#status(row.id, "awaitingConfirmation", row.errorCode);
-      else if (row.status !== "waitingAuthorization" && (detail.step === "confirming" || row.status === "processing")) this.#status(row.id, "queued", row.errorCode);
-      if (detail.step === "verified") this.database.update(publicPlaylistCreation).set({ step: "ready" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+      if (["sending", "unknown"].includes(detail.step)) {
+        this.database.transaction(tx => {
+          tx.update(publicPlaylistCreation).set({ step: "unknown" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+          this.#status(row.id, "needsAdministrator", row.errorCode);
+        });
+      } else if (detail.step === "confirming") {
+        this.database.transaction(tx => {
+          tx.update(publicPlaylistCreation).set({ recovered: true }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+          if (row.status !== "waitingAuthorization") {
+            this.#status(row.id, "queued", row.errorCode);
+          }
+        });
+      } else if (detail.step === "verified") {
+        this.database.update(publicPlaylistCreation).set({ step: "ready" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+        this.#status(row.id, "queued");
+      } else if (row.status === "processing") {
+        this.#status(row.id, "queued");
+      }
     }
   }
 
@@ -460,7 +500,10 @@ export class PublicPlaylists {
       try { this.#bind(row); } catch { this.#status(row.id, "needsAdministrator"); }
       return false;
     }
-    if (["sending", "unknown"].includes(detail.step)) { this.#status(row.id, "awaitingConfirmation", row.errorCode); return false; }
+    if (["sending", "unknown"].includes(detail.step)) {
+      this.#status(row.id, "needsAdministrator", row.errorCode);
+      return false;
+    }
     const condition = this.#conditions(row);
     if (condition !== "valid") { this.#conditionStatus(row, condition); return false; }
     const auth = this.#authorization(row.userId)!;
@@ -471,7 +514,7 @@ export class PublicPlaylists {
       return false;
     }
     if (detail.step === "verified") {
-      this.database.update(publicPlaylistCreation).set({ step: "sending" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+      this.database.update(publicPlaylistCreation).set({ step: "sending", sentAt: this.now() }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
     }
     this.#bump(row.roomId);
     return true;
@@ -518,11 +561,40 @@ export class PublicPlaylists {
       }).onConflictDoNothing().run();
       this.#status(row.id, "succeeded");
     });
+    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
   }
 
   #readFailure(row: Operation, code: AdapterErrorCode): void {
     if (code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
     this.#status(row.id, authorizationErrors.has(code) ? "waitingAuthorization" : ["RATE_LIMITED", "TARGET_PERMISSION"].includes(code) ? "needsAdministrator" : "failed", code);
+  }
+
+  async #transitionToUnknownCreation(row: Operation, errorCode: Operation["errorCode"], cookie?: string): Promise<void> {
+    let afterList: Array<{ id: string; name: string }> | null = null;
+    if (cookie) {
+      try {
+        const afterRes = await this.adapter.call({ operation: "userPlaylists", cookie, accountId: row.accountId!, offset: 0, limit: 1000 });
+        if (afterRes.ok) {
+          afterList = afterRes.data.playlists.map(p => ({ id: p.id, name: p.name }));
+        }
+      } catch {
+        // 忽略只读补查失败，不影响记录 unknown 证据
+      }
+    }
+
+    this.database.transaction(tx => {
+      tx.update(publicPlaylistCreation).set({
+        step: "unknown",
+        afterPlaylists: afterList ? JSON.stringify(afterList) : null
+      }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+      tx.update(operation).set({
+        status: "needsAdministrator",
+        errorCode,
+        updatedAt: this.now()
+      }).where(eq(operation.id, row.id)).run();
+      this.#bump(row.roomId);
+    });
+    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
   }
 
   async #execute(row: Operation): Promise<void> {
@@ -532,30 +604,78 @@ export class PublicPlaylists {
     try {
       if (detail.step === "ready") {
         const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
+        if (!identity.ok) {
+          this.database.transaction(() => {
+            this.#readFailure(row, identity.error.code);
+          });
+          return;
+        }
+        if (identity.data.accountId !== row.accountId) {
+          this.database.transaction(() => {
+            this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH");
+          });
+          return;
+        }
+        const condition = this.#conditions(row);
+        if (condition !== "valid") {
+          this.database.transaction(() => {
+            this.#conditionStatus(row, condition);
+          });
+          return;
+        }
+
+        const playlists = await this.adapter.call({ operation: "userPlaylists", cookie, accountId: row.accountId!, offset: 0, limit: 1000 });
+        if (!playlists.ok) {
+          this.database.transaction(() => {
+            this.#readFailure(row, playlists.error.code);
+          });
+          return;
+        }
+
+        const beforeList = playlists.data.playlists.map(p => ({ id: p.id, name: p.name }));
         this.database.transaction(tx => {
-          if (!identity.ok) { this.#readFailure(row, identity.error.code); return; }
-          if (identity.data.accountId !== row.accountId) { this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH"); return; }
-          const condition = this.#conditions(row);
-          if (condition !== "valid") { this.#conditionStatus(row, condition); return; }
-          tx.update(publicPlaylistCreation).set({ step: "verified" }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+          tx.update(publicPlaylistCreation).set({
+            step: "verified",
+            beforePlaylists: JSON.stringify(beforeList)
+          }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
           this.#status(row.id, "queued");
         });
         return;
       }
-      const result = await this.adapter.call({ operation: "playlistCreate", cookie, name: detail.name });
-      this.database.transaction(tx => {
-        if (!result.ok) {
-          if (result.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
-          this.#status(row.id, "awaitingConfirmation", result.error.code);
-          return;
+
+      const createResult = await (async () => {
+        try {
+          return await this.adapter.call({ operation: "playlistCreate", cookie, name: detail.name });
+        } catch {
+          return null;
         }
-        tx.update(publicPlaylistCreation).set({ step: "confirming", playlistId: result.data.playlistId }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
+      })();
+
+      if (!createResult) {
+        await this.#transitionToUnknownCreation(row, "MODULE_ERROR", cookie);
+        return;
+      }
+
+      if (!createResult.ok) {
+        if (createResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
+        await this.#transitionToUnknownCreation(row, createResult.error.code, cookie);
+        return;
+      }
+
+      this.database.transaction(tx => {
+        tx.update(publicPlaylistCreation).set({ step: "confirming", playlistId: createResult.data.playlistId }).where(eq(publicPlaylistCreation.operationId, row.id)).run();
         this.#bump(row.roomId);
       });
-      if (result.ok) this.#bind(row);
+      this.#bind(row);
     } catch {
       const saved = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get();
-      this.#status(row.id, saved?.step === "confirming" ? "needsAdministrator" : saved?.step === "sending" ? "awaitingConfirmation" : "failed", "MODULE_ERROR");
+      if (saved?.step === "confirming") {
+        this.#status(row.id, "needsAdministrator", "MODULE_ERROR");
+      } else if (saved?.step === "sending" || saved?.step === "unknown") {
+        await this.#transitionToUnknownCreation(row, "MODULE_ERROR", cookie);
+      } else {
+        this.#status(row.id, "failed", "MODULE_ERROR");
+      }
     }
   }
 

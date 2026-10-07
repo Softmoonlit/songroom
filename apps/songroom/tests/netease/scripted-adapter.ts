@@ -22,6 +22,9 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
         if (this.identityError) return { ok: false, error: this.identityError };
         data = { accountId: this.identityAccount ?? input.cookie.slice("MUSIC_U=".length), name: "测试网易云身份" };
         break;
+      case "userPlaylists":
+        data = { playlists: [], more: false };
+        break;
       case "playlistDetail":
         if (this.playlistDetail) return await this.playlistDetail(input) as AdapterResult<I["operation"]>;
         data = {
