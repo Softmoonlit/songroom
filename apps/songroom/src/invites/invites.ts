@@ -9,6 +9,7 @@ import {
   inviteCode, inviteResetCommand, joinApplicationCommand, withdrawApplicationCommand, applicationDecisionCommand, type approvalDisabledReason,
   type InviteResetCommand, type InviteView, type JoinApplicationCommand, type JoinApplicationView, type roomApplicationsView
 } from "../shared/invite-contracts.js";
+import type { EventStreamService } from "../events/event-stream.js";
 import { BusinessError } from "../shared/errors.js";
 import type { z } from "zod";
 
@@ -22,7 +23,22 @@ function applicationView(application: Omit<JoinApplicationView, "allowedActions"
 }
 
 export class Invites {
-  constructor(readonly database: AppDatabase, readonly now = () => Date.now()) {}
+  readonly eventStream?: EventStreamService;
+  readonly now: () => number;
+
+  constructor(
+    readonly database: AppDatabase,
+    eventStreamOrNow?: EventStreamService | (() => number),
+    now: () => number = () => Date.now()
+  ) {
+    if (typeof eventStreamOrNow === "function") {
+      this.now = eventStreamOrNow;
+      this.eventStream = undefined;
+    } else {
+      this.eventStream = eventStreamOrNow;
+      this.now = now;
+    }
+  }
 
   #pendingCount(roomId: string): number {
     return this.database.select({ value: count() }).from(joinApplication)
@@ -74,7 +90,7 @@ export class Invites {
   reset(userId: string, roomId: string, input: InviteResetCommand): InviteView {
     const command = inviteResetCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "resetInvite", { roomId, version: command.version }, this.now());
-    return this.database.transaction(tx => {
+    const result = this.database.transaction(tx => {
       const current = this.#ownerInvite(userId, roomId);
       // 重放只读取当前邀请，不再旋转邀请码；仍重新核验房主权限。
       const replay = readCommandResource(tx, prepared, this.now());
@@ -96,6 +112,10 @@ export class Invites {
       recordCommandResource(tx, prepared, roomId, this.now());
       return this.#readInvite(userId, roomId);
     }, { behavior: "immediate" });
+    if (result) {
+      this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
+    }
+    return result;
   }
 
   #assertOwner(userId: string, roomId: string) {
@@ -142,8 +162,11 @@ export class Invites {
   decide(userId: string, roomId: string, applicationId: string, input: z.infer<typeof applicationDecisionCommand>): JoinApplicationView {
     const command = applicationDecisionCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "decideJoinApplication", { roomId, applicationId, decision: command.decision }, this.now());
-    return this.database.transaction(tx => {
+    let isApproved = false;
+    let applicantUserId = "";
+    const result = this.database.transaction(tx => {
       const application = this.#ownerApplication(userId, roomId, applicationId);
+      applicantUserId = application.userId;
       const replay = readCommandResource(tx, prepared, this.now());
       if (replay) return this.readApplication(application.userId, replay);
       if (application.status !== "pending") throw new BusinessError(409, "APPLICATION_NOT_PENDING", "申请已处理，请刷新待审批列表");
@@ -156,6 +179,7 @@ export class Invites {
           if (reason) throw new BusinessError(409, reason, "申请当前不满足加入条件，请刷新待审批列表");
           tx.insert(roomMembership).values({ id: v7(), roomId, userId: application.userId, nickname: application.nickname }).run();
           status = "approved";
+          isApproved = true;
         }
       }
       tx.update(joinApplication).set({ status }).where(eq(joinApplication.id, applicationId)).run();
@@ -163,6 +187,19 @@ export class Invites {
       recordCommandResource(tx, prepared, applicationId, this.now());
       return this.readApplication(application.userId, applicationId);
     }, { behavior: "immediate" });
+    if (result) {
+      if (isApproved) {
+        this.eventStream?.notifyRoom(this.database, roomId, { type: "permission", resourceId: roomId, version: result.version });
+        this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
+        this.eventStream?.notifyUser(applicantUserId, { type: "room", resourceId: roomId, version: result.version });
+        this.eventStream?.notifyUser(applicantUserId, { type: "permission", resourceId: roomId, version: result.version });
+      } else {
+        this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
+        this.eventStream?.notifyUser(applicantUserId, { type: "room", resourceId: roomId, version: result.version });
+        this.eventStream?.notifyUser(applicantUserId, { type: "permission", resourceId: roomId, version: result.version });
+      }
+    }
+    return result;
   }
 
   inspect(userId: string, input: string) {
@@ -181,8 +218,10 @@ export class Invites {
     const { idempotencyKey, ...content } = command;
     // 摘要包含邀请码，但回执只持久保存摘要与资源 ID，绝不保存明文命令。
     const prepared = prepareCommand(userId, idempotencyKey, "submitJoinApplication", content, this.now());
-    return this.database.transaction(tx => {
+    let targetRoomId = "";
+    const result = this.database.transaction(tx => {
       const current = this.#resolveInvite(command.code);
+      targetRoomId = current.roomId;
       const replay = readCommandResource(tx, prepared, this.now());
       if (replay) return this.readApplication(userId, replay);
       if (this.#isMember(userId, current.roomId)) {
@@ -203,6 +242,11 @@ export class Invites {
       recordCommandResource(tx, prepared, applicationId, this.now());
       return this.readApplication(userId, applicationId);
     }, { behavior: "immediate" });
+    if (result && targetRoomId) {
+      this.eventStream?.notifyRoom(this.database, targetRoomId, { type: "room", resourceId: targetRoomId, version: result.version });
+      this.eventStream?.notifyUser(userId, { type: "permission", resourceId: targetRoomId, version: result.version });
+    }
+    return result;
   }
 
   readList(userId: string): { applications: JoinApplicationView[] } {
@@ -218,10 +262,12 @@ export class Invites {
   withdraw(userId: string, applicationId: string, input: { idempotencyKey: string }): JoinApplicationView {
     const command = withdrawApplicationCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "withdrawJoinApplication", { applicationId }, this.now());
-    return this.database.transaction(tx => {
+    let withdrawRoomId = "";
+    const result = this.database.transaction(tx => {
       const replay = readCommandResource(tx, prepared, this.now());
       if (replay) return this.readApplication(userId, replay);
       const application = this.readApplication(userId, applicationId);
+      withdrawRoomId = application.room.id;
       // 已撤回或被邀请重置取消的终态保持原状态，不再递增版本。
       if (application.status === "pending") {
         tx.update(joinApplication).set({ status: "withdrawn" }).where(and(eq(joinApplication.id, applicationId),
@@ -231,5 +277,10 @@ export class Invites {
       recordCommandResource(tx, prepared, applicationId, this.now());
       return this.readApplication(userId, applicationId);
     }, { behavior: "immediate" });
+    if (result && withdrawRoomId) {
+      this.eventStream?.notifyRoom(this.database, withdrawRoomId, { type: "room", resourceId: withdrawRoomId, version: result.version });
+      this.eventStream?.notifyUser(userId, { type: "permission", resourceId: withdrawRoomId, version: result.version });
+    }
+    return result;
   }
 }

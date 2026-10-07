@@ -8,7 +8,7 @@ import { readMigrationFiles, type MigrationMeta } from "drizzle-orm/migrator";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 
-export const CURRENT_SCHEMA_VERSION = 14;
+export const CURRENT_SCHEMA_VERSION = 15;
 
 const migrationsFolder = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
 

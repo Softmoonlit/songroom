@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
 import { operation, room, upstreamAccount } from "../db/schema.js";
+import type { EventStreamService } from "../events/event-stream.js";
 import { BusinessError } from "../shared/errors.js";
 import { v7 } from "uuid";
 
@@ -40,8 +41,22 @@ export class UpstreamScheduler {
   readonly #inFlight = new Set<Promise<void>>();
   readonly #handlers = new Map<Operation["kind"], OperationHandler>();
   readonly #memoryQueue: MemoryTask[] = [];
+  readonly eventStream?: EventStreamService;
+  readonly now: () => number;
 
-  constructor(readonly database: AppDatabase, readonly now: () => number = () => Date.now()) {}
+  constructor(
+    readonly database: AppDatabase,
+    eventStreamOrNow?: EventStreamService | (() => number),
+    now: () => number = () => Date.now()
+  ) {
+    if (typeof eventStreamOrNow === "function") {
+      this.now = eventStreamOrNow;
+      this.eventStream = undefined;
+    } else {
+      this.eventStream = eventStreamOrNow;
+      this.now = now;
+    }
+  }
 
   get isStopped(): boolean { return this.#stopped; }
   get isStarted(): boolean { return this.#started; }
@@ -89,17 +104,31 @@ export class UpstreamScheduler {
         cancelled.reject(new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号已暂停，请联系管理员"));
       }
     }
+    let notifyList: Array<{ roomId: string; opId: string; opVersion: number; roomVersion: number }> = [];
     this.database.transaction(tx => {
       tx.insert(upstreamAccount).values({ accountId, paused: true })
         .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { paused: true } }).run();
-      const affected = tx.select({ roomId: operation.roomId }).from(operation)
+      const affected = tx.select({ id: operation.id, roomId: operation.roomId }).from(operation)
         .where(and(eq(operation.accountId, accountId), eq(operation.status, "queued"))).all();
-      tx.update(operation).set({ status: "needsAdministrator", errorCode: "ACCOUNT_PAUSED", updatedAt: this.now() })
-        .where(and(eq(operation.accountId, accountId), eq(operation.status, "queued"))).run();
+      tx.update(operation).set({
+        status: "needsAdministrator",
+        errorCode: "ACCOUNT_PAUSED",
+        version: sql`${operation.version} + 1`,
+        updatedAt: this.now()
+      }).where(and(eq(operation.accountId, accountId), eq(operation.status, "queued"))).run();
       for (const item of affected) {
         tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, item.roomId)).run();
+        const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, item.id)).get();
+        const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, item.roomId)).get();
+        if (updatedOp && updatedRoom) {
+          notifyList.push({ roomId: item.roomId, opId: item.id, opVersion: updatedOp.version, roomVersion: updatedRoom.version });
+        }
       }
     });
+    for (const item of notifyList) {
+      this.eventStream?.notifyRoom(this.database, item.roomId, { type: "operation", resourceId: item.opId, version: item.opVersion });
+      this.eventStream?.notifyRoom(this.database, item.roomId, { type: "room", resourceId: item.roomId, version: item.roomVersion });
+    }
   }
 
   start(): void {
@@ -202,8 +231,19 @@ export class UpstreamScheduler {
         const handler = this.#handlers.get(row.kind);
         if (!handler) continue;
         if (this.paused(row.accountId!)) {
-          tx.update(operation).set({ status: "needsAdministrator", errorCode: "ACCOUNT_PAUSED", updatedAt: this.now() }).where(eq(operation.id, row.id)).run();
+          tx.update(operation).set({
+            status: "needsAdministrator",
+            errorCode: "ACCOUNT_PAUSED",
+            version: sql`${operation.version} + 1`,
+            updatedAt: this.now()
+          }).where(eq(operation.id, row.id)).run();
           tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, row.roomId)).run();
+          const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+          const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+          if (updatedOp && updatedRoom) {
+            this.eventStream?.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: updatedOp.version });
+            this.eventStream?.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
+          }
           continue;
         }
         if (!this.#canStart(row.accountId!)) continue;
@@ -219,11 +259,20 @@ export class UpstreamScheduler {
         if (!ready) continue;
 
         const lastGranted = Math.max(this.now(), tx.select({ value: sql<number>`coalesce(max(${operation.lastGranted}), 0) + 1` }).from(operation).get()!.value);
-        const claimed = tx.update(operation).set({ status: "processing", errorCode: null, lastGranted, updatedAt: this.now() })
-          .where(and(eq(operation.id, row.id), eq(operation.status, "queued"))).run();
+        const claimed = tx.update(operation).set({
+          status: "processing",
+          errorCode: null,
+          version: sql`${operation.version} + 1`,
+          lastGranted,
+          updatedAt: this.now()
+        }).where(and(eq(operation.id, row.id), eq(operation.status, "queued"))).run();
         if (!claimed.changes) continue;
         tx.insert(upstreamAccount).values({ accountId: row.accountId!, nextStartAt: this.now() + 1000, runningOperationId: row.id })
           .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { nextStartAt: this.now() + 1000, runningOperationId: row.id } }).run();
+        const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+        if (updatedOp) {
+          this.eventStream?.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: updatedOp.version });
+        }
         return { type: "operation", row, handler };
       }
 

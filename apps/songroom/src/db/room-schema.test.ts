@@ -142,4 +142,16 @@ it("操作信封支持 requestPublicSong 且严格限制同一成员同一房间
     createdAt: Date.now(),
     updatedAt: Date.now()
   }).run()).not.toThrow();
+
+  // 操作版本单调大于 0 约束
+  expect(() => database.insert(operation).values({
+    id: v7(),
+    kind: "requestPublicSong",
+    userId: "third",
+    roomId,
+    status: "succeeded",
+    version: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run()).toThrow();
 });

@@ -73,8 +73,8 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     throw error;
   }
   const auth = createAuth(database, config);
-  const scheduler = new UpstreamScheduler(database, dependencies.now);
   const eventStream = new EventStreamService();
+  const scheduler = new UpstreamScheduler(database, eventStream, dependencies.now);
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
   let state: RuntimeState = "starting";
@@ -136,11 +136,23 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
         headers.delete("content-type");
         headers.delete("content-length");
       }
+      let signOutSessionId: string | undefined;
+      if (request.url.includes("/sign-out")) {
+        try {
+          const session = await auth.api.getSession({ headers });
+          if (session?.session) signOutSessionId = session.session.id;
+        } catch {
+          // ignore
+        }
+      }
       const response = await auth.handler(new Request(new URL(request.url, config.baseUrl), {
         method: request.method,
         headers,
         body: hasBody ? JSON.stringify(request.body) : undefined
       }));
+      if (signOutSessionId && response.status === 200) {
+        eventStream.closeSession(signOutSessionId);
+      }
       response.headers.forEach((value, name) => {
         if (name !== "set-cookie") reply.header(name, value);
       });
@@ -152,15 +164,24 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     };
     fastify.route({ method: ["GET", "POST"], url: "/api/auth/*", handler: authRequest });
     registerNeteaseRoutes(fastify, auth, binding);
-    registerRoomRoutes(fastify, auth, new Rooms(database, binding, dependencies.now));
-    registerInviteRoutes(fastify, auth, new Invites(database, dependencies.now));
+    registerRoomRoutes(fastify, auth, new Rooms(database, binding, eventStream, dependencies.now));
+    registerInviteRoutes(fastify, auth, new Invites(database, eventStream, dependencies.now));
     registerPublicPlaylistRoutes(fastify, auth, playlists);
     registerSongSearchRoutes(fastify, auth, searchService);
 
     fastify.get("/api/events", { sse: "only" }, async (request, reply) => {
+      const origin = request.headers.origin;
+      if (origin && origin !== config.baseUrl) {
+        throw new BusinessError(403, "ORIGIN_REJECTED", "请求来源不受信任");
+      }
+      if (request.headers["sec-fetch-site"] === "cross-site") {
+        throw new BusinessError(403, "ORIGIN_REJECTED", "请求来源不受信任");
+      }
       const principal = await requireSession(auth, request, reply);
-      reply.header("cache-control", "no-store");
-      await eventStream.subscribe(principal.userId, reply);
+      reply.header("cache-control", "no-store, no-cache, must-revalidate");
+      reply.header("pragma", "no-cache");
+      reply.header("x-accel-buffering", "no");
+      await eventStream.subscribe(principal.userId, principal.sessionId, reply, principal.expiresAt?.getTime());
     });
 
     const readStatus = () => ({ status: state, service: "songroom" as const, schemaVersion: CURRENT_SCHEMA_VERSION });

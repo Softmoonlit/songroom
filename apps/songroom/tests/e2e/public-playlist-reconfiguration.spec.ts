@@ -69,7 +69,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
             status: 202,
             json: publicPlaylistView.parse({
               ...invalidatedView,
-              operation: { id: operationId1, status: "queued", errorCode: null }
+              operation: { id: operationId1, status: "queued", errorCode: null, version: 1 }
             })
           });
         }
@@ -167,7 +167,8 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       operation: {
         id: operationId2,
         status: "awaitingConfirmation",
-        errorCode: null
+        errorCode: null,
+        version: 1
       },
       allowedActions: [],
       disabledReason: "OPERATION_PENDING",

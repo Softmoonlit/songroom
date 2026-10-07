@@ -173,6 +173,7 @@ export class PublicPlaylists {
         id: currentOperation.id,
         status: currentOperation.status,
         errorCode: currentOperation.errorCode,
+        version: currentOperation.version,
         ...(creationDetail ? {
           step: creationDetail.step,
           playlistId: creationDetail.playlistId ?? null,
@@ -215,7 +216,7 @@ export class PublicPlaylists {
   }
 
   #recordRefreshError(accountId: string, playlistId: string, errorCode: AdapterErrorCode | "ACCOUNT_PAUSED"): void {
-    this.database.transaction(tx => {
+    const affected = this.database.transaction(tx => {
       const now = this.now();
       tx.insert(playlistSnapshot).values({
         accountId,
@@ -235,10 +236,19 @@ export class PublicPlaylists {
 
       const bindings = tx.select().from(publicPlaylistBinding)
         .where(and(eq(publicPlaylistBinding.accountId, accountId), eq(publicPlaylistBinding.playlistId, playlistId))).all();
+      const results: Array<{ roomId: string; version: number }> = [];
       for (const b of bindings) {
         this.#bump(b.roomId);
+        const updated = tx.select({ version: room.version }).from(room).where(eq(room.id, b.roomId)).get();
+        if (updated) results.push({ roomId: b.roomId, version: updated.version });
       }
+      return results;
     });
+
+    for (const item of affected) {
+      this.eventStream.notifyRoom(this.database, item.roomId, { type: "room", resourceId: item.roomId, version: item.version });
+      this.eventStream.notifyRoom(this.database, item.roomId, { type: "snapshot", resourceId: item.roomId, version: item.version });
+    }
   }
 
   async #executeRefresh(ownerUserId: string, accountId: string, playlistId: string, bindingGeneration: number): Promise<void> {
@@ -358,6 +368,8 @@ export class PublicPlaylists {
         for (const op of songOps) {
           tx.update(operation).set({
             status: "stopped",
+            errorCode: null,
+            version: sql`${operation.version} + 1`,
             accountId: null,
             authorizationId: null,
             generation: null,
@@ -376,7 +388,17 @@ export class PublicPlaylists {
         }
 
         this.#bump(b.roomId);
-        this.eventStream.notifyRoom(this.database, b.roomId, { type: "publicPlaylist", roomId: b.roomId });
+        const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, b.roomId)).get();
+        if (updatedRoom) {
+          this.eventStream.notifyRoom(this.database, b.roomId, { type: "snapshot", resourceId: b.roomId, version: updatedRoom.version });
+          this.eventStream.notifyRoom(this.database, b.roomId, { type: "room", resourceId: b.roomId, version: updatedRoom.version });
+        }
+        for (const op of songOps) {
+          const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, op.id)).get();
+          if (updatedOp) {
+            this.eventStream.notifyRoom(this.database, b.roomId, { type: "operation", resourceId: op.id, version: updatedOp.version });
+          }
+        }
       }
 
       const remainingBindings = tx.select().from(publicPlaylistBinding)
@@ -414,16 +436,16 @@ export class PublicPlaylists {
     const affected = this.database.transaction(tx => {
       const currentBindings = tx.select().from(publicPlaylistBinding)
         .where(and(eq(publicPlaylistBinding.accountId, accountId), eq(publicPlaylistBinding.playlistId, playlistId))).all();
-      if (!currentBindings.length) return { roomIds: [], confirmedOps: [] };
+      if (!currentBindings.length) return { roomsInfo: [], confirmedOps: [] };
       const hasMatchingGen = currentBindings.some(b => b.generation === generation);
-      if (!hasMatchingGen) return { roomIds: [], confirmedOps: [] };
+      if (!hasMatchingGen) return { roomsInfo: [], confirmedOps: [] };
 
       const currentSnapshot = tx.select().from(playlistSnapshot)
         .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId))).get();
 
       if (currentSnapshot?.syncedAt && currentSnapshot.syncedAt > readStartedAt) {
         // 较新的读取已提交，不被旧读取覆盖
-        return { roomIds: [], confirmedOps: [] };
+        return { roomsInfo: [], confirmedOps: [] };
       }
 
       const nextVersion = (currentSnapshot?.snapshotVersion ?? 0) + 1;
@@ -489,15 +511,23 @@ export class PublicPlaylists {
           confirmedOps.push({ row: item.operation, detail: item.public_song_request });
         }
       }
-      return { roomIds: currentBindings.map(b => b.roomId), confirmedOps };
+      for (const b of currentBindings) {
+        this.#bump(b.roomId);
+      }
+      const roomsInfo = currentBindings.map(b => {
+        const r = tx.select({ version: room.version }).from(room).where(eq(room.id, b.roomId)).get();
+        return { roomId: b.roomId, version: r?.version ?? 1 };
+      });
+      return { roomsInfo, confirmedOps };
     });
 
     for (const { row, detail } of affected.confirmedOps) {
       this.#confirmSongAndCommitTag(row, detail);
     }
 
-    for (const rid of affected.roomIds) {
-      this.eventStream.notifyRoom(this.database, rid, { type: "publicPlaylist", roomId: rid });
+    for (const r of affected.roomsInfo) {
+      this.eventStream.notifyRoom(this.database, r.roomId, { type: "snapshot", resourceId: r.roomId, version: r.version });
+      this.eventStream.notifyRoom(this.database, r.roomId, { type: "room", resourceId: r.roomId, version: r.version });
     }
     return true;
   }
@@ -533,6 +563,18 @@ export class PublicPlaylists {
       return { replay: false, view: this.#view(userId, roomId, id) };
     });
     this.scheduler.kick();
+    if (!accepted.replay && accepted.view.operation) {
+      this.eventStream.notifyRoom(this.database, roomId, {
+        type: "operation",
+        resourceId: accepted.view.operation.id,
+        version: accepted.view.operation.version
+      });
+      this.eventStream.notifyRoom(this.database, roomId, {
+        type: "room",
+        resourceId: roomId,
+        version: accepted.view.version
+      });
+    }
     return accepted;
   }
 
@@ -541,10 +583,16 @@ export class PublicPlaylists {
   }
 
   #status(id: string, status: Status, errorCode: Operation["errorCode"] = null): void {
-    this.database.transaction(tx => {
+    const notifyInfo = this.database.transaction(tx => {
       const row = tx.select().from(operation).where(eq(operation.id, id)).get();
-      if (!row || (row.status === status && row.errorCode === errorCode)) return;
-      tx.update(operation).set({ status, errorCode, updatedAt: this.now(), ...(terminal(status) ? { accountId: null, authorizationId: null, generation: null } : {}) }).where(eq(operation.id, id)).run();
+      if (!row || (row.status === status && row.errorCode === errorCode)) return null;
+      tx.update(operation).set({
+        status,
+        errorCode,
+        version: sql`${operation.version} + 1`,
+        updatedAt: this.now(),
+        ...(terminal(status) ? { accountId: null, authorizationId: null, generation: null } : {})
+      }).where(eq(operation.id, id)).run();
       if (terminal(status)) {
         tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, id)).run();
       } else if (status === "awaitingConfirmation") {
@@ -556,7 +604,17 @@ export class PublicPlaylists {
         }
       }
       this.#bump(row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, id)).get();
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (!updatedOp) return null;
+      return { roomId: row.roomId, opVersion: updatedOp.version, roomVersion: updatedRoom?.version ?? 0 };
     });
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "operation", resourceId: id, version: notifyInfo.opVersion });
+      if (notifyInfo.roomVersion > 0) {
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "room", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+      }
+    }
   }
 
   #prune(): void {
@@ -659,6 +717,7 @@ export class PublicPlaylists {
 
   #bind(row: Operation): void {
     // 创建 ID 已在独立提交中保存；关联失败不会抹掉上游资源证据。
+    let boundPlaylistId: string | null = null;
     this.database.transaction(tx => {
       const detail = tx.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, row.id)).get()!;
       const condition = this.#conditions(row);
@@ -712,8 +771,23 @@ export class PublicPlaylists {
         updatedAt: this.now()
       }).onConflictDoNothing().run();
       this.#status(row.id, "succeeded");
+      boundPlaylistId = targetPlaylistId;
     });
-    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
+    if (boundPlaylistId) {
+      const currentRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (currentRoom) {
+        this.eventStream.notifyRoom(this.database, row.roomId, {
+          type: "snapshot",
+          resourceId: row.roomId,
+          version: currentRoom.version
+        });
+        this.eventStream.notifyRoom(this.database, row.roomId, {
+          type: "room",
+          resourceId: row.roomId,
+          version: currentRoom.version
+        });
+      }
+    }
   }
 
   #readFailure(row: Operation, code: AdapterErrorCode): void {
@@ -746,7 +820,7 @@ export class PublicPlaylists {
       // 忽略只读补查失败，不影响记录 unknown 证据
     }
 
-    this.database.transaction(tx => {
+    const notifyInfo = this.database.transaction(tx => {
       tx.update(publicPlaylistCreation).set({
         step: "unknown",
         afterPlaylists: afterList ? JSON.stringify(afterList) : null
@@ -754,11 +828,21 @@ export class PublicPlaylists {
       tx.update(operation).set({
         status: "needsAdministrator",
         errorCode,
+        version: sql`${operation.version} + 1`,
         updatedAt: this.now()
       }).where(eq(operation.id, row.id)).run();
       this.#bump(row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (!updatedOp) return null;
+      return { roomId: row.roomId, opVersion: updatedOp.version, roomVersion: updatedRoom?.version ?? 0 };
     });
-    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "operation", resourceId: row.id, version: notifyInfo.opVersion });
+      if (notifyInfo.roomVersion > 0) {
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "room", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+      }
+    }
   }
 
   async #execute(row: Operation): Promise<void> {
@@ -852,7 +936,8 @@ export class PublicPlaylists {
       songConfirmed: detail.songConfirmed,
       tagConfirmed: detail.tagConfirmed,
       errorCode: row.errorCode as any,
-      step: detail.step
+      step: detail.step,
+      version: row.version
     };
   }
 
@@ -993,7 +1078,11 @@ export class PublicPlaylists {
     if (!accepted.replay && !accepted.existing) {
       this.scheduler.kick();
     }
-    this.eventStream.notifyRoom(this.database, roomId, { type: "publicPlaylist", roomId });
+    const currentRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get();
+    this.eventStream.notifyRoom(this.database, roomId, { type: "operation", resourceId: accepted.opId, version: 1 });
+    if (currentRoom) {
+      this.eventStream.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: currentRoom.version });
+    }
 
     return {
       replay: accepted.replay,
@@ -1067,7 +1156,7 @@ export class PublicPlaylists {
   }
 
   #transitionToAwaitingConfirmation(row: Operation, errorCode: Operation["errorCode"] = null): void {
-    this.database.transaction(tx => {
+    const notifyInfo = this.database.transaction(tx => {
       tx.update(publicSongRequest).set({
         step: "unknown",
         checkRound: 0,
@@ -1076,12 +1165,22 @@ export class PublicPlaylists {
       tx.update(operation).set({
         status: "awaitingConfirmation",
         errorCode,
+        version: sql`${operation.version} + 1`,
         updatedAt: this.now()
       }).where(eq(operation.id, row.id)).run();
       this.#bump(row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (!updatedOp) return null;
+      return { roomId: row.roomId, opVersion: updatedOp.version, roomVersion: updatedRoom?.version ?? 0 };
     });
     this.#scheduleConfirmationCheck(row.id, 5000);
-    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "operation", resourceId: row.id, version: notifyInfo.opVersion });
+      if (notifyInfo.roomVersion > 0) {
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "room", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+      }
+    }
   }
 
   #commitTagOnly(row: Operation, detail: typeof publicSongRequest.$inferSelect): void {
@@ -1096,7 +1195,7 @@ export class PublicPlaylists {
       this.#conditionStatus(row, condition);
       return;
     }
-    this.database.transaction(tx => {
+    const notifyInfo = this.database.transaction(tx => {
       const member = tx.select().from(roomMembership).where(and(eq(roomMembership.roomId, row.roomId), eq(roomMembership.userId, row.userId))).get()!;
       tx.insert(requesterTag).values({
         roomId: row.roomId,
@@ -1107,10 +1206,28 @@ export class PublicPlaylists {
       }).onConflictDoNothing().run();
 
       tx.update(publicSongRequest).set({ step: "succeeded", tagConfirmed: true, nextCheckAt: null }).where(eq(publicSongRequest.operationId, row.id)).run();
-      tx.update(operation).set({ status: "succeeded", errorCode: null, updatedAt: this.now(), accountId: null, authorizationId: null, generation: null }).where(eq(operation.id, row.id)).run();
+      tx.update(operation).set({
+        status: "succeeded",
+        errorCode: null,
+        version: sql`${operation.version} + 1`,
+        updatedAt: this.now(),
+        accountId: null,
+        authorizationId: null,
+        generation: null
+      }).where(eq(operation.id, row.id)).run();
       this.#bump(row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (!updatedOp) return null;
+      return { roomId: row.roomId, opVersion: updatedOp.version, roomVersion: updatedRoom?.version ?? 0 };
     });
-    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "operation", resourceId: row.id, version: notifyInfo.opVersion });
+      if (notifyInfo.roomVersion > 0) {
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "room", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "snapshot", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+      }
+    }
   }
 
   #conditionsForSongRequest(row: Operation): "valid" | "stopped" | "waitingAuthorization" {
@@ -1140,21 +1257,25 @@ export class PublicPlaylists {
     const DELAYS = [5_000, 30_000, 120_000];
     const nextDelay = nextRound < DELAYS.length ? DELAYS[nextRound] : null;
 
-    this.database.transaction(tx => {
+    const notifyInfo = this.database.transaction(tx => {
       tx.update(publicSongRequest).set({
         checkRound: Math.min(nextRound, 3),
         nextCheckAt: nextDelay ? this.now() + nextDelay : null
       }).where(eq(publicSongRequest.operationId, row.id)).run();
       tx.update(operation).set({
+        version: sql`${operation.version} + 1`,
         updatedAt: this.now()
       }).where(eq(operation.id, row.id)).run();
-      this.#bump(row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get()!;
+      return { roomId: row.roomId, opVersion: updatedOp.version };
     });
 
     if (nextDelay !== null) {
       this.#scheduleConfirmationCheck(row.id, nextDelay);
     }
-    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "operation", resourceId: row.id, version: notifyInfo.opVersion });
+    }
   }
 
   #confirmSongAndCommitTag(row: Operation, detail: typeof publicSongRequest.$inferSelect): void {
@@ -1178,7 +1299,7 @@ export class PublicPlaylists {
       nextCheckAt: null
     }).where(eq(publicSongRequest.operationId, row.id)).run();
 
-    this.database.transaction(tx => {
+    const notifyInfo = this.database.transaction(tx => {
       const member = tx.select().from(roomMembership).where(and(eq(roomMembership.roomId, row.roomId), eq(roomMembership.userId, row.userId))).get()!;
       tx.insert(requesterTag).values({
         roomId: row.roomId,
@@ -1196,6 +1317,7 @@ export class PublicPlaylists {
       tx.update(operation).set({
         status: "succeeded",
         errorCode: null,
+        version: sql`${operation.version} + 1`,
         updatedAt: this.now(),
         accountId: null,
         authorizationId: null,
@@ -1203,9 +1325,19 @@ export class PublicPlaylists {
       }).where(eq(operation.id, row.id)).run();
 
       this.#bump(row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (!updatedOp) return null;
+      return { roomId: row.roomId, opVersion: updatedOp.version, roomVersion: updatedRoom?.version ?? 0 };
     });
 
-    this.eventStream.notifyRoom(this.database, row.roomId, { type: "publicPlaylist", roomId: row.roomId });
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "operation", resourceId: row.id, version: notifyInfo.opVersion });
+      if (notifyInfo.roomVersion > 0) {
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "room", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+        this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "snapshot", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+      }
+    }
   }
 
   async #runConfirmationCheck(operationId: string): Promise<void> {

@@ -144,9 +144,11 @@ export const operation = sqliteTable("operation", {
   status: text("status", { enum: ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"] }).notNull(),
   errorCode: text("error_code", { enum: ["ACCOUNT_PAUSED", ...adapterErrorCodeSchema.options] }),
   lastGranted: integer("last_granted").notNull().default(0),
+  version: integer("version").notNull().default(1),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
+  check("operation_version_valid", sql`${table.version} > 0`),
   check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong')`),
   check("operation_status_valid", sql`${table.status} IN ('queued', 'processing', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed', 'stopped')`),
   check("operation_recovery_scope_valid", sql`(${table.status} IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NULL AND ${table.authorizationId} IS NULL AND ${table.generation} IS NULL) OR (${table.status} NOT IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NOT NULL AND ${table.authorizationId} IS NOT NULL AND ${table.generation} IS NOT NULL AND ${table.generation} > 0)`),

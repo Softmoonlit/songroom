@@ -10,7 +10,7 @@ export const SESSION_EXPIRES_IN_SECONDS = 7 * 24 * 60 * 60;
 export const SESSION_UPDATE_AGE_SECONDS = 24 * 60 * 60;
 
 export type SongRoomAuth = ReturnType<typeof createAuth>;
-export type SessionPrincipal = { userId: string; sessionId: string };
+export type SessionPrincipal = { userId: string; sessionId: string; expiresAt?: Date };
 
 export function createAuth(database: AppDatabase, config: AppConfig) {
   return betterAuth({

@@ -10,6 +10,7 @@ import type { SessionPrincipal } from "../auth.js";
 import type { RoomCreateCommand, RoomCreateView, RoomSummary, RoomMember, roomShellView, roomListView } from "../shared/room-contracts.js";
 import { roomCreateCommand, roomCreateDisabledReason, roomRenameCommand, nicknameRenameCommand } from "../shared/room-contracts.js";
 import type { z } from "zod";
+import type { EventStreamService } from "../events/event-stream.js";
 import { BusinessError } from "../shared/errors.js";
 
 export function assertRoomCapacity(counts: { owned: number; joined: number; total: number }): void {
@@ -26,7 +27,23 @@ function identityPermissions(role: "owner" | "roommate"): Pick<z.infer<typeof ro
 }
 
 export class Rooms {
-  constructor(readonly database: AppDatabase, readonly binding: NeteaseBinding, readonly now = () => Date.now()) {}
+  readonly eventStream?: EventStreamService;
+  readonly now: () => number;
+
+  constructor(
+    readonly database: AppDatabase,
+    readonly binding: NeteaseBinding,
+    eventStreamOrNow?: EventStreamService | (() => number),
+    now: () => number = () => Date.now()
+  ) {
+    if (typeof eventStreamOrNow === "function") {
+      this.now = eventStreamOrNow;
+      this.eventStream = undefined;
+    } else {
+      this.eventStream = eventStreamOrNow;
+      this.now = now;
+    }
+  }
 
   #counts(userId: string) {
     return {
@@ -83,7 +100,7 @@ export class Rooms {
   renameRoom(userId: string, roomId: string, input: z.infer<typeof roomRenameCommand>) {
     const command = roomRenameCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "renameRoom", { roomId, name: command.name }, this.now());
-    return this.database.transaction(tx => {
+    const result = this.database.transaction(tx => {
       const current = this.readShell(userId, roomId);
       if (current.room.role !== "owner") throw new BusinessError(404, "ROOM_OWNER_REQUIRED", "只有当前房主可修改房间名称");
       if (readCommandResource(tx, prepared, this.now())) return current;
@@ -93,12 +110,16 @@ export class Rooms {
       recordCommandResource(tx, prepared, roomId, this.now());
       return this.readShell(userId, roomId);
     }, { behavior: "immediate" });
+    if (result) {
+      this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
+    }
+    return result;
   }
 
   renameNickname(userId: string, roomId: string, input: z.infer<typeof nicknameRenameCommand>) {
     const command = nicknameRenameCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "renameNickname", { roomId, nickname: command.nickname }, this.now());
-    return this.database.transaction(tx => {
+    const result = this.database.transaction(tx => {
       const current = this.readShell(userId, roomId);
       if (readCommandResource(tx, prepared, this.now())) return current;
       if (current.room.nickname !== command.nickname) {
@@ -113,6 +134,10 @@ export class Rooms {
       recordCommandResource(tx, prepared, roomId, this.now());
       return this.readShell(userId, roomId);
     }, { behavior: "immediate" });
+    if (result) {
+      this.eventStream?.notifyRoom(this.database, roomId, { type: "permission", resourceId: roomId, version: result.version });
+    }
+    return result;
   }
 
   async create(principal: SessionPrincipal, input: RoomCreateCommand): Promise<RoomSummary> {
@@ -128,7 +153,7 @@ export class Rooms {
     if (existing) return existing;
     assertRoomCapacity(this.#counts(principal.userId));
     const version = await this.binding.verifyAuthorization(principal, command.authorizationId);
-    return this.database.transaction(tx => {
+    const created = this.database.transaction(tx => {
       // 上游调用期间会话、授权、容量或同键命令均可能变化；提交事务重新核验。
       this.binding.assertAuthorization(principal, command.authorizationId, version);
       prepareCommand(principal.userId, idempotencyKey, "createRoom", content, this.now());
@@ -144,5 +169,7 @@ export class Rooms {
       recordCommandResource(tx, prepared, roomId, this.now());
       return this.readShell(principal.userId, roomId).room;
     }, { behavior: "immediate" });
+    this.eventStream?.notifyUser(principal.userId, { type: "room", resourceId: created.id, version: 1 });
+    return created;
   }
 }

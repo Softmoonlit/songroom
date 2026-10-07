@@ -35,7 +35,7 @@ for (const width of [320, 390, 900, 1440]) {
       if (route.request().method() === "GET") { reads++; return route.fulfill({ json: publicPlaylistView.parse(view) }); }
       writes++;
       expect(route.request().postDataJSON()).toEqual({ idempotencyKey: expect.stringMatching(uuidPattern) });
-      view = { ...empty, operation: { id: operationId, status: "queued", errorCode: null }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 2 };
+      view = { ...empty, operation: { id: operationId, status: "queued", errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 2 };
       return route.fulfill({ status: 202, json: view });
     });
     await page.goto(`/rooms/${roomId}`);
@@ -49,7 +49,7 @@ for (const width of [320, 390, 900, 1440]) {
     await expect(create).toHaveCount(0);
     expect(writes).toBe(1);
     const before = reads;
-    view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null }, allowedActions: [], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
+    view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null, version: 2 }, allowedActions: [], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
     await page.getByRole("button", { name: "更新状态", exact: true }).click();
     await expect(page.getByRole("heading", { name: view.playlist!.name })).toBeVisible();
     await expect(page.getByText("cloud-071", { exact: true })).toBeVisible();
@@ -71,7 +71,7 @@ for (const [status, text] of [
     await page.route(endpoint, route => {
       expect(route.request().method()).toBe("GET");
       reads++;
-      return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: { id: operationId, status, errorCode: null }, allowedActions: [], disabledReason: "OPERATION_PENDING" }) });
+      return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: { id: operationId, status, errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 }) });
     });
     await page.goto(`/rooms/${roomId}`);
     await expect(page.getByRole("status")).toContainText(text);
@@ -88,15 +88,15 @@ for (const [status, text] of [
 }
 
 for (const [title, op, text] of [
-  ["已获 ID 待关联", { id: operationId, status: "processing", step: "confirming", recovered: false, errorCode: null }, "已获 ID 待关联"],
-  ["具体 ID 已恢复", { id: operationId, status: "queued", step: "confirming", recovered: true, errorCode: null }, "具体 ID 已恢复"],
-  ["创建结果未知", { id: operationId, status: "needsAdministrator", step: "unknown", recovered: false, errorCode: "MODULE_ERROR" }, "创建结果未知"]
+  ["已获 ID 待关联", { id: operationId, status: "processing", step: "confirming", recovered: false, errorCode: null, version: 1 }, "已获 ID 待关联"],
+  ["具体 ID 已恢复", { id: operationId, status: "queued", step: "confirming", recovered: true, errorCode: null, version: 1 }, "具体 ID 已恢复"],
+  ["创建结果未知", { id: operationId, status: "needsAdministrator", step: "unknown", recovered: false, errorCode: "MODULE_ERROR", version: 1 }, "创建结果未知"]
 ] as const) {
   test(`页面展示 ${title} 细分状态，不把未知包装成失败`, async ({ page }) => {
     await roomPage(page);
     await page.route(endpoint, route => {
       expect(route.request().method()).toBe("GET");
-      return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: op, allowedActions: [], disabledReason: "OPERATION_PENDING" }) });
+      return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: op, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 }) });
     });
     await page.goto(`/rooms/${roomId}`);
     await expect(page.getByRole("status")).toContainText(text);
@@ -123,7 +123,7 @@ for (const [code, text] of [
   test(`创建操作的稳定业务码 ${code} 有独立中文说明`, async ({ page }) => {
     await roomPage(page);
     await page.route(endpoint, route => route.fulfill({ json: publicPlaylistView.parse({
-      ...empty, operation: { id: operationId, status: "needsAdministrator", errorCode: code }, allowedActions: [], disabledReason: "OPERATION_PENDING"
+      ...empty, operation: { id: operationId, status: "needsAdministrator", errorCode: code, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1
     }) }));
     await page.goto(`/rooms/${roomId}`);
     await expect(page.getByRole("region", { name: "公共歌单", exact: true })).toContainText(text);
@@ -139,7 +139,7 @@ test("创建响应丢失后安全重试复用 UUIDv7，明确本地拒绝后刷�
     commands.push(route.request().postDataJSON());
     if (commands.length === 1) return route.abort("failed");
     if (commands.length === 2) return route.fulfill({ status: 409, json: { error: { code: "IDEMPOTENCY_KEY_EXPIRED", message: "raw MUSIC_U=secret" } } });
-    return route.fulfill({ status: 202, json: { ...empty, operation: { id: operationId, status: "queued", errorCode: null }, allowedActions: [], disabledReason: "OPERATION_PENDING" } });
+    return route.fulfill({ status: 202, json: { ...empty, operation: { id: operationId, status: "queued", errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 } });
   });
   await page.goto(`/rooms/${roomId}`);
   const create = page.getByRole("button", { name: "创建公共歌单", exact: true });

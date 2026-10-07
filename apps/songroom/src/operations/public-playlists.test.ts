@@ -366,7 +366,7 @@ it("持久未发送操作重启恢复，stop 不启动后续写且 settle 等待
   expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(0);
   f.adapter.identity = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "owner" } });
   const restarted = f.module(); restarted.start(); await restarted.settle();
-  expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "succeeded", errorCode: null });
+  expect(restarted.read("owner", f.roomId).operation).toEqual({ id: accepted.view.operation!.id, status: "succeeded", errorCode: null, version: expect.any(Number) });
 });
 
 it("身份读取期间授权代次变化，不发创建", async () => {

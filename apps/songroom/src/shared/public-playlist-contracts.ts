@@ -27,7 +27,8 @@ export const publicPlaylistOperation = z.strictObject({
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
   step: z.enum(["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
   playlistId: z.string().nullable().optional(),
-  recovered: z.boolean().optional()
+  recovered: z.boolean().optional(),
+  version: z.number().int().positive()
 });
 
 export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist", "requestSong"]);
@@ -74,7 +75,8 @@ export const songRequestOperationView = z.strictObject({
   songConfirmed: z.boolean(),
   tagConfirmed: z.boolean(),
   errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED")]).nullable(),
-  step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"])
+  step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"]),
+  version: z.number().int().positive()
 });
 export type SongRequestOperationView = z.infer<typeof songRequestOperationView>;
 

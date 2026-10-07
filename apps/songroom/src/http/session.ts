@@ -11,5 +11,9 @@ export async function requireSession(auth: SongRoomAuth, request: FastifyRequest
   const cookies = result.headers.getSetCookie();
   if (cookies.length > 0) reply.header("set-cookie", cookies);
   if (!result.response) throw new BusinessError(401, "SESSION_REQUIRED", "请重新登录点歌台");
-  return { userId: result.response.user.id, sessionId: result.response.session.id };
+  return {
+    userId: result.response.user.id,
+    sessionId: result.response.session.id,
+    expiresAt: result.response.session.expiresAt
+  };
 }

@@ -122,8 +122,8 @@ export class SongSearchService {
 
       this.eventStream.notifyUser(userId, {
         type: "search",
-        roomId,
-        resourceId: searchId
+        resourceId: searchId,
+        version: 1
       });
     }).catch(err => {
       if (session.cancelled) return;
@@ -135,8 +135,8 @@ export class SongSearchService {
       }
       this.eventStream.notifyUser(userId, {
         type: "search",
-        roomId,
-        resourceId: searchId
+        resourceId: searchId,
+        version: 1
       });
     });
 

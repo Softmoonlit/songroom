@@ -125,7 +125,8 @@ test.describe("直接搜索与公共点歌前端交互", () => {
             songConfirmed: true,
             tagConfirmed: true,
             errorCode: null,
-            step: "succeeded"
+            step: "succeeded",
+            version: 1
           }
         }
       });
