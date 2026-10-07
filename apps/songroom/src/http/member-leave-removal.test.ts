@@ -307,7 +307,14 @@ it("旧昵称立即释放：新用户通过申请加入可立即使用该昵称�
 it("尚未发出的点歌请求在室友退出后立即清除，不向下游发送", async () => {
   const { app, adapter, roommate1, roomId } = await fixture();
 
-  // 在排队状态插入一个点歌操作（模拟未发出的请求）
+  const dispatchedOps: string[] = [];
+  const originalCall = adapter.call.bind(adapter);
+  adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    dispatchedOps.push(input.operation);
+    return originalCall(input);
+  };
+
+  // 提交一个点歌操作
   const songReqRes = await request(app, `/api/rooms/${roomId}/song-requests`, roommate1.cookie, {
     idempotencyKey: v7(),
     songId: "new-song-99",
@@ -318,12 +325,15 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
   expect([200, 202]).toContain(songReqRes.statusCode);
   const opId = songReqRes.json().operation.id;
 
-  // 室友甲主动退出
+  // 室友甲在请求被调度发出前立即主动退出
   await request(app, `/api/rooms/${roomId}/leave`, roommate1.cookie, { idempotencyKey: v7() });
 
   // 退出后室友甲不可再查看该操作
   const opQuery = await request(app, `/api/rooms/${roomId}/song-requests/${opId}`, roommate1.cookie, undefined, "GET");
   expect(opQuery.statusCode).toBe(404);
+
+  // 验证下游 adapter 绝未收到针对该歌曲的 playlistTracksAdd 调用
+  expect(dispatchedOps).not.toContain("playlistTracksAdd");
 });
 
 it("在途写入晚到响应可更新公共歌单快照，但绝不补回已离开成员的标签，旧操作不可查看", async () => {

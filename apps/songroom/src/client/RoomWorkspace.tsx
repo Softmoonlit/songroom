@@ -14,6 +14,72 @@ import { ApplicationsPane } from "./ApplicationsPane";
 import { InvitePane } from "./InvitePane";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
 
+interface DestructiveConfirmDialogProps {
+  triggerText: string;
+  title: string;
+  descriptionText: string;
+  consequences: string[];
+  confirmText: string;
+  pendingText: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+  isPending: boolean;
+  error?: string;
+}
+
+function DestructiveConfirmDialog({
+  triggerText,
+  title,
+  descriptionText,
+  consequences,
+  confirmText,
+  pendingText,
+  open,
+  onOpenChange,
+  onConfirm,
+  isPending,
+  error
+}: DestructiveConfirmDialogProps) {
+  return (
+    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
+      <AlertDialog.Trigger asChild>
+        <button className="danger-button" type="button">{triggerText}</button>
+      </AlertDialog.Trigger>
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay className="invite-dialog-overlay" />
+        <AlertDialog.Content className="invite-dialog-content">
+          <AlertDialog.Title>{title}</AlertDialog.Title>
+          <AlertDialog.Description asChild>
+            <div>
+              <p>{descriptionText}</p>
+              <ul className="leave-consequences">
+                {consequences.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          </AlertDialog.Description>
+          {error && <p className="form-message" role="alert">{error}</p>}
+          <div className="invite-dialog-actions">
+            <AlertDialog.Cancel asChild>
+              <button className="secondary-button" type="button" disabled={isPending}>取消</button>
+            </AlertDialog.Cancel>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={isPending}
+              onClick={onConfirm}
+            >
+              {isPending ? pendingText : confirmText}
+            </button>
+          </div>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  );
+}
+
 export function RoomPage({ sessionId }: { sessionId: string }) {
   const { roomId } = useParams();
   return <RoomWorkspace key={`${sessionId}:${roomId}`} sessionId={sessionId} roomId={roomId!} />;
@@ -134,42 +200,24 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           </dl>
           {query.data.allowedActions.includes("leaveRoom") && (
             <div className="room-leave-action">
-              <AlertDialog.Root open={leaveOpen} onOpenChange={open => { setLeaveOpen(open); if (open) setLeaveError(""); }}>
-                <AlertDialog.Trigger asChild>
-                  <button className="danger-button" type="button">退出房间</button>
-                </AlertDialog.Trigger>
-                <AlertDialog.Portal>
-                  <AlertDialog.Overlay className="invite-dialog-overlay" />
-                  <AlertDialog.Content className="invite-dialog-content">
-                    <AlertDialog.Title>退出房间？</AlertDialog.Title>
-                    <AlertDialog.Description asChild>
-                      <div>
-                        <p>确定要退出房间“{room.name}”吗？</p>
-                        <ul className="leave-consequences">
-                          <li>退出后立即撤销你在该房间的所有访问与操作权限</li>
-                          <li>释放你的昵称“{room.nickname}”，供其他人使用</li>
-                          <li>清除你在当前公共歌单上的全部点歌人标签</li>
-                          <li>公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留</li>
-                        </ul>
-                      </div>
-                    </AlertDialog.Description>
-                    {leaveError && <p className="form-message" role="alert">{leaveError}</p>}
-                    <div className="invite-dialog-actions">
-                      <AlertDialog.Cancel asChild>
-                        <button className="secondary-button" type="button" disabled={leaveMutation.isPending}>取消</button>
-                      </AlertDialog.Cancel>
-                      <button
-                        className="danger-button"
-                        type="button"
-                        disabled={leaveMutation.isPending}
-                        onClick={() => leaveMutation.mutate()}
-                      >
-                        {leaveMutation.isPending ? "正在退出…" : "确认退出"}
-                      </button>
-                    </div>
-                  </AlertDialog.Content>
-                </AlertDialog.Portal>
-              </AlertDialog.Root>
+              <DestructiveConfirmDialog
+                triggerText="退出房间"
+                title="退出房间？"
+                descriptionText={`确定要退出房间“${room.name}”吗？`}
+                consequences={[
+                  "退出后立即撤销你在该房间的所有访问与操作权限",
+                  `释放你的昵称“${room.nickname}”，供其他人使用`,
+                  "清除你在当前公共歌单上的全部点歌人标签",
+                  "公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留"
+                ]}
+                confirmText="确认退出"
+                pendingText="正在退出…"
+                open={leaveOpen}
+                onOpenChange={open => { setLeaveOpen(open); if (open) setLeaveError(""); }}
+                onConfirm={() => leaveMutation.mutate()}
+                isPending={leaveMutation.isPending}
+                error={leaveError}
+              />
             </div>
           )}
         </section>
@@ -247,42 +295,24 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
         </dl>
         {selected.allowedActions.includes("removeMember") && (
           <div className="member-remove-action">
-            <AlertDialog.Root open={removeOpen} onOpenChange={open => { setRemoveOpen(open); if (open) setRemoveError(""); }}>
-              <AlertDialog.Trigger asChild>
-                <button className="danger-button" type="button">移除成员</button>
-              </AlertDialog.Trigger>
-              <AlertDialog.Portal>
-                <AlertDialog.Overlay className="invite-dialog-overlay" />
-                <AlertDialog.Content className="invite-dialog-content">
-                  <AlertDialog.Title>移除成员“{selected.nickname}”？</AlertDialog.Title>
-                  <AlertDialog.Description asChild>
-                    <div>
-                      <p>确定要将“{selected.nickname}”移出房间吗？</p>
-                      <ul className="leave-consequences">
-                        <li>立即撤销该成员在当前房间的所有访问与操作权限</li>
-                        <li>释放昵称“{selected.nickname}”，供新成员使用</li>
-                        <li>清除该成员在当前公共歌单上的全部点歌人标签</li>
-                        <li>公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留</li>
-                      </ul>
-                    </div>
-                  </AlertDialog.Description>
-                  {removeError && <p className="form-message" role="alert">{removeError}</p>}
-                  <div className="invite-dialog-actions">
-                    <AlertDialog.Cancel asChild>
-                      <button className="secondary-button" type="button" disabled={removeMutation.isPending}>取消</button>
-                    </AlertDialog.Cancel>
-                    <button
-                      className="danger-button"
-                      type="button"
-                      disabled={removeMutation.isPending}
-                      onClick={() => removeMutation.mutate()}
-                    >
-                      {removeMutation.isPending ? "正在移除…" : "确认移除"}
-                    </button>
-                  </div>
-                </AlertDialog.Content>
-              </AlertDialog.Portal>
-            </AlertDialog.Root>
+            <DestructiveConfirmDialog
+              triggerText="移除成员"
+              title={`移除成员“${selected.nickname}”？`}
+              descriptionText={`确定要将“${selected.nickname}”移出房间吗？`}
+              consequences={[
+                "立即撤销该成员在当前房间的所有访问与操作权限",
+                `释放昵称“${selected.nickname}”，供新成员使用`,
+                "清除该成员在当前公共歌单上的全部点歌人标签",
+                "公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留"
+              ]}
+              confirmText="确认移除"
+              pendingText="正在移除…"
+              open={removeOpen}
+              onOpenChange={open => { setRemoveOpen(open); if (open) setRemoveError(""); }}
+              onConfirm={() => removeMutation.mutate()}
+              isPending={removeMutation.isPending}
+              error={removeError}
+            />
           </div>
         )}
       </section>

@@ -1530,6 +1530,15 @@ export class PublicPlaylists {
 
     const condition = this.#conditionsForSongRequest(row);
     if (condition !== "valid") {
+      const member = this.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, row.roomId), eq(roomMembership.userId, row.userId))).get();
+      if (!member) {
+        // 离开者已无成员关系：终结后彻底清除其操作数据
+        this.database.transaction(tx => {
+          tx.delete(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).run();
+          tx.delete(operation).where(eq(operation.id, row.id)).run();
+        });
+        return;
+      }
       this.database.update(publicSongRequest).set({ songConfirmed: true, step: "stopped", nextCheckAt: null }).where(eq(publicSongRequest.operationId, row.id)).run();
       this.#conditionStatus(row, condition);
       return;
@@ -1597,16 +1606,20 @@ export class PublicPlaylists {
     if (!claimed) return;
     const { row, detail } = claimed;
 
-    const condition = this.#conditionsForSongRequest(row);
-    if (condition !== "valid") {
-      this.#conditionStatus(row, condition);
+    const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get();
+    const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, row.roomId)).get();
+    if (!currentRoom || !binding || binding.playlistId !== detail.playlistId || binding.generation !== detail.bindingGeneration) {
+      this.#status(row.id, "stopped");
       return;
     }
 
-    const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get()!;
     const auth = this.#authorization(currentRoom.ownerUserId);
     if (!auth || !auth.credentials) {
       this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
+    if (auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation) {
+      this.#status(row.id, "waitingAuthorization");
       return;
     }
     let cookie: string;

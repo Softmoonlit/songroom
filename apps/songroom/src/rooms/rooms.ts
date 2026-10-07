@@ -214,27 +214,33 @@ export class Rooms {
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, targetMember.userId))).all();
 
     for (const op of ops) {
+      // 无论操作处于何种状态，都立即硬删除用户侧回执，使得离开者无法再通过旧幂等键或回执读取/轮询该操作
+      tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, targetMember.userId), eq(commandReceipt.resourceId, op.id))).run();
+
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
-        // 已终结操作：彻底硬删除，同时删除回执
-        tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, targetMember.userId), eq(commandReceipt.resourceId, op.id))).run();
+        // 已终结操作：彻底硬删除
         tx.delete(operation).where(eq(operation.id, op.id)).run();
       } else {
         const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
         if (detail && ["ready", "verified"].includes(detail.step)) {
-          // 尚未发出的步骤：立即停止并硬删除回执与操作
-          tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, targetMember.userId), eq(commandReceipt.resourceId, op.id))).run();
+          // 尚未发出的步骤：立即停止并硬删除操作
           tx.delete(operation).where(eq(operation.id, op.id)).run();
-        } else {
-          // 可能已发出的写入（sending, confirming, unknown）：只保留收敛公共云端结果所需的最小事实
-          // 脱离用户归属，删除用户侧回执，防止补回标签或后续继承
-          tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, targetMember.userId), eq(commandReceipt.resourceId, op.id))).run();
-          tx.update(operation).set({ userId: `orphaned:${targetMember.userId}`, updatedAt: this.now() }).where(eq(operation.id, op.id)).run();
         }
+        // 对于已可能发出的写入（sending, confirming, unknown）：保留 operation 行以供收敛云端快照，
+        // 不修改 userId（避免破坏唯一索引或引入临时哨兵字符串），在收敛或终结后自动彻底清除。
       }
     }
 
     // 4. 递增房间版本
     tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
+  }
+
+  #notifyMemberTermination(roomId: string, targetUserId: string, version: number) {
+    this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version });
+    this.eventStream?.notifyRoom(this.database, roomId, { type: "permission", resourceId: roomId, version });
+    this.eventStream?.notifyRoom(this.database, roomId, { type: "snapshot", resourceId: roomId, version });
+    this.eventStream?.notifyUser(targetUserId, { type: "room", resourceId: roomId, version });
+    this.eventStream?.notifyUser(targetUserId, { type: "permission", resourceId: roomId, version });
   }
 
   leave(userId: string, roomId: string, input: RoomLeaveCommand): RoomLeaveResult {
@@ -260,11 +266,7 @@ export class Rooms {
     }, { behavior: "immediate" });
 
     if (result && result.version > 0 && targetUserId) {
-      this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
-      this.eventStream?.notifyRoom(this.database, roomId, { type: "permission", resourceId: roomId, version: result.version });
-      this.eventStream?.notifyRoom(this.database, roomId, { type: "snapshot", resourceId: roomId, version: result.version });
-      this.eventStream?.notifyUser(targetUserId, { type: "room", resourceId: roomId, version: result.version });
-      this.eventStream?.notifyUser(targetUserId, { type: "permission", resourceId: roomId, version: result.version });
+      this.#notifyMemberTermination(roomId, targetUserId, result.version);
     }
     return { ok: true, roomId: result.roomId };
   }
@@ -303,11 +305,7 @@ export class Rooms {
     }, { behavior: "immediate" });
 
     if (result && nextVersion > 0 && targetUserId) {
-      this.eventStream?.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: nextVersion });
-      this.eventStream?.notifyRoom(this.database, roomId, { type: "permission", resourceId: roomId, version: nextVersion });
-      this.eventStream?.notifyRoom(this.database, roomId, { type: "snapshot", resourceId: roomId, version: nextVersion });
-      this.eventStream?.notifyUser(targetUserId, { type: "room", resourceId: roomId, version: nextVersion });
-      this.eventStream?.notifyUser(targetUserId, { type: "permission", resourceId: roomId, version: nextVersion });
+      this.#notifyMemberTermination(roomId, targetUserId, nextVersion);
     }
     return result;
   }

@@ -28,13 +28,11 @@ export const roomIdentityActions = z.enum(["renameRoom", "renameNickname", "revi
 export const roomIdentityDisabledReasons = z.strictObject({
   renameRoom: z.literal("OWNER_ONLY").optional(),
   reviewApplications: z.literal("OWNER_ONLY").optional(),
-  readInvite: z.literal("OWNER_ONLY").optional(),
-  leaveRoom: z.literal("OWNER_CANNOT_LEAVE").optional()
+  readInvite: z.literal("OWNER_ONLY").optional()
 });
 export const roomMemberAction = z.enum(["renameNickname", "removeMember"]);
 export const roomMemberDisabledReasons = z.strictObject({
-  renameNickname: z.literal("SELF_ONLY").optional(),
-  removeMember: z.enum(["OWNER_ONLY", "CANNOT_REMOVE_OWNER"]).optional()
+  renameNickname: z.literal("SELF_ONLY").optional()
 });
 export const roomMember = z.object({
   id: uuidv7,
