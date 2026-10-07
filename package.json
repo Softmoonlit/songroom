@@ -12,6 +12,8 @@
     "db:init": "pnpm --filter @songroom/app db:init",
     "db:migrate": "pnpm --filter @songroom/app db:migrate",
     "db:check": "pnpm --filter @songroom/app db:check",
+    "admin:whoami": "pnpm --filter @songroom/app admin:whoami",
+    "admin:recover": "pnpm --filter @songroom/app admin:recover",
     "start": "pnpm --filter @songroom/app start"
   }
 }

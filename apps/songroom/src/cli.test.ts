@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { runDatabaseCommand } from "./cli.js";
+import { runCli, runDatabaseCommand } from "./cli.js";
 import { initializeDatabase } from "./db/database.js";
 import type { AppConfig } from "./config.js";
 
@@ -61,5 +61,30 @@ describe("database CLI", () => {
     const port = await occupiedPort();
 
     await expect(runDatabaseCommand(["db", "migrate"], config(port, filePath))).rejects.toThrow();
+  });
+
+  it("runCli dispatches db commands and rejects unknown commands", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "songroom-cli-test-"));
+    temporaryDirectories.push(directory);
+    const filePath = path.join(directory, "songroom.sqlite");
+    initializeDatabase(filePath);
+    const port = await occupiedPort();
+    const cfg = config(port, filePath);
+
+    await expect(runCli(["db", "check"], cfg)).resolves.toMatchObject({ ok: true });
+    await expect(runCli(["unknown", "cmd"], cfg)).rejects.toThrow(/用法/);
+  });
+
+  it("runCli dispatches admin whoami and recover-account commands", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "songroom-cli-test-"));
+    temporaryDirectories.push(directory);
+    const filePath = path.join(directory, "songroom.sqlite");
+    initializeDatabase(filePath);
+    const port = await occupiedPort();
+    const cfg = config(port, filePath);
+
+    // non-TTY environment rejects safely
+    await expect(runCli(["admin", "whoami"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
+    await expect(runCli(["admin", "recover-account"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
   });
 });

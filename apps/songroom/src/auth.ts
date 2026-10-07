@@ -1,5 +1,6 @@
 import { APIError } from "better-auth/api";
 import { betterAuth } from "better-auth";
+import { admin } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { AppConfig } from "./config.js";
 import { type AppDatabase } from "./db/database.js";
@@ -41,6 +42,11 @@ export function createAuth(database: AppDatabase, config: AppConfig) {
     advanced: {
       useSecureCookies: config.nodeEnv === "production"
     },
+    plugins: [
+      admin({
+        adminUserIds: config.adminUserIds ?? []
+      })
+    ],
     logger: { disabled: true },
     databaseHooks: {
       user: {

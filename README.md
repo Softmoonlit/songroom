@@ -36,6 +36,40 @@ node apps/songroom/dist/cli.js db migrate
 
 普通启动只打开已有数据库并校验，外键和锁等待超时在每个运行连接上启用。不要把数据库初始化当作数据丢失后的自动恢复。
 
+## 账号恢复与管理命令
+
+SongRoom 采用 Better Auth 原生密码认证，不提供公网邮件找回或临时密码改密。用户遗忘密码时，由管理员线下充分核实身份后，通过交互式管理 CLI 调用 Better Auth 原生设密与会话撤销接口完成恢复。
+
+### 管理员声明与核验
+
+管理员权限不通过直接修改数据库授予，而通过配置文件中的 `adminUserIds` 受限白名单声明：
+1. 操作员先在点歌台正常注册账号。
+2. 运行管理员身份核验命令，输入本人邮箱与密码：
+   ```bash
+   pnpm admin:whoami
+   # 生产环境：
+   node apps/songroom/dist/cli.js admin whoami
+   ```
+3. 取得本人内部用户 ID（User ID）后，写入 `songroom.config.json` 的 `adminUserIds` 数组，并重启服务。
+
+### 线下账号恢复流程
+
+在交互式终端中执行账号恢复命令：
+```bash
+pnpm admin:recover
+# 或：
+node apps/songroom/dist/cli.js admin recover-account
+```
+
+**操作与安全约束：**
+- **交互终端限制**：命令必须在交互式 TTY 终端中运行；非 TTY 或批处理环境自动安全退出且不执行任何变更。
+- **协议与证书**：只连接配置中经过浏览器可信验证的 HTTPS 入口，严格执行 TLS 证书校验，拒绝明文 HTTP。
+- **线下核实原因**：输入 1 到 500 字符的核实原因，系统自动规范化为 Unicode NFC 并剔除控制字符。
+- **目标与密码**：输入目标用户内部标识（User ID）及 8 到 128 字符的新密码，终端使用掩码输入，确认后才执行。
+- **双接口原子与分别核验**：先调用原生 `setUserPassword` 设置新密码，成功后再调用原生 `revokeUserSessions` 撤销该账号全部已有会话；任何一步失败均如实反馈，绝不假报完整恢复。
+- **最小数据库审计**：向数据库 `admin_audit_log` 写入本次恢复的管理员 ID、目标用户 ID、操作原因及各步骤结果；日志严格不包含密码明文、哈希、Cookie、Token 或邮箱等敏感信息。
+- **临时凭据注销**：恢复完成后，CLI 自动调用 `sign-out` 撤销本次管理命令会话，并彻底清空内存 Cookie 与密码数据。
+
 ## 开发和验证
 
 ```bash

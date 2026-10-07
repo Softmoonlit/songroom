@@ -10,7 +10,8 @@ const configFields = z.strictObject({
   dbPath: z.string().min(1),
   staticRoot: z.string().min(1),
   authSecret: z.string().min(32),
-  credentialKeyPath: z.string().min(1)
+  credentialKeyPath: z.string().min(1),
+  adminUserIds: z.array(z.string().min(1)).optional()
 });
 
 export const configSchema = configFields.superRefine((config, ctx) => {
@@ -51,7 +52,8 @@ export function loadConfig(filePath = process.env.SONGROOM_CONFIG ?? "/etc/songr
     dbPath: path.resolve(path.dirname(filePath), parsed.dbPath),
     staticRoot: path.resolve(path.dirname(filePath), parsed.staticRoot),
     credentialKeyPath: path.resolve(path.dirname(filePath), parsed.credentialKeyPath),
-    authSecret: parsed.authSecret
+    authSecret: parsed.authSecret,
+    adminUserIds: parsed.adminUserIds ?? []
   });
 }
 

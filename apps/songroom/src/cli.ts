@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertRuntime, loadConfig, type AppConfig } from "./config.js";
 import { checkDatabase, initializeDatabase, migrateDatabase, type DatabaseCheck } from "./db/database.js";
+import { AdminCliError, runAccountRecovery, runAdminWhoami, type AccountRecoveryOptions, type AdminWhoamiOptions } from "./admin/account-recovery.js";
 
 type DatabaseCommandResult = DatabaseCheck | {
   ok: true;
@@ -20,13 +21,33 @@ type CliErrorCode =
   | "DB_SCHEMA_INVALID"
   | "DB_CHECK_FAILED"
   | "DB_MIGRATION_FAILED"
-  | "DB_INIT_FAILED";
+  | "DB_INIT_FAILED"
+  | "CLI_USAGE"
+  | "ADMIN_ERROR";
 
 class CliError extends Error {
   constructor(readonly code: CliErrorCode, message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "CliError";
   }
+}
+
+export async function runCli(
+  argv: readonly string[],
+  config: AppConfig,
+  options?: AccountRecoveryOptions & AdminWhoamiOptions
+): Promise<unknown> {
+  const [group, action] = argv;
+  if (group === "db") {
+    return runDatabaseCommand(argv, config);
+  }
+  if (group === "admin" && action === "whoami") {
+    return runAdminWhoami(config, options);
+  }
+  if (group === "admin" && action === "recover-account") {
+    return runAccountRecovery(config, options);
+  }
+  throw new CliError("CLI_USAGE", "用法：db init | db migrate | db check | admin whoami | admin recover-account");
 }
 
 export async function runDatabaseCommand(argv: readonly string[], config: AppConfig): Promise<DatabaseCommandResult> {
@@ -119,9 +140,14 @@ async function main(): Promise<void> {
   try {
     assertRuntime();
     const config = loadConfig();
-    const result = await runDatabaseCommand(process.argv.slice(2), config);
+    const result = await runCli(process.argv.slice(2), config);
     console.log(JSON.stringify(result));
   } catch (error) {
+    if (error instanceof AdminCliError) {
+      console.error(`${error.code}: ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
     const diagnostic = error instanceof CliError ? error : classifyStartupError(error);
     console.error(`${diagnostic.code}: ${diagnostic.message}`);
     process.exitCode = 1;

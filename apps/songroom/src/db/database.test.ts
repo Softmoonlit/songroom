@@ -67,6 +67,7 @@ describe("database lifecycle", () => {
     expect(database.$client.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").pluck().all()).toEqual([
       "__drizzle_migrations",
       "account",
+      "admin_audit_log",
       "command_receipt",
       "join_application",
       "netease_authorization",

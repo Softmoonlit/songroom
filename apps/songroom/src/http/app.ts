@@ -129,6 +129,17 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     });
 
     const authRequest = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
+      const pathname = new URL(request.url, config.baseUrl).pathname;
+      if (pathname.startsWith("/api/auth/admin/")) {
+        const allowedAdminPaths = [
+          "/api/auth/admin/set-user-password",
+          "/api/auth/admin/revoke-user-sessions"
+        ];
+        if (!allowedAdminPaths.includes(pathname)) {
+          return reply.status(404).send({ error: { code: "NOT_FOUND", message: "未开放的管理接口" } });
+        }
+      }
+
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers as Record<string, string | string[] | undefined>)) {
         if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);

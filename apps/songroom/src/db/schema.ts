@@ -15,6 +15,10 @@ export const user = sqliteTable("user", {
   email: text("email").notNull(),
   emailVerified: integer("email_verified", { mode: "boolean" }).notNull(),
   image: text("image"),
+  role: text("role"),
+  banned: integer("banned", { mode: "boolean" }),
+  banReason: text("ban_reason"),
+  banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
 }, (table) => [uniqueIndex("user_email_unique").on(table.email)]);
@@ -27,7 +31,8 @@ export const session = sqliteTable("session", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
-  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" })
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  impersonatedBy: text("impersonated_by")
 }, (table) => [uniqueIndex("session_token_unique").on(table.token)]);
 
 export const account = sqliteTable("account", {
@@ -309,8 +314,23 @@ export const publicPlaylistCleanup = sqliteTable("public_playlist_cleanup", {
   check("public_playlist_cleanup_check_round_valid", sql`${table.checkRound} >= 0`)
 ]);
 
+export const adminAuditLog = sqliteTable("admin_audit_log", {
+  id: text("id").primaryKey(),
+  adminUserId: text("admin_user_id").notNull(),
+  targetUserId: text("target_user_id").notNull(),
+  action: text("action").notNull(),
+  reason: text("reason").notNull(),
+  setPasswordResult: text("set_password_result").notNull(),
+  revokeSessionsResult: text("revoke_sessions_result").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
+}, (table) => [
+  index("admin_audit_log_admin_user_index").on(table.adminUserId),
+  index("admin_audit_log_target_user_index").on(table.targetUserId),
+  check("admin_audit_log_reason_len", sql`length(${table.reason}) >= 1 AND length(${table.reason}) <= 500`)
+]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, publicPlaylistCleanup };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, publicPlaylistCleanup, adminAuditLog };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;
