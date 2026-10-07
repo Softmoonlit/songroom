@@ -166,7 +166,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     };
     fastify.route({ method: ["GET", "POST"], url: "/api/auth/*", handler: authRequest });
     registerNeteaseRoutes(fastify, auth, binding);
-    registerRoomRoutes(fastify, auth, new Rooms(database, binding, eventStream, dependencies.now));
+    registerRoomRoutes(fastify, auth, new Rooms(database, binding, eventStream, dependencies.now, playlists));
     registerInviteRoutes(fastify, auth, new Invites(database, eventStream, dependencies.now));
     registerPublicPlaylistRoutes(fastify, auth, playlists);
     registerSongSearchRoutes(fastify, auth, searchService);

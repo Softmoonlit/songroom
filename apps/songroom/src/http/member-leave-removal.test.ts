@@ -332,8 +332,8 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
   const opQuery = await request(app, `/api/rooms/${roomId}/song-requests/${opId}`, roommate1.cookie, undefined, "GET");
   expect(opQuery.statusCode).toBe(404);
 
-  // 验证下游 adapter 绝未收到针对该歌曲的 playlistTracksAdd 调用
-  expect(dispatchedOps).not.toContain("playlistTracksAdd");
+  // 验证下游 adapter 绝未收到针对该歌曲的 trackAdd 调用
+  expect(dispatchedOps).not.toContain("trackAdd");
 });
 
 it("在途写入晚到响应可更新公共歌单快照，但绝不补回已离开成员的标签，旧操作不可查看", async () => {

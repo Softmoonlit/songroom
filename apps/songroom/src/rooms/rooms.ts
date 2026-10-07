@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, commandReceipt, operation, publicSongRequest, requesterTag } from "../db/schema.js";
+import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag } from "../db/schema.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
@@ -11,6 +11,7 @@ import type { RoomCreateCommand, RoomCreateView, RoomSummary, RoomMember, roomSh
 import { roomCreateCommand, roomCreateDisabledReason, roomRenameCommand, nicknameRenameCommand, roomLeaveCommand, roomLeaveResult, roomMemberRemoveCommand } from "../shared/room-contracts.js";
 import type { z } from "zod";
 import type { EventStreamService } from "../events/event-stream.js";
+import type { PublicPlaylists } from "../operations/public-playlists.js";
 import { BusinessError } from "../shared/errors.js";
 
 export function assertRoomCapacity(counts: { owned: number; joined: number; total: number }): void {
@@ -29,19 +30,23 @@ function identityPermissions(role: "owner" | "roommate"): Pick<z.infer<typeof ro
 export class Rooms {
   readonly eventStream?: EventStreamService;
   readonly now: () => number;
+  readonly publicPlaylists?: PublicPlaylists;
 
   constructor(
     readonly database: AppDatabase,
     readonly binding: NeteaseBinding,
     eventStreamOrNow?: EventStreamService | (() => number),
-    now: () => number = () => Date.now()
+    now: () => number = () => Date.now(),
+    publicPlaylists?: PublicPlaylists
   ) {
     if (typeof eventStreamOrNow === "function") {
       this.now = eventStreamOrNow;
       this.eventStream = undefined;
+      this.publicPlaylists = publicPlaylists;
     } else {
       this.eventStream = eventStreamOrNow;
       this.now = now;
+      this.publicPlaylists = publicPlaylists;
     }
   }
 
@@ -209,27 +214,8 @@ export class Rooms {
     // 2. 删除该成员在当前公共绑定上的全部点歌人标签
     tx.delete(requesterTag).where(eq(requesterTag.memberId, targetMember.id)).run();
 
-    // 3. 处理该成员在当前房间的操作数据
-    const ops = tx.select().from(operation)
-      .where(and(eq(operation.roomId, roomId), eq(operation.userId, targetMember.userId))).all();
-
-    for (const op of ops) {
-      // 无论操作处于何种状态，都立即硬删除用户侧回执，使得离开者无法再通过旧幂等键或回执读取/轮询该操作
-      tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, targetMember.userId), eq(commandReceipt.resourceId, op.id))).run();
-
-      if (["succeeded", "failed", "stopped"].includes(op.status)) {
-        // 已终结操作：彻底硬删除
-        tx.delete(operation).where(eq(operation.id, op.id)).run();
-      } else {
-        const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
-        if (detail && ["ready", "verified"].includes(detail.step)) {
-          // 尚未发出的步骤：立即停止并硬删除操作
-          tx.delete(operation).where(eq(operation.id, op.id)).run();
-        }
-        // 对于已可能发出的写入（sending, confirming, unknown）：保留 operation 行以供收敛云端快照，
-        // 不修改 userId（避免破坏唯一索引或引入临时哨兵字符串），在收敛或终结后自动彻底清除。
-      }
-    }
+    // 3. 委派操作模块处理点歌操作终止清理
+    this.publicPlaylists?.terminateMemberInTx(tx, roomId, targetMember.userId);
 
     // 4. 递增房间版本
     tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
@@ -246,15 +232,13 @@ export class Rooms {
   leave(userId: string, roomId: string, input: RoomLeaveCommand): RoomLeaveResult {
     const command = roomLeaveCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "leaveRoom", { roomId }, this.now());
-    let targetUserId = "";
-    const result = this.database.transaction(tx => {
+    const outcome = this.database.transaction(tx => {
       const replay = readCommandResource(tx, prepared, this.now());
-      if (replay) return { ok: true as const, roomId, version: tx.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()?.version ?? 0 };
+      if (replay) return { kind: "replayed" as const, roomId };
       const current = this.readShell(userId, roomId);
       if (current.room.role === "owner") {
         throw new BusinessError(403, "OWNER_CANNOT_LEAVE", "房主不能以室友退出流程离开自己的房间");
       }
-      targetUserId = userId;
       const member = tx.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, userId))).get();
       if (!member) {
         throw new BusinessError(404, "ROOM_UNAVAILABLE", "房间不存在或你已不是当前成员");
@@ -262,27 +246,25 @@ export class Rooms {
       this.#terminateMemberInTx(tx, roomId, member);
       recordCommandResource(tx, prepared, roomId, this.now());
       const nextVersion = tx.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()!.version;
-      return { ok: true as const, roomId, version: nextVersion };
+      return { kind: "terminated" as const, roomId, targetUserId: userId, version: nextVersion };
     }, { behavior: "immediate" });
 
-    if (result && result.version > 0 && targetUserId) {
-      this.#notifyMemberTermination(roomId, targetUserId, result.version);
+    if (outcome.kind === "terminated") {
+      this.#notifyMemberTermination(outcome.roomId, outcome.targetUserId, outcome.version);
     }
-    return { ok: true, roomId: result.roomId };
+    return { ok: true, roomId: outcome.roomId };
   }
 
   removeMember(userId: string, roomId: string, memberId: string, input: RoomMemberRemoveCommand): z.infer<typeof roomMembersView> {
     const command = roomMemberRemoveCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "removeMember", { roomId, memberId, version: command.version }, this.now());
-    let targetUserId = "";
-    let nextVersion = 0;
-    const result = this.database.transaction(tx => {
+    const outcome = this.database.transaction(tx => {
       const current = this.readShell(userId, roomId);
       if (current.room.role !== "owner") {
         throw new BusinessError(404, "ROOM_OWNER_REQUIRED", "只有当前房主可移除成员");
       }
       const replay = readCommandResource(tx, prepared, this.now());
-      if (replay) return this.readMembers(userId, roomId);
+      if (replay) return { kind: "replayed" as const, members: this.readMembers(userId, roomId) };
 
       if (command.version !== current.version) {
         throw new BusinessError(409, "ROOM_VERSION_CONFLICT", "房间状态或成员信息已变化，请核对最新影响范围后再试");
@@ -296,17 +278,15 @@ export class Rooms {
         throw new BusinessError(409, "CANNOT_REMOVE_OWNER", "不能移除房主本人");
       }
 
-      targetUserId = targetMember.userId;
       this.#terminateMemberInTx(tx, roomId, targetMember);
       recordCommandResource(tx, prepared, roomId, this.now());
       const updatedMembers = this.readMembers(userId, roomId);
-      nextVersion = updatedMembers.version;
-      return updatedMembers;
+      return { kind: "terminated" as const, members: updatedMembers, targetUserId: targetMember.userId, version: updatedMembers.version };
     }, { behavior: "immediate" });
 
-    if (result && nextVersion > 0 && targetUserId) {
-      this.#notifyMemberTermination(roomId, targetUserId, nextVersion);
+    if (outcome.kind === "terminated") {
+      this.#notifyMemberTermination(roomId, outcome.targetUserId, outcome.version);
     }
-    return result;
+    return outcome.members;
   }
 }

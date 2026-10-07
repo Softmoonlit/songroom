@@ -1798,4 +1798,30 @@ export class PublicPlaylists {
       }
     }
   }
+
+  terminateMemberInTx(tx: any, roomId: string, userId: string): void {
+    const ops = tx.select().from(operation)
+      .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
+
+    for (const op of ops) {
+      tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, op.id))).run();
+
+      if (["succeeded", "failed", "stopped"].includes(op.status)) {
+        tx.delete(operation).where(eq(operation.id, op.id)).run();
+      } else {
+        const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
+        if (detail && ["ready", "verified"].includes(detail.step)) {
+          tx.delete(operation).where(eq(operation.id, op.id)).run();
+        } else {
+          // 已可能发出的写入（sending, confirming, unknown）：
+          // 脱离原账号归属，分配独立匿名 ID，只保留收敛云端歌单所需的最小事实（songId、playlistId、generation）
+          const anonymousId = v7();
+          tx.update(operation).set({
+            userId: anonymousId,
+            updatedAt: this.now()
+          }).where(eq(operation.id, op.id)).run();
+        }
+      }
+    }
+  }
 }
