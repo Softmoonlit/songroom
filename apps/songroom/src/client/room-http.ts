@@ -33,6 +33,10 @@ export const errorMessages: Record<string, string> = {
   APPLICATION_FORBIDDEN: "你无权审批这个房间的申请。",
   INVITE_RESET: "邀请已重置，这份申请已失效。",
   ROOM_OWNER_REQUIRED: "只有房主可以执行此操作。",
+  OWNER_CANNOT_LEAVE: "房主不能以室友退出流程离开自己的房间。",
+  CANNOT_REMOVE_OWNER: "不能移除房主本人。",
+  ROOM_VERSION_CONFLICT: "房间状态或成员信息已变化，请核对最新影响范围后再试。",
+  MEMBER_NOT_FOUND: "成员已不在房间中，请核对最新成员列表。",
   INVALID_INPUT: "请输入有效的房间名称和昵称。",
   IDEMPOTENCY_CONFLICT: "此次操作内容已变化，请重新填写后提交。",
   IDEMPOTENCY_KEY_EXPIRED: "此次操作标识已过期，请重新填写后提交。"

@@ -1224,6 +1224,19 @@ h1 {
   font-size: 1.35rem;
 }
 
+.leave-consequences {
+  margin: 12px 0;
+  padding-left: 20px;
+  color: #4b5563;
+  font-size: .88rem;
+  line-height: 1.6;
+}
+
+.room-leave-action,
+.member-remove-action {
+  margin-top: 24px;
+}
+
 .danger-button {
   min-height: 44px;
   padding: 9px 15px;

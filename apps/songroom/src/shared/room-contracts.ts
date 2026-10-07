@@ -24,18 +24,38 @@ export const roomCreateView = z.object({
 });
 export const roomCreateCommand = z.strictObject({ idempotencyKey: uuidv7, authorizationId: uuidv7, name: roomName, nickname: roomNickname });
 export const roomParams = z.strictObject({ roomId: uuidv7 });
-export const roomIdentityActions = z.enum(["renameRoom", "renameNickname", "reviewApplications", "readInvite"]);
+export const roomIdentityActions = z.enum(["renameRoom", "renameNickname", "reviewApplications", "readInvite", "leaveRoom"]);
 export const roomIdentityDisabledReasons = z.strictObject({
   renameRoom: z.literal("OWNER_ONLY").optional(),
   reviewApplications: z.literal("OWNER_ONLY").optional(),
-  readInvite: z.literal("OWNER_ONLY").optional()
+  readInvite: z.literal("OWNER_ONLY").optional(),
+  leaveRoom: z.literal("OWNER_CANNOT_LEAVE").optional()
 });
-export const roomMember = z.object({ id: uuidv7, nickname: roomNickname, role: roomRole, isSelf: z.boolean(), allowedActions: z.array(z.literal("renameNickname")), disabledReasons: z.strictObject({ renameNickname: z.literal("SELF_ONLY").optional() }) });
+export const roomMemberAction = z.enum(["renameNickname", "removeMember"]);
+export const roomMemberDisabledReasons = z.strictObject({
+  renameNickname: z.literal("SELF_ONLY").optional(),
+  removeMember: z.enum(["OWNER_ONLY", "CANNOT_REMOVE_OWNER"]).optional()
+});
+export const roomMember = z.object({
+  id: uuidv7,
+  nickname: roomNickname,
+  role: roomRole,
+  isSelf: z.boolean(),
+  allowedActions: z.array(roomMemberAction),
+  disabledReasons: roomMemberDisabledReasons
+});
 export const roomShellView = z.object({ room: roomSummary, version: z.number().int().positive(), pendingCount: z.number().int().nonnegative().nullable(), allowedActions: z.array(roomIdentityActions), disabledReasons: roomIdentityDisabledReasons });
 export const roomMembersView = z.object({ version: z.number().int().positive(), members: z.array(roomMember), allowedActions: z.array(roomIdentityActions), disabledReasons: roomIdentityDisabledReasons });
 export const roomRenameCommand = z.strictObject({ idempotencyKey: uuidv7, name: roomName });
 export const nicknameRenameCommand = z.strictObject({ idempotencyKey: uuidv7, nickname: roomNickname });
+export const roomLeaveCommand = z.strictObject({ idempotencyKey: uuidv7 });
+export const roomLeaveResult = z.strictObject({ ok: z.literal(true), roomId: uuidv7 });
+export const memberParams = z.strictObject({ roomId: uuidv7, memberId: uuidv7 });
+export const roomMemberRemoveCommand = z.strictObject({ idempotencyKey: uuidv7, version: z.number().int().positive() });
 export type RoomSummary = z.infer<typeof roomSummary>;
 export type RoomCreateCommand = z.infer<typeof roomCreateCommand>;
 export type RoomCreateView = z.infer<typeof roomCreateView>;
 export type RoomMember = z.infer<typeof roomMember>;
+export type RoomLeaveCommand = z.infer<typeof roomLeaveCommand>;
+export type RoomLeaveResult = z.infer<typeof roomLeaveResult>;
+export type RoomMemberRemoveCommand = z.infer<typeof roomMemberRemoveCommand>;

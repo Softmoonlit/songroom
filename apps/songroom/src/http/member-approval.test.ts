@@ -334,7 +334,7 @@ it("房主审批权限限定当前房间，室友、申请人和其他房主不�
   expect(await application(await request(config, `/api/join-applications/${pending.id}`, applicant))).toMatchObject({ status: "pending" });
   expect(await members(config, owner, id)).toHaveLength(2);
   const shell = await (await request(config, `/api/rooms/${id}`, roommate)).json();
-  expect(shell).toMatchObject({ pendingCount: null, allowedActions: ["renameNickname"], disabledReasons: { renameRoom: expect.any(String), reviewApplications: expect.any(String), readInvite: expect.any(String) } });
+  expect(shell).toMatchObject({ pendingCount: null, allowedActions: ["renameNickname", "leaveRoom"], disabledReasons: { renameRoom: expect.any(String), reviewApplications: expect.any(String), readInvite: expect.any(String) } });
   expect(shell).not.toHaveProperty("code");
   expect(shell).not.toHaveProperty("applications");
 });
@@ -354,7 +354,7 @@ it("房主改房名、所有成员只改自己昵称，旧昵称释放且成员 
   const key = v7();
   const nicknameResponse = await request(config, `/api/rooms/${id}/nickname`, applicant, { idempotencyKey: key, nickname: " e\u0301 " });
   expect(nicknameResponse.status).toBe(200);
-  expect(await nicknameResponse.json()).toMatchObject({ room: { name: "新房名", nickname: "é", role: "roommate" }, pendingCount: null, allowedActions: ["renameNickname"], disabledReasons: { renameRoom: expect.any(String), reviewApplications: expect.any(String), readInvite: expect.any(String) } });
+  expect(await nicknameResponse.json()).toMatchObject({ room: { name: "新房名", nickname: "é", role: "roommate" }, pendingCount: null, allowedActions: ["renameNickname", "leaveRoom"], disabledReasons: { renameRoom: expect.any(String), reviewApplications: expect.any(String), readInvite: expect.any(String) } });
   expect((await request(config, `/api/rooms/${id}/nickname`, applicant, { idempotencyKey: key.toUpperCase(), nickname: "é" })).status).toBe(200);
   await expectCode(await request(config, `/api/rooms/${id}/nickname`, applicant, { idempotencyKey: key, nickname: "不同" }), "IDEMPOTENCY_CONFLICT");
   expect((await members(config, applicant, id)).find(value => value.isSelf)).toMatchObject({ id: originalId, nickname: "é" });
@@ -391,7 +391,7 @@ it("成员列表只暴露房间身份与当前动作，不泄漏账号或其他�
     expect(view.allowedActions).toEqual(expect.any(Array));
     for (const member of view.members) {
       expect(Object.keys(member).sort()).toEqual(["allowedActions", "disabledReasons", "id", "isSelf", "nickname", "role"]);
-      expect(member.allowedActions).toEqual(member.isSelf ? ["renameNickname"] : []);
+      expect(member.allowedActions).toEqual(member.isSelf ? ["renameNickname"] : (cookie === owner ? ["removeMember"] : []));
       if (member.isSelf) expect(member.disabledReasons).toEqual({});
       else expect(member.disabledReasons).toEqual({ renameNickname: expect.any(String) });
     }

@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, Music2, Settings, Users } from "lucide-react";
-import { Link, useParams } from "react-router";
-import { roomMembersView, roomShellView } from "../shared/room-contracts";
-import { queryOptions, request } from "./room-http";
+import { Link, useNavigate, useParams } from "react-router";
+import * as AlertDialog from "@radix-ui/react-alert-dialog";
+import { v7 } from "uuid";
+import { roomLeaveResult, roomMembersView, roomShellView } from "../shared/room-contracts";
+import { errorMessage, queryOptions, request, RoomRequestError } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
 import { useVirtualKeyboard } from "./useVirtualKeyboard";
@@ -24,8 +26,26 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
   });
   type RoomTab = "public" | "members" | "settings";
   const [active, setActive] = useState<RoomTab>("public");
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveError, setLeaveError] = useState("");
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const scrollPositions = useRef<Record<RoomTab, number>>({ public: 0, members: 0, settings: 0 });
   const keyboardOpen = useVirtualKeyboard();
+
+  const leaveMutation = useMutation({
+    mutationFn: () => request(`/${roomId}/leave`, roomLeaveResult, undefined, { idempotencyKey: v7() }),
+    retry: false,
+    onSuccess: () => {
+      setLeaveOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
+      void navigate("/rooms");
+    },
+    onError: failure => {
+      setLeaveError(errorMessage(failure));
+    }
+  });
   function selectTab(next: RoomTab) {
     if (next === active) {
       window.scrollTo({ top: 0, behavior: "instant" });
@@ -112,12 +132,53 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
               <dd>{roleLabels[room.role]}</dd>
             </div>
           </dl>
+          {query.data.allowedActions.includes("leaveRoom") && (
+            <div className="room-leave-action">
+              <AlertDialog.Root open={leaveOpen} onOpenChange={open => { setLeaveOpen(open); if (open) setLeaveError(""); }}>
+                <AlertDialog.Trigger asChild>
+                  <button className="danger-button" type="button">退出房间</button>
+                </AlertDialog.Trigger>
+                <AlertDialog.Portal>
+                  <AlertDialog.Overlay className="invite-dialog-overlay" />
+                  <AlertDialog.Content className="invite-dialog-content">
+                    <AlertDialog.Title>退出房间？</AlertDialog.Title>
+                    <AlertDialog.Description asChild>
+                      <div>
+                        <p>确定要退出房间“{room.name}”吗？</p>
+                        <ul className="leave-consequences">
+                          <li>退出后立即撤销你在该房间的所有访问与操作权限</li>
+                          <li>释放你的昵称“{room.nickname}”，供其他人使用</li>
+                          <li>清除你在当前公共歌单上的全部点歌人标签</li>
+                          <li>公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留</li>
+                        </ul>
+                      </div>
+                    </AlertDialog.Description>
+                    {leaveError && <p className="form-message" role="alert">{leaveError}</p>}
+                    <div className="invite-dialog-actions">
+                      <AlertDialog.Cancel asChild>
+                        <button className="secondary-button" type="button" disabled={leaveMutation.isPending}>取消</button>
+                      </AlertDialog.Cancel>
+                      <button
+                        className="danger-button"
+                        type="button"
+                        disabled={leaveMutation.isPending}
+                        onClick={() => leaveMutation.mutate()}
+                      >
+                        {leaveMutation.isPending ? "正在退出…" : "确认退出"}
+                      </button>
+                    </div>
+                  </AlertDialog.Content>
+                </AlertDialog.Portal>
+              </AlertDialog.Root>
+            </div>
+          )}
         </section>
       </div>
     </section>
   );
 }
 function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["room-members", sessionId, roomId],
     queryFn: ({ signal }) => request(`/${roomId}/members`, roomMembersView, signal),
@@ -125,9 +186,36 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
     ...queryOptions
   });
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeError, setRemoveError] = useState("");
   const listScroll = useRef(0);
   const [reviewing, setReviewing] = useState(false);
   const selected = query.data?.members.find(member => member.id === memberId);
+
+  const removeMutation = useMutation({
+    mutationFn: () => {
+      if (!selected || !query.data) throw new Error("MEMBER_NOT_FOUND");
+      return request(`/${roomId}/members/${selected.id}/remove`, roomMembersView, undefined, {
+        idempotencyKey: v7(),
+        version: query.data.version
+      });
+    },
+    retry: false,
+    onSuccess: data => {
+      setRemoveOpen(false);
+      setMemberId(null);
+      queryClient.setQueryData(["room-members", sessionId, roomId], data);
+      void queryClient.invalidateQueries({ queryKey: ["room-members", sessionId, roomId] });
+      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
+      void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
+    },
+    onError: async failure => {
+      setRemoveError(errorMessage(failure));
+      if (failure instanceof RoomRequestError && failure.code === "ROOM_VERSION_CONFLICT") {
+        await query.refetch();
+      }
+    }
+  });
   useLayoutEffect(() => {
     if (active) window.scrollTo({ top: memberId ? 0 : listScroll.current, behavior: "instant" });
     // Switching primary entries restores the workspace scroll, not the member list scroll.
@@ -157,6 +245,46 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
             <dd>{roleLabels[selected.role]}</dd>
           </div>
         </dl>
+        {selected.allowedActions.includes("removeMember") && (
+          <div className="member-remove-action">
+            <AlertDialog.Root open={removeOpen} onOpenChange={open => { setRemoveOpen(open); if (open) setRemoveError(""); }}>
+              <AlertDialog.Trigger asChild>
+                <button className="danger-button" type="button">移除成员</button>
+              </AlertDialog.Trigger>
+              <AlertDialog.Portal>
+                <AlertDialog.Overlay className="invite-dialog-overlay" />
+                <AlertDialog.Content className="invite-dialog-content">
+                  <AlertDialog.Title>移除成员“{selected.nickname}”？</AlertDialog.Title>
+                  <AlertDialog.Description asChild>
+                    <div>
+                      <p>确定要将“{selected.nickname}”移出房间吗？</p>
+                      <ul className="leave-consequences">
+                        <li>立即撤销该成员在当前房间的所有访问与操作权限</li>
+                        <li>释放昵称“{selected.nickname}”，供新成员使用</li>
+                        <li>清除该成员在当前公共歌单上的全部点歌人标签</li>
+                        <li>公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留</li>
+                      </ul>
+                    </div>
+                  </AlertDialog.Description>
+                  {removeError && <p className="form-message" role="alert">{removeError}</p>}
+                  <div className="invite-dialog-actions">
+                    <AlertDialog.Cancel asChild>
+                      <button className="secondary-button" type="button" disabled={removeMutation.isPending}>取消</button>
+                    </AlertDialog.Cancel>
+                    <button
+                      className="danger-button"
+                      type="button"
+                      disabled={removeMutation.isPending}
+                      onClick={() => removeMutation.mutate()}
+                    >
+                      {removeMutation.isPending ? "正在移除…" : "确认移除"}
+                    </button>
+                  </div>
+                </AlertDialog.Content>
+              </AlertDialog.Portal>
+            </AlertDialog.Root>
+          </div>
+        )}
       </section>
     );
   return (
