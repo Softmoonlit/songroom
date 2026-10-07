@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { SongRoomAuth } from "../auth.js";
 import type { Rooms } from "../rooms/rooms.js";
-import { roomListView, roomCreateView, roomCreateCommand, roomSummary, roomParams, roomShellView, roomMembersView, roomRenameCommand, nicknameRenameCommand, memberParams, roomLeaveCommand, roomLeaveResult, roomMemberRemoveCommand } from "../shared/room-contracts.js";
+import { roomListView, roomCreateView, roomCreateCommand, roomSummary, roomParams, roomShellView, roomMembersView, roomRenameCommand, nicknameRenameCommand, memberParams, roomLeaveCommand, roomLeaveResult, roomMemberRemoveCommand, roomDeletionView, roomDeleteCommand, roomDeleteResult, publicPlaylistCleanupList } from "../shared/room-contracts.js";
 import type { ZodProvider } from "./zod.js";
 import { requireSession } from "./session.js";
 
@@ -33,5 +33,14 @@ export function registerRoomRoutes(app: FastifyInstance, auth: SongRoomAuth, roo
   });
   typed.post("/api/rooms/:roomId/members/:memberId/remove", { schema: { params: memberParams, body: roomMemberRemoveCommand, response: { 200: roomMembersView } } }, async (request, reply) => {
     return rooms.removeMember((await requireSession(auth, request, reply)).userId, request.params.roomId, request.params.memberId, request.body);
+  });
+  typed.get("/api/rooms/:roomId/deletion", { schema: { params: roomParams, response: { 200: roomDeletionView } } }, async (request, reply) => {
+    return rooms.readDeletion((await requireSession(auth, request, reply)).userId, request.params.roomId);
+  });
+  typed.post("/api/rooms/:roomId/delete", { schema: { params: roomParams, body: roomDeleteCommand, response: { 200: roomDeleteResult } } }, async (request, reply) => {
+    return rooms.deleteRoom((await requireSession(auth, request, reply)).userId, request.params.roomId, request.body);
+  });
+  typed.get("/api/cleanups/public-playlists", { schema: { response: { 200: publicPlaylistCleanupList } } }, async (request, reply) => {
+    return rooms.readCleanups((await requireSession(auth, request, reply)).userId);
   });
 }

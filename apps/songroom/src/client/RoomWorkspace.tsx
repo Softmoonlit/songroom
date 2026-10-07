@@ -4,7 +4,7 @@ import { ArrowLeft, Music2, Settings, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { v7 } from "uuid";
-import { roomLeaveResult, roomMembersView, roomShellView } from "../shared/room-contracts";
+import { roomLeaveResult, roomMembersView, roomShellView, roomDeletionView, roomDeleteResult } from "../shared/room-contracts";
 import { errorMessage, queryOptions, request, RoomRequestError } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
@@ -26,6 +26,120 @@ interface DestructiveConfirmDialogProps {
   onConfirm: () => void;
   isPending: boolean;
   error?: string;
+}
+
+function DeleteRoomDialog({
+  sessionId,
+  roomId,
+  roomName,
+  open,
+  onOpenChange
+}: {
+  sessionId: string;
+  roomId: string;
+  roomName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [deleteError, setDeleteError] = useState("");
+
+  const deletionQuery = useQuery({
+    queryKey: ["room-deletion", sessionId, roomId],
+    queryFn: ({ signal }) => request(`/${roomId}/deletion`, roomDeletionView, signal),
+    enabled: open,
+    ...queryOptions
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => {
+      if (!deletionQuery.data) throw new Error("DELETION_NOT_READY");
+      return request(`/${roomId}/delete`, roomDeleteResult, undefined, {
+        idempotencyKey: v7(),
+        version: deletionQuery.data.version
+      });
+    },
+    retry: false,
+    onSuccess: () => {
+      onOpenChange(false);
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
+      void queryClient.invalidateQueries({ queryKey: ["public-playlist-cleanups", sessionId] });
+      void navigate("/rooms");
+    },
+    onError: async failure => {
+      setDeleteError(errorMessage(failure));
+      if (failure instanceof RoomRequestError && failure.code === "ROOM_VERSION_CONFLICT") {
+        await deletionQuery.refetch();
+      }
+    }
+  });
+
+  const deletion = deletionQuery.data;
+
+  return (
+    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
+      <AlertDialog.Trigger asChild>
+        <button className="danger-button" type="button">删除房间</button>
+      </AlertDialog.Trigger>
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay className="invite-dialog-overlay" />
+        <AlertDialog.Content className="invite-dialog-content">
+          <AlertDialog.Title>删除房间？</AlertDialog.Title>
+          <AlertDialog.Description asChild>
+            <div>
+              <p>确定要永久删除房间“{roomName}”吗？此操作不可撤销。</p>
+              {deletionQuery.isPending ? (
+                <p role="status">正在读取最新影响范围…</p>
+              ) : deletionQuery.isError ? (
+                <p className="form-message" role="alert">读取影响范围失败，请稍后重试。</p>
+              ) : deletion ? (
+                <>
+                  <div className="deletion-impact-summary">
+                    <p><strong>当前成员：</strong>{deletion.memberCount} 人</p>
+                    <p><strong>待处理申请：</strong>{deletion.pendingApplicationCount} 份</p>
+                    <p>
+                      <strong>公共歌单：</strong>
+                      {deletion.publicPlaylist
+                        ? `专用歌单“${deletion.publicPlaylist.name}”（ID: ${deletion.publicPlaylist.id}），将启动网易云删除清理`
+                        : "无专用公共歌单，无需云端清理"}
+                    </p>
+                    <p className="version-tag">聚合版本：v{deletion.version}</p>
+                  </div>
+                  <ul className="leave-consequences">
+                    <li>本地立即永久删除房间，所有设备与成员马上失去访问</li>
+                    <li>彻底清除全部成员关系、昵称、邀请码及待审批申请</li>
+                    <li>彻底清除全部点歌人标签及公共歌单绑定引用</li>
+                    {deletion.publicPlaylist?.willCleanUp && (
+                      <li>仅为该房间创建的专用公共歌单启动云端删除，不影响其他房间与账号</li>
+                    )}
+                    <li>房间不提供恢复入口，所有数据不可撤销</li>
+                  </ul>
+                </>
+              ) : null}
+            </div>
+          </AlertDialog.Description>
+          {deleteError && <p className="form-message" role="alert">{deleteError}</p>}
+          <div className="invite-dialog-actions">
+            <AlertDialog.Cancel asChild>
+              <button className="secondary-button" type="button" disabled={deleteMutation.isPending}>
+                取消
+              </button>
+            </AlertDialog.Cancel>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={deleteMutation.isPending || !deletion}
+              onClick={() => deleteMutation.mutate()}
+            >
+              {deleteMutation.isPending ? "正在删除…" : "确认永久删除"}
+            </button>
+          </div>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  );
 }
 
 function DestructiveConfirmDialog({
@@ -94,6 +208,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
   const [active, setActive] = useState<RoomTab>("public");
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveError, setLeaveError] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scrollPositions = useRef<Record<RoomTab, number>>({ public: 0, members: 0, settings: 0 });
@@ -217,6 +332,17 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                 onConfirm={() => leaveMutation.mutate()}
                 isPending={leaveMutation.isPending}
                 error={leaveError}
+              />
+            </div>
+          )}
+          {query.data.allowedActions.includes("deleteRoom") && (
+            <div className="room-delete-action">
+              <DeleteRoomDialog
+                sessionId={sessionId}
+                roomId={roomId}
+                roomName={room.name}
+                open={deleteOpen}
+                onOpenChange={setDeleteOpen}
               />
             </div>
           )}

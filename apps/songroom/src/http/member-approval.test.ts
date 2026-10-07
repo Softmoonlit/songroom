@@ -387,7 +387,7 @@ it("成员列表只暴露房间身份与当前动作，不泄漏账号或其他�
     const response = await request(config, `/api/rooms/${id}/members`, cookie);
     expect(response.status).toBe(200);
     const view = await response.json();
-    expect(view.disabledReasons).toEqual(cookie === owner ? {} : { renameRoom: expect.any(String), reviewApplications: expect.any(String), readInvite: expect.any(String) });
+    expect(view.disabledReasons).toEqual(cookie === owner ? {} : { renameRoom: expect.any(String), reviewApplications: expect.any(String), readInvite: expect.any(String), deleteRoom: expect.any(String) });
     expect(view.allowedActions).toEqual(expect.any(Array));
     for (const member of view.members) {
       expect(Object.keys(member).sort()).toEqual(["allowedActions", "disabledReasons", "id", "isSelf", "nickname", "role"]);

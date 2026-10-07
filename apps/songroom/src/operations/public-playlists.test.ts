@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { v7 } from "uuid";
 import { afterEach, expect, it, vi } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding, publicPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { PublicPlaylists } from "./public-playlists.js";
@@ -20,6 +20,7 @@ class Adapter implements NeteaseAdapter {
   identity: (input: Extract<AdapterInput, { operation: "identity" }>) => Promise<AdapterResult<"identity">> = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "房主" } });
   create: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> = async () => ({ ok: true, data: { playlistId: "cloud-playlist" } });
   userPlaylists: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> = async () => ({ ok: true, data: { playlists: [], more: false } });
+  delete: (input: Extract<AdapterInput, { operation: "playlistDelete" }>) => Promise<AdapterResult<"playlistDelete">> = async () => ({ ok: true, data: { acknowledged: true } });
   async assertVendorIntegrity() {}
   async dispose() {}
   async call<I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> {
@@ -27,6 +28,7 @@ class Adapter implements NeteaseAdapter {
     if (input.operation === "identity") return await this.identity(input) as AdapterResult<I["operation"]>;
     if (input.operation === "playlistCreate") return await this.create(input) as AdapterResult<I["operation"]>;
     if (input.operation === "userPlaylists") return await this.userPlaylists(input) as AdapterResult<I["operation"]>;
+    if (input.operation === "playlistDelete") return await this.delete(input) as AdapterResult<I["operation"]>;
     throw new Error("unexpected adapter call");
   }
 }
@@ -763,3 +765,166 @@ it("同账号其他目标不受阻塞且未知创建不占执行槽", async () =
     operation: { status: "succeeded" }
   });
 });
+
+it("删房事务收敛在途操作、生成最小清理任务并在调度器中执行一次公共歌单删除", async () => {
+  const f = fixture();
+  const service = f.module();
+  service.start();
+
+  // 1. 先成功创建并绑定公共歌单
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  await service.settle();
+
+  const binding = f.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, f.roomId)).get();
+  expect(binding).toBeDefined();
+
+  // 2. 模拟删房事务
+  let cleanupId: string | null = null;
+  f.database.transaction(tx => {
+    const outcome = service.terminateRoomInTx(tx, f.roomId, "owner");
+    cleanupId = outcome.cleanupId;
+  });
+
+  expect(cleanupId).toBeDefined();
+  const cleanupRow = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId!)).get()!;
+  expect(cleanupRow.status).toBe("ready");
+  expect(cleanupRow.playlistId).toBe("cloud-playlist");
+  expect(cleanupRow.accountId).toBe("cloud-owner");
+
+  // 3. 调度清理执行一次删除
+  service.dispatchCleanup(cleanupId!);
+  await service.settle();
+
+  const updatedCleanup = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId!)).get()!;
+  expect(updatedCleanup.status).toBe("succeeded");
+  expect(f.adapter.inputs.some(i => i.operation === "playlistDelete")).toBe(true);
+});
+
+it("无公共歌单删房时不产生虚假清理任务", async () => {
+  const f = fixture();
+  const service = f.module();
+
+  let cleanupId: string | null = null;
+  f.database.transaction(tx => {
+    const outcome = service.terminateRoomInTx(tx, f.roomId, "owner");
+    cleanupId = outcome.cleanupId;
+  });
+
+  expect(cleanupId).toBeNull();
+  expect(f.database.select().from(publicPlaylistCleanup).all()).toHaveLength(0);
+});
+
+it("在途公共歌单创建已取得具体 ID 时删房转为清理任务，ID 未知时保留管理员证据不建虚假任务", async () => {
+  const f = fixture();
+  const service = f.module();
+
+  // 1. 模拟一个已取得 ID 的在途创建（confirming 阶段）
+  const opId1 = v7();
+  f.database.insert(operation).values({
+    id: opId1,
+    kind: "createPublicPlaylist",
+    userId: "owner",
+    roomId: f.roomId,
+    accountId: "cloud-owner",
+    authorizationId: f.authorizationId,
+    generation: 1,
+    status: "processing",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
+  f.database.insert(publicPlaylistCreation).values({
+    operationId: opId1,
+    name: "songroom-宿舍-公共",
+    step: "confirming",
+    playlistId: "cloud-created-in-flight"
+  }).run();
+
+  let cleanupId1: string | null = null;
+  f.database.transaction(tx => {
+    const outcome = service.terminateRoomInTx(tx, f.roomId, "owner");
+    cleanupId1 = outcome.cleanupId;
+  });
+
+  expect(cleanupId1).toBeDefined();
+  const cleanup1 = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId1!)).get()!;
+  expect(cleanup1.playlistId).toBe("cloud-created-in-flight");
+  expect(f.database.select().from(operation).where(eq(operation.id, opId1)).get()?.status).toBe("stopped");
+
+  // 2. 模拟 ID 未知但在途的创建（sending / unknown 阶段）
+  const secondRoom = v7();
+  f.database.insert(room).values({ id: secondRoom, name: "第二间", ownerUserId: "owner" }).run();
+  const opId2 = v7();
+  f.database.insert(operation).values({
+    id: opId2,
+    kind: "createPublicPlaylist",
+    userId: "owner",
+    roomId: secondRoom,
+    accountId: "cloud-owner",
+    authorizationId: f.authorizationId,
+    generation: 1,
+    status: "processing",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
+  f.database.insert(publicPlaylistCreation).values({
+    operationId: opId2,
+    name: "songroom-第二间-公共",
+    step: "unknown",
+    playlistId: null
+  }).run();
+
+  let cleanupId2: string | null = null;
+  f.database.transaction(tx => {
+    const outcome = service.terminateRoomInTx(tx, secondRoom, "owner");
+    cleanupId2 = outcome.cleanupId;
+  });
+
+  expect(cleanupId2).toBeNull();
+  expect(f.database.select().from(operation).where(eq(operation.id, opId2)).get()?.status).toBe("needsAdministrator");
+});
+
+it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知错误保留 awaitingConfirmation 不自动重发", async () => {
+  const f = fixture();
+  const service = f.module();
+  service.start();
+
+  // 1. 创建歌单
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  await service.settle();
+
+  // 2. 移除授权
+  f.database.update(neteaseAuthorization).set({ status: "waitingAuthorization", credentials: null }).run();
+
+  let cleanupId: string | null = null;
+  f.database.transaction(tx => {
+    const outcome = service.terminateRoomInTx(tx, f.roomId, "owner");
+    cleanupId = outcome.cleanupId;
+  });
+
+  expect(cleanupId).toBeDefined();
+  const cleanupRow = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId!)).get()!;
+  expect(cleanupRow.status).toBe("waitingAuthorization");
+
+  // dispatch 不会调用上游
+  f.adapter.inputs = [];
+  service.dispatchCleanup(cleanupId!);
+  await service.settle();
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistDelete")).toHaveLength(0);
+
+  // 3. 恢复授权但适配器返回 unknown 错误
+  f.database.update(neteaseAuthorization).set({
+    status: "active",
+    credentials: f.vault.encrypt("MUSIC_U=owner", { authorizationId: f.authorizationId, accountId: "cloud-owner", generation: 1 })
+  }).run();
+  f.database.update(publicPlaylistCleanup).set({ status: "ready" }).where(eq(publicPlaylistCleanup.id, cleanupId!)).run();
+
+  f.adapter.delete = async () => ({ ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } });
+  service.dispatchCleanup(cleanupId!);
+  await service.settle();
+
+  const unknownCleanup = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId!)).get()!;
+  expect(unknownCleanup.status).toBe("awaitingConfirmation");
+  expect(unknownCleanup.lastErrorCode).toBe("NETWORK_ERROR");
+});
+
+

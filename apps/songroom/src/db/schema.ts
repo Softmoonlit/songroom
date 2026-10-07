@@ -285,8 +285,26 @@ export const requesterTag = sqliteTable("requester_tag", {
   check("requester_tag_song_id_valid", sql`length(${table.songId}) > 0`)
 ]);
 
+export const publicPlaylistCleanup = sqliteTable("public_playlist_cleanup", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  creationOperationId: text("creation_operation_id").notNull(),
+  status: text("status", { enum: ["ready", "sending", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed"] }).notNull(),
+  lastErrorCode: text("last_error_code"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, table => [
+  uniqueIndex("public_playlist_cleanup_target_unique").on(table.accountId, table.playlistId),
+  index("public_playlist_cleanup_user_status_index").on(table.userId, table.status),
+  check("public_playlist_cleanup_account_id_valid", sql`length(${table.accountId}) > 0`),
+  check("public_playlist_cleanup_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
+  check("public_playlist_cleanup_status_valid", sql`${table.status} IN ('ready', 'sending', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed')`)
+]);
+
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, publicPlaylistCleanup };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

@@ -2,13 +2,13 @@ import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag } from "../db/schema.js";
+import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag, retiredRoomInvite, publicPlaylistCleanup } from "../db/schema.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
 import type { SessionPrincipal } from "../auth.js";
-import type { RoomCreateCommand, RoomCreateView, RoomSummary, RoomMember, roomShellView, roomListView, roomMembersView, RoomLeaveCommand, RoomLeaveResult, RoomMemberRemoveCommand } from "../shared/room-contracts.js";
-import { roomCreateCommand, roomCreateDisabledReason, roomRenameCommand, nicknameRenameCommand, roomLeaveCommand, roomLeaveResult, roomMemberRemoveCommand } from "../shared/room-contracts.js";
+import type { RoomCreateCommand, RoomCreateView, RoomSummary, RoomMember, roomShellView, roomListView, roomMembersView, RoomLeaveCommand, RoomLeaveResult, RoomMemberRemoveCommand, RoomDeleteCommand, RoomDeleteResult, roomDeletionView, publicPlaylistCleanupList } from "../shared/room-contracts.js";
+import { roomCreateCommand, roomCreateDisabledReason, roomRenameCommand, nicknameRenameCommand, roomLeaveCommand, roomLeaveResult, roomMemberRemoveCommand, roomDeleteCommand, roomDeleteResult } from "../shared/room-contracts.js";
 import type { z } from "zod";
 import type { EventStreamService } from "../events/event-stream.js";
 import type { PublicPlaylists } from "../operations/public-playlists.js";
@@ -22,9 +22,9 @@ export function assertRoomCapacity(counts: { owned: number; joined: number; tota
 
 function identityPermissions(role: "owner" | "roommate"): Pick<z.infer<typeof roomShellView>, "allowedActions" | "disabledReasons"> {
   return role === "owner"
-    ? { allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite"], disabledReasons: {} }
+    ? { allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"], disabledReasons: {} }
     : { allowedActions: ["renameNickname", "leaveRoom"],
-      disabledReasons: { renameRoom: "OWNER_ONLY", reviewApplications: "OWNER_ONLY", readInvite: "OWNER_ONLY" } };
+      disabledReasons: { renameRoom: "OWNER_ONLY", reviewApplications: "OWNER_ONLY", readInvite: "OWNER_ONLY", deleteRoom: "OWNER_ONLY" } };
 }
 
 export class Rooms {
@@ -288,5 +288,105 @@ export class Rooms {
       this.#notifyMemberTermination(roomId, outcome.targetUserId, outcome.version);
     }
     return outcome.members;
+  }
+
+  readDeletion(userId: string, roomId: string): z.infer<typeof roomDeletionView> {
+    const shell = this.readShell(userId, roomId);
+    if (shell.room.role !== "owner") {
+      throw new BusinessError(404, "ROOM_OWNER_REQUIRED", "只有当前房主可查看删除影响范围");
+    }
+    const memberCount = this.database.select({ value: count() })
+      .from(roomMembership).where(eq(roomMembership.roomId, roomId)).get()!.value;
+    const pendingApplicationCount = this.database.select({ value: count() })
+      .from(joinApplication).where(and(eq(joinApplication.roomId, roomId), eq(joinApplication.status, "pending"))).get()!.value;
+
+    const binding = this.publicPlaylists?.readPublicPlaylistBinding(roomId);
+    const publicPlaylist = binding ? {
+      id: binding.playlistId,
+      name: binding.name,
+      willCleanUp: true
+    } : null;
+
+    return {
+      room: { id: shell.room.id, name: shell.room.name },
+      version: shell.version,
+      memberCount,
+      pendingApplicationCount,
+      publicPlaylist,
+      allowedActions: ["deleteRoom"],
+      disabledReasons: {}
+    };
+  }
+
+  deleteRoom(userId: string, roomId: string, input: RoomDeleteCommand): RoomDeleteResult {
+    const command = roomDeleteCommand.parse(input);
+    const prepared = prepareCommand(userId, command.idempotencyKey, "deleteRoom", { roomId, version: command.version }, this.now());
+    const outcome = this.database.transaction(tx => {
+      const replay = readCommandResource(tx, prepared, this.now());
+      if (replay) {
+        const [rId, cId] = replay.split(":");
+        return { kind: "replayed" as const, roomId: rId, cleanupId: cId || null };
+      }
+
+      const current = this.readShell(userId, roomId);
+      if (current.room.role !== "owner") {
+        throw new BusinessError(404, "ROOM_OWNER_REQUIRED", "只有当前房主可删除房间");
+      }
+      if (command.version !== current.version) {
+        throw new BusinessError(409, "ROOM_VERSION_CONFLICT", "房间状态或成员信息已变化，请核对最新影响范围后再试");
+      }
+
+      const members = tx.select({ userId: roomMembership.userId }).from(roomMembership).where(eq(roomMembership.roomId, roomId)).all();
+      const memberUserIds = members.map(m => m.userId);
+
+      const { cleanupId } = this.publicPlaylists?.terminateRoomInTx(tx, roomId, userId) ?? { cleanupId: null };
+
+      tx.delete(joinApplication).where(eq(joinApplication.roomId, roomId)).run();
+      tx.delete(roomInvite).where(eq(roomInvite.roomId, roomId)).run();
+      tx.delete(retiredRoomInvite).where(eq(retiredRoomInvite.roomId, roomId)).run();
+      tx.delete(roomMembership).where(eq(roomMembership.roomId, roomId)).run();
+      tx.delete(room).where(eq(room.id, roomId)).run();
+
+      const receiptResourceId = cleanupId ? `${roomId}:${cleanupId}` : roomId;
+      recordCommandResource(tx, prepared, receiptResourceId, this.now());
+
+      return {
+        kind: "deleted" as const,
+        roomId,
+        cleanupId,
+        memberUserIds,
+        version: current.version + 1
+      };
+    }, { behavior: "immediate" });
+
+    if (outcome.kind === "deleted") {
+      this.eventStream?.notifyRoom(this.database, outcome.roomId, { type: "room", resourceId: outcome.roomId, version: outcome.version });
+      this.eventStream?.notifyRoom(this.database, outcome.roomId, { type: "permission", resourceId: outcome.roomId, version: outcome.version });
+      for (const mId of outcome.memberUserIds) {
+        this.eventStream?.notifyUser(mId, { type: "room", resourceId: outcome.roomId, version: outcome.version });
+        this.eventStream?.notifyUser(mId, { type: "permission", resourceId: outcome.roomId, version: outcome.version });
+      }
+
+      if (outcome.cleanupId) {
+        this.publicPlaylists?.dispatchCleanup(outcome.cleanupId);
+      }
+    }
+
+    let cleanupInfo: { id: string; status: string } | null = null;
+    if (outcome.cleanupId) {
+      const cRow = this.database.select({ id: publicPlaylistCleanup.id, status: publicPlaylistCleanup.status })
+        .from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, outcome.cleanupId)).get();
+      if (cRow) cleanupInfo = { id: cRow.id, status: cRow.status };
+    }
+
+    return {
+      ok: true,
+      roomId: outcome.roomId,
+      cleanup: cleanupInfo
+    };
+  }
+
+  readCleanups(userId: string): z.infer<typeof publicPlaylistCleanupList> {
+    return this.publicPlaylists?.readCleanups(userId) ?? { cleanups: [] };
   }
 }

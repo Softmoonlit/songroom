@@ -63,6 +63,14 @@ export function request<T>(
   return apiRequest(`/rooms${path}`, schema, signal, body, method);
 }
 
+export function cleanupRequest<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  return apiRequest(`/cleanups${path}`, schema, signal);
+}
+
 export async function apiRequest<T>(
   path: string,
   schema: z.ZodType<T>,

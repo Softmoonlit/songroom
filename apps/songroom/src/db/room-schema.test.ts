@@ -5,7 +5,7 @@ import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "./database.js";
 import { sql } from "drizzle-orm";
-import { neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
+import { neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistCleanup, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
 import { roomNickname } from "../shared/room-contracts.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase }> = [];
@@ -179,5 +179,74 @@ it("网易云授权状态约束支持 active 与 waitingAuthorization，拒绝�
   expect(() => database.update(neteaseAuthorization).set({
     status: "invalid" as any
   }).where(sql`${neteaseAuthorization.id} = ${authId}`).run()).toThrow();
+});
+
+it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束与级联删除", () => {
+  const { database } = fixture();
+  const cleanupId = v7();
+  const now = Date.now();
+
+  database.insert(publicPlaylistCleanup).values({
+    id: cleanupId,
+    userId: "owner",
+    accountId: "cloud-owner",
+    playlistId: "pl-delete-1",
+    creationOperationId: v7(),
+    status: "ready",
+    createdAt: now,
+    updatedAt: now
+  }).run();
+
+  // 重复插入相同 accountId 与 playlistId 抛出唯一性约束异常
+  expect(() => database.insert(publicPlaylistCleanup).values({
+    id: v7(),
+    userId: "owner",
+    accountId: "cloud-owner",
+    playlistId: "pl-delete-1",
+    creationOperationId: v7(),
+    status: "ready",
+    createdAt: now,
+    updatedAt: now
+  }).run()).toThrow();
+
+  // 相同账号不同歌单允许
+  expect(() => database.insert(publicPlaylistCleanup).values({
+    id: v7(),
+    userId: "owner",
+    accountId: "cloud-owner",
+    playlistId: "pl-delete-2",
+    creationOperationId: v7(),
+    status: "waitingAuthorization",
+    createdAt: now,
+    updatedAt: now
+  }).run()).not.toThrow();
+
+  // 非法状态拒绝
+  expect(() => database.insert(publicPlaylistCleanup).values({
+    id: v7(),
+    userId: "owner",
+    accountId: "cloud-owner",
+    playlistId: "pl-delete-3",
+    creationOperationId: v7(),
+    status: "invalid_status" as any,
+    createdAt: now,
+    updatedAt: now
+  }).run()).toThrow();
+
+  // 归属用户注销级联删除清理任务
+  const tempUser = v7();
+  database.insert(user).values({ id: tempUser, name: tempUser, email: `${tempUser}@example.com`, emailVerified: false, createdAt: new Date(), updatedAt: new Date() }).run();
+  database.insert(publicPlaylistCleanup).values({
+    id: v7(),
+    userId: tempUser,
+    accountId: "cloud-owner-temp",
+    playlistId: "pl-delete-temp",
+    creationOperationId: v7(),
+    status: "ready",
+    createdAt: now,
+    updatedAt: now
+  }).run();
+  database.delete(user).where(sql`${user.id} = ${tempUser}`).run();
+  expect(database.select().from(publicPlaylistCleanup).where(sql`${publicPlaylistCleanup.userId} = ${tempUser}`).all()).toHaveLength(0);
 });
 

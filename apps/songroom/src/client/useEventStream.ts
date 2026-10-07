@@ -160,6 +160,7 @@ export function useEventStream(enabled: boolean): void {
           switch (type) {
             case "room":
               void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+              void queryClient.invalidateQueries({ queryKey: ["public-playlist-cleanups"] });
               void queryClient.invalidateQueries({ queryKey: ["room-shell"] });
               void queryClient.invalidateQueries({ queryKey: ["room-applications"] });
               void queryClient.invalidateQueries({ queryKey: ["room-invite"] });
@@ -184,6 +185,9 @@ export function useEventStream(enabled: boolean): void {
               break;
             case "search":
               void queryClient.invalidateQueries({ queryKey: ["song-search", resourceId] });
+              break;
+            case "cleanup":
+              void queryClient.invalidateQueries({ queryKey: ["public-playlist-cleanups"] });
               break;
           }
         } catch {

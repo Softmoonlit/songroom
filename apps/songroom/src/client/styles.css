@@ -1592,4 +1592,103 @@ h1 {
   margin-top: 0.5rem;
 }
 
+.room-delete-action {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.deletion-impact-summary {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.deletion-impact-summary p {
+  margin: 4px 0;
+}
+
+.version-tag {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 6px !important;
+}
+
+.public-playlist-cleanups {
+  margin-top: 36px;
+}
+
+.public-playlist-cleanups h2 {
+  font-size: 1.25rem;
+  margin-bottom: 8px;
+}
+
+.cleanup-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cleanup-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cleanup-card h3 {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+}
+
+.cleanup-status {
+  margin: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cleanup-next-step {
+  margin: 6px 0 0 0;
+  color: #475569;
+  font-size: 0.88rem;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-badge.success {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.status-badge.warning {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.status-badge.danger {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.status-badge.info {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+
 

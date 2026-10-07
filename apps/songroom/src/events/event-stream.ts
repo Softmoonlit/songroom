@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
 import { roomMembership } from "../db/schema.js";
 
-export type SseInvalidationType = "room" | "snapshot" | "operation" | "permission" | "search";
+export type SseInvalidationType = "room" | "snapshot" | "operation" | "permission" | "search" | "cleanup";
 
 export interface SseInvalidationEvent {
   type: SseInvalidationType;

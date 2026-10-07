@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Music2 } from "lucide-react";
 import { Link } from "react-router";
-import { roomListView } from "../shared/room-contracts";
-import { queryOptions, request } from "./room-http";
+import { roomListView, publicPlaylistCleanupList } from "../shared/room-contracts";
+import { queryOptions, request, cleanupRequest } from "./room-http";
 import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
 import { joinApplicationList } from "../shared/invite-contracts";
@@ -64,6 +64,7 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
         </div>
       )}
       <PendingApplications sessionId={sessionId} />
+      <PublicPlaylistCleanups sessionId={sessionId} />
     </section>
   );
 }
@@ -84,4 +85,48 @@ function PendingApplications({ sessionId }: { sessionId: string }) {
       </li>)}
     </ul> : <p>暂无待处理加入申请。</p>}
   </section>;
+}
+
+function PublicPlaylistCleanups({ sessionId }: { sessionId: string }) {
+  const query = useQuery({
+    queryKey: ["public-playlist-cleanups", sessionId],
+    queryFn: ({ signal }) => cleanupRequest("/public-playlists", publicPlaylistCleanupList, signal),
+    ...queryOptions
+  });
+
+  if (!query.data || query.data.cleanups.length === 0) return null;
+
+  return (
+    <section className="public-playlist-cleanups" aria-labelledby="cleanups-heading">
+      <h2 id="cleanups-heading">公共歌单清理</h2>
+      <p>已删除房间专用公共歌单的网易云清理进度（与已删除房间分离，房间不可恢复）。</p>
+      <ul className="cleanup-list">
+        {query.data.cleanups.map(item => (
+          <li className="cleanup-card" key={item.id}>
+            <div>
+              <h3>网易云歌单 ID：{item.playlistId}</h3>
+              <p className="cleanup-status">
+                <strong>状态：</strong>
+                {item.status === "succeeded" && <span className="status-badge success">已完成删除</span>}
+                {item.status === "waitingAuthorization" && <span className="status-badge warning">等待重新授权</span>}
+                {item.status === "awaitingConfirmation" && <span className="status-badge warning">结果待确认</span>}
+                {item.status === "needsAdministrator" && <span className="status-badge danger">需管理员处理</span>}
+                {(item.status === "ready" || item.status === "sending") && <span className="status-badge info">正在清理…</span>}
+                {item.status === "failed" && <span className="status-badge danger">清理失败</span>}
+              </p>
+              <p className="cleanup-next-step">
+                <strong>下一步：</strong>
+                {item.status === "succeeded" && "专用公共歌单已在网易云成功删除，清理已完成。"}
+                {item.status === "waitingAuthorization" && "原网易云账号授权已失效，请前往账号设置重新授权以继续云端清理。"}
+                {item.status === "awaitingConfirmation" && "删除请求已发出，系统正在核查云端状态，无需重复操作。"}
+                {item.status === "needsAdministrator" && "删除被上游拒绝或遇到异常，请联系系统管理员核查。"}
+                {(item.status === "ready" || item.status === "sending") && "系统正在调度执行网易云删除请求，请稍候。"}
+                {item.status === "failed" && "清理遇到错误，等待后续处理。"}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }

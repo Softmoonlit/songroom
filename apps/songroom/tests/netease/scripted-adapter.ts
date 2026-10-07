@@ -9,6 +9,7 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
   playlistDetail?: (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => Promise<AdapterResult<"playlistDetail">> | AdapterResult<"playlistDetail">;
   userPlaylists?: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> | AdapterResult<"userPlaylists">;
   playlistCreate?: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> | AdapterResult<"playlistCreate">;
+  playlistDelete?: (input: Extract<AdapterInput, { operation: "playlistDelete" }>) => Promise<AdapterResult<"playlistDelete">> | AdapterResult<"playlistDelete">;
   #qr = 0;
   async assertVendorIntegrity() {}
   async dispose() {}
@@ -31,6 +32,10 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
       case "playlistCreate":
         if (this.playlistCreate) return await this.playlistCreate(input) as AdapterResult<I["operation"]>;
         data = { playlistId: `cloud-created-${this.inputs.length}` };
+        break;
+      case "playlistDelete":
+        if (this.playlistDelete) return await this.playlistDelete(input) as AdapterResult<I["operation"]>;
+        data = { acknowledged: true };
         break;
       case "playlistDetail":
         if (this.playlistDetail) return await this.playlistDetail(input) as AdapterResult<I["operation"]>;

@@ -24,11 +24,12 @@ export const roomCreateView = z.object({
 });
 export const roomCreateCommand = z.strictObject({ idempotencyKey: uuidv7, authorizationId: uuidv7, name: roomName, nickname: roomNickname });
 export const roomParams = z.strictObject({ roomId: uuidv7 });
-export const roomIdentityActions = z.enum(["renameRoom", "renameNickname", "reviewApplications", "readInvite", "leaveRoom"]);
+export const roomIdentityActions = z.enum(["renameRoom", "renameNickname", "reviewApplications", "readInvite", "leaveRoom", "deleteRoom"]);
 export const roomIdentityDisabledReasons = z.strictObject({
   renameRoom: z.literal("OWNER_ONLY").optional(),
   reviewApplications: z.literal("OWNER_ONLY").optional(),
-  readInvite: z.literal("OWNER_ONLY").optional()
+  readInvite: z.literal("OWNER_ONLY").optional(),
+  deleteRoom: z.literal("OWNER_ONLY").optional()
 });
 export const roomMemberAction = z.enum(["renameNickname", "removeMember"]);
 export const roomMemberDisabledReasons = z.strictObject({
@@ -50,6 +51,55 @@ export const roomLeaveCommand = z.strictObject({ idempotencyKey: uuidv7 });
 export const roomLeaveResult = z.strictObject({ ok: z.literal(true), roomId: uuidv7 });
 export const memberParams = z.strictObject({ roomId: uuidv7, memberId: uuidv7 });
 export const roomMemberRemoveCommand = z.strictObject({ idempotencyKey: uuidv7, version: z.number().int().positive() });
+
+export const roomDeletionPublicPlaylist = z.object({
+  id: z.string(),
+  name: z.string(),
+  willCleanUp: z.boolean()
+}).nullable();
+
+export const roomDeletionView = z.object({
+  room: z.object({ id: uuidv7, name: roomName }),
+  version: z.number().int().positive(),
+  memberCount: z.number().int().positive(),
+  pendingApplicationCount: z.number().int().nonnegative(),
+  publicPlaylist: roomDeletionPublicPlaylist,
+  allowedActions: z.array(z.literal("deleteRoom")),
+  disabledReasons: z.strictObject({})
+});
+
+export const roomDeleteCommand = z.strictObject({
+  idempotencyKey: uuidv7,
+  version: z.number().int().positive()
+});
+
+export const roomDeleteResult = z.strictObject({
+  ok: z.literal(true),
+  roomId: uuidv7,
+  cleanup: z.object({
+    id: uuidv7,
+    status: z.string()
+  }).nullable()
+});
+
+export const publicPlaylistCleanupStatus = z.enum([
+  "ready", "sending", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed"
+]);
+
+export const publicPlaylistCleanupItem = z.object({
+  id: uuidv7,
+  accountId: z.string(),
+  playlistId: z.string(),
+  status: publicPlaylistCleanupStatus,
+  lastErrorCode: z.string().nullable(),
+  createdAt: z.number().int().positive(),
+  updatedAt: z.number().int().positive()
+});
+
+export const publicPlaylistCleanupList = z.object({
+  cleanups: z.array(publicPlaylistCleanupItem)
+});
+
 export type RoomSummary = z.infer<typeof roomSummary>;
 export type RoomCreateCommand = z.infer<typeof roomCreateCommand>;
 export type RoomCreateView = z.infer<typeof roomCreateView>;
@@ -57,3 +107,8 @@ export type RoomMember = z.infer<typeof roomMember>;
 export type RoomLeaveCommand = z.infer<typeof roomLeaveCommand>;
 export type RoomLeaveResult = z.infer<typeof roomLeaveResult>;
 export type RoomMemberRemoveCommand = z.infer<typeof roomMemberRemoveCommand>;
+export type RoomDeletionView = z.infer<typeof roomDeletionView>;
+export type RoomDeleteCommand = z.infer<typeof roomDeleteCommand>;
+export type RoomDeleteResult = z.infer<typeof roomDeleteResult>;
+export type PublicPlaylistCleanupItem = z.infer<typeof publicPlaylistCleanupItem>;
+export type PublicPlaylistCleanupList = z.infer<typeof publicPlaylistCleanupList>;
