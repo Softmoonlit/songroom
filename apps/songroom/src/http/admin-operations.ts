@@ -161,7 +161,7 @@ export function registerAdminOperationRoutes(
     },
     async (request, reply) => {
       const adminUserId = await requireAdminSession(auth, config, request, reply);
-      return service.resumeRiskPause(adminUserId, request.params.id, request.body);
+      return await service.resumeRiskPause(adminUserId, request.params.id, request.body);
     }
   );
 }

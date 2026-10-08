@@ -352,7 +352,7 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
     });
     expect(showResult.ok).toBe(true);
     expect(showResult.detail?.id).toBe(opId);
-    expect(showResult.detail?.songId).toBe(songId);
+    expect(showResult.detail?.playlistId).toBe(playlistId);
     expect(showResult.detail?.impactDescription).toContain("解除该公共歌单的目标写入阻塞");
 
     // 4. 管理员通过 CLI 处置终结该操作
@@ -393,7 +393,8 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
       expect(audit.nextStatus).toBe("stopped");
       expect(audit.result).toBe("succeeded");
       expect(audit.reason).toBe("已核实上游读回三轮超时，终结待确认状态以解除目标阻塞");
-      expect(audit.details).toContain(songId);
+      expect(audit.details).toContain(playlistId);
+      expect(audit.details).not.toContain(songId);
     } finally {
       verifyDb.$client.close();
     }
@@ -871,7 +872,19 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
   });
 
   it("风控恢复：核验当前真实账号与有效授权后解除暂停，重启无法隐式恢复", async () => {
-    const env = await setupTestApp();
+    let identityCallCount = 0;
+    const fakeAdapter: NeteaseAdapter = {
+      assertVendorIntegrity: async () => {},
+      dispose: async () => {},
+      call: async (input: any) => {
+        if (input.operation === "identity") {
+          identityCallCount++;
+          return { ok: true, data: { accountId: "netease-user-risk-1", nickname: "风控用户" } } as any;
+        }
+        return { ok: true, data: {} } as any;
+      }
+    };
+    const env = await setupTestApp({ adapter: fakeAdapter });
 
     const adminRegRes = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
       method: "POST",
@@ -932,6 +945,7 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
 
     // 验证账号 paused 已解除
     expect(env.app.scheduler.paused(accountId)).toBe(false);
+    expect(identityCallCount).toBeGreaterThanOrEqual(1);
 
     const verifyDb = openDatabase(env.dbPath);
     try {
@@ -1033,5 +1047,180 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
     } finally {
       verifyDb.$client.close();
     }
+  });
+
+  it("边界防护：自动补查尚未结束时拒绝管理员提前终结点歌 (CHECK_IN_PROGRESS)", async () => {
+    const env = await setupTestApp();
+
+    const adminRegRes = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { origin: env.config.baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "admin-password-123" })
+    });
+    const adminUserId = ((await adminRegRes.json()) as { user: { id: string } }).user.id;
+    await env.restartApp([adminUserId]);
+
+    const userId = v7();
+    const roomId = v7();
+    const opId = v7();
+    const accountId = "netease-user-pending-check";
+
+    const db = openDatabase(env.dbPath);
+    try {
+      db.insert(user).values({ id: userId, name: "Owner", email: "check@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() }).run();
+      db.insert(room).values({ id: roomId, ownerUserId: userId, name: "补查房间" }).run();
+
+      db.insert(operation).values({
+        id: opId,
+        kind: "requestPublicSong",
+        userId,
+        roomId,
+        accountId,
+        authorizationId: v7(),
+        generation: 1,
+        status: "awaitingConfirmation",
+        errorCode: "MODULE_ERROR",
+        version: 1,
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now() - 1000
+      }).run();
+
+      // 第 1 轮且有下一次补查时间，非长期未知
+      db.insert(publicSongRequest).values({
+        operationId: opId,
+        songId: "song-check",
+        name: "补查中歌曲",
+        artists: "歌手",
+        album: "专辑",
+        step: "unknown",
+        playlistId: "pl-check",
+        bindingGeneration: 1,
+        checkRound: 1,
+        nextCheckAt: Date.now() + 30000
+      }).run();
+    } finally {
+      db.$client.close();
+    }
+
+    const actionResult = await runAdminAbnormalAction(env.config, "resolve-write", opId, {
+      isTTY: true,
+      fetch: env.trustedFetch,
+      prompts: {
+        adminEmail: async () => "admin@example.com",
+        adminPassword: async () => "admin-password-123",
+        reason: async () => "尝试提前终结",
+        confirm: async () => true
+      }
+    });
+
+    expect(actionResult.ok).toBe(false);
+    expect(actionResult.status).toBe("failed");
+    expect(actionResult.message).toContain("自动补查尚未结束");
+  });
+
+  it("边界防护：未核实原目标仍存活时拒绝管理员盲目授权单次重试删除 (TARGET_NOT_ACTIVE)", async () => {
+    const env = await setupTestApp();
+
+    const adminRegRes = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { origin: env.config.baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "admin-password-123" })
+    });
+    const adminUserId = ((await adminRegRes.json()) as { user: { id: string } }).user.id;
+    await env.restartApp([adminUserId]);
+
+    const userId = v7();
+    const cleanupId = v7();
+    const accountId = "netease-user-cleanup-check";
+
+    const db = openDatabase(env.dbPath);
+    try {
+      db.insert(user).values({ id: userId, name: "Owner", email: "clean@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() }).run();
+
+      // checkFact 为 unknown_delete_result，尚未核实目标存活
+      db.insert(publicPlaylistCleanup).values({
+        id: cleanupId,
+        userId,
+        accountId,
+        playlistId: "pl-clean-unverified",
+        hasSent: true,
+        retryAuthorized: false,
+        checkFact: "unknown_delete_result",
+        status: "awaitingConfirmation",
+        version: 1,
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now() - 1000
+      }).run();
+    } finally {
+      db.$client.close();
+    }
+
+    const actionResult = await runAdminAbnormalAction(env.config, "authorize-cleanup", cleanupId, {
+      isTTY: true,
+      fetch: env.trustedFetch,
+      prompts: {
+        adminEmail: async () => "admin@example.com",
+        adminPassword: async () => "admin-password-123",
+        reason: async () => "未核实存活尝试重试",
+        confirm: async () => true
+      }
+    });
+
+    expect(actionResult.ok).toBe(false);
+    expect(actionResult.status).toBe("failed");
+    expect(actionResult.message).toContain("未核实原目标仍存活");
+  });
+
+  it("边界防护：非上游明确拒绝删除状态下拒绝记录手工清理并触发只读核验 (INVALID_STATE)", async () => {
+    const env = await setupTestApp();
+
+    const adminRegRes = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { origin: env.config.baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "admin-password-123" })
+    });
+    const adminUserId = ((await adminRegRes.json()) as { user: { id: string } }).user.id;
+    await env.restartApp([adminUserId]);
+
+    const userId = v7();
+    const cleanupId = v7();
+    const accountId = "netease-user-manual-check";
+
+    const db = openDatabase(env.dbPath);
+    try {
+      db.insert(user).values({ id: userId, name: "Owner", email: "manual@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() }).run();
+
+      // status 是 ready，从未上游明确拒绝
+      db.insert(publicPlaylistCleanup).values({
+        id: cleanupId,
+        userId,
+        accountId,
+        playlistId: "pl-clean-ready",
+        hasSent: false,
+        retryAuthorized: false,
+        checkFact: null,
+        status: "ready",
+        version: 1,
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now() - 1000
+      }).run();
+    } finally {
+      db.$client.close();
+    }
+
+    const actionResult = await runAdminAbnormalAction(env.config, "verify-cleanup", cleanupId, {
+      isTTY: true,
+      fetch: env.trustedFetch,
+      prompts: {
+        adminEmail: async () => "admin@example.com",
+        adminPassword: async () => "admin-password-123",
+        reason: async () => "未明确拒绝尝试手工核验",
+        confirm: async () => true
+      }
+    });
+
+    expect(actionResult.ok).toBe(false);
+    expect(actionResult.status).toBe("failed");
+    expect(actionResult.message).toContain("仅在上游明确拒绝删除后");
   });
 });

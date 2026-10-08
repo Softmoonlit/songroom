@@ -1946,6 +1946,56 @@ export class PublicPlaylists {
     };
   }
 
+  restoreCreatedBindingInTx(tx: any, roomId: string, accountId: string, playlistId: string, name: string, operationId: string): void {
+    tx.insert(publicPlaylistBinding)
+      .values({
+        roomId,
+        accountId,
+        playlistId,
+        name,
+        creationOperationId: operationId,
+        generation: 1
+      })
+      .run();
+
+    tx.insert(playlistSnapshot)
+      .values({
+        accountId,
+        playlistId,
+        snapshotVersion: 0,
+        createdAt: this.now(),
+        updatedAt: this.now()
+      })
+      .onConflictDoNothing()
+      .run();
+
+    tx.update(publicPlaylistCreation)
+      .set({
+        playlistId,
+        step: "succeeded",
+        recovered: true
+      })
+      .where(eq(publicPlaylistCreation.operationId, operationId))
+      .run();
+
+    tx.update(operation)
+      .set({
+        status: "succeeded",
+        accountId: null,
+        authorizationId: null,
+        generation: null,
+        version: sql`${operation.version} + 1`,
+        updatedAt: this.now()
+      })
+      .where(eq(operation.id, operationId))
+      .run();
+
+    tx.update(room)
+      .set({ version: sql`${room.version} + 1` })
+      .where(eq(room.id, roomId))
+      .run();
+  }
+
   ensureCleanupInTx(tx: any, userId: string, accountId: string, playlistId: string, creationOperationId?: string | null): string {
     const existing = tx.select().from(publicPlaylistCleanup)
       .where(and(eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.playlistId, playlistId)))

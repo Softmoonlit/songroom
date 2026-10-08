@@ -18,6 +18,7 @@ type MemoryTask<T = any> = {
   accountId: string;
   createdAt: number;
   lastGranted: number;
+  allowPaused?: boolean;
   run: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: any) => void;
@@ -65,11 +66,14 @@ export class UpstreamScheduler {
     this.#handlers.set(kind, handler);
   }
 
-  executeMemoryTask<T>(accountId: string, run: () => Promise<T>): Promise<T> {
+  executeMemoryTask<T>(accountId: string, run: () => Promise<T>, options?: { allowPaused?: boolean }): Promise<T> {
     if (this.#stopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
-    if (this.paused(accountId)) throw new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号已暂停，请联系管理员");
-    const code = this.admissionCode(accountId);
-    if (code) throw new BusinessError(409, code, code === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
+    const allowPaused = options?.allowPaused ?? false;
+    if (!allowPaused && this.paused(accountId)) throw new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号已暂停，请联系管理员");
+    if (!allowPaused) {
+      const code = this.admissionCode(accountId);
+      if (code) throw new BusinessError(409, code, code === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
+    }
     const id = `mem-${v7()}`;
     const now = this.now();
     return new Promise<T>((resolve, reject) => {
@@ -78,6 +82,7 @@ export class UpstreamScheduler {
         accountId,
         createdAt: now,
         lastGranted: now,
+        allowPaused,
         run,
         resolve,
         reject
@@ -97,7 +102,7 @@ export class UpstreamScheduler {
     return this.database.select().from(upstreamAccount).where(eq(upstreamAccount.accountId, accountId)).get()?.paused ?? false;
   }
 
-  pause(accountId: string): void {
+  pause(accountId: string, reason?: string): void {
     for (let i = this.#memoryQueue.length - 1; i >= 0; i--) {
       if (this.#memoryQueue[i].accountId === accountId) {
         const [cancelled] = this.#memoryQueue.splice(i, 1);
@@ -106,8 +111,8 @@ export class UpstreamScheduler {
     }
     let notifyList: Array<{ roomId: string; opId: string; opVersion: number; roomVersion: number }> = [];
     this.database.transaction(tx => {
-      tx.insert(upstreamAccount).values({ accountId, paused: true })
-        .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { paused: true } }).run();
+      tx.insert(upstreamAccount).values({ accountId, paused: true, pauseReason: reason ?? "RATE_LIMITED" })
+        .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { paused: true, pauseReason: reason ?? "RATE_LIMITED" } }).run();
       const affected = tx.select({ id: operation.id, roomId: operation.roomId }).from(operation)
         .where(and(eq(operation.accountId, accountId), eq(operation.status, "queued"))).all();
       tx.update(operation).set({
@@ -134,7 +139,7 @@ export class UpstreamScheduler {
   resume(accountId: string): void {
     this.database.transaction(tx => {
       tx.update(upstreamAccount)
-        .set({ paused: false })
+        .set({ paused: false, pauseReason: null })
         .where(eq(upstreamAccount.accountId, accountId))
         .run();
     });
@@ -214,11 +219,11 @@ export class UpstreamScheduler {
     });
   }
 
-  #canStart(accountId: string): boolean {
+  #canStart(accountId: string, allowPaused = false): boolean {
     const accounts = this.database.select().from(upstreamAccount).all();
     const account = accounts.find(row => row.accountId === accountId);
     return accounts.filter(row => row.runningOperationId).length < 2
-      && !account?.paused && !account?.runningOperationId && (!account || account.nextStartAt <= this.now());
+      && (allowPaused || !account?.paused) && !account?.runningOperationId && (!account || account.nextStartAt <= this.now());
   }
 
   #claimNext(): ClaimedTask | undefined {
@@ -226,8 +231,8 @@ export class UpstreamScheduler {
       let memoryCandidateIndex = -1;
       for (let i = 0; i < this.#memoryQueue.length; i++) {
         const task = this.#memoryQueue[i];
-        if (this.paused(task.accountId)) continue;
-        if (this.#canStart(task.accountId)) {
+        if (!task.allowPaused && this.paused(task.accountId)) continue;
+        if (this.#canStart(task.accountId, task.allowPaused)) {
           memoryCandidateIndex = i;
           break;
         }

@@ -8,6 +8,7 @@ import {
   runAdminAbnormalList,
   runAdminAbnormalShow,
   runAdminAbnormalAction,
+  ABNORMAL_ACTION_DEFINITIONS,
   type AbnormalActionType,
   type AdminAbnormalCliOptions
 } from "./admin/abnormal-operations-cli.js";
@@ -64,18 +65,11 @@ export async function runCli(
       }
       return runAdminAbnormalShow(config, targetId, options);
     }
-    const validActions: Record<string, AbnormalActionType> = {
-      "resolve-write": "resolve-write",
-      "resolve-create": "resolve-create",
-      "authorize-cleanup": "authorize-cleanup",
-      "verify-cleanup": "verify-cleanup",
-      "resume-risk": "resume-risk"
-    };
-    if (subAction && subAction in validActions) {
+    if (subAction && subAction in ABNORMAL_ACTION_DEFINITIONS) {
       if (!targetId) {
         throw new CliError("CLI_USAGE", `用法：admin abnormal ${subAction} <id>`);
       }
-      return runAdminAbnormalAction(config, validActions[subAction]!, targetId, options);
+      return runAdminAbnormalAction(config, subAction as AbnormalActionType, targetId, options);
     }
     throw new CliError("CLI_USAGE", "用法：admin abnormal list | show <id> | resolve-write <id> | resolve-create <id> | authorize-cleanup <id> | verify-cleanup <id> | resume-risk <accountId>");
   }

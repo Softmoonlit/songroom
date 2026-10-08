@@ -1,11 +1,10 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
 import {
   adminAuditLog,
   neteaseAuthorization,
   operation,
-  playlistSnapshot,
   publicPlaylistBinding,
   publicPlaylistCleanup,
   publicPlaylistCreation,
@@ -15,6 +14,7 @@ import {
 } from "../db/schema.js";
 import { BusinessError } from "../shared/errors.js";
 import type { CredentialVault } from "../netease/credentials.js";
+import type { NeteaseAdapter } from "../netease/protocol.js";
 import type { EventStreamService } from "../events/event-stream.js";
 import type {
   AbnormalActionResult,
@@ -41,6 +41,7 @@ export class AbnormalOperationsService {
     private readonly database: AppDatabase,
     private readonly playlists: PublicPlaylists,
     private readonly scheduler: UpstreamScheduler,
+    private readonly adapter: NeteaseAdapter,
     private readonly vault: CredentialVault,
     private readonly eventStream: EventStreamService,
     private readonly now: () => number = () => Date.now()
@@ -49,7 +50,7 @@ export class AbnormalOperationsService {
   listAbnormalOperations(): AbnormalOperationSummary[] {
     const list: AbnormalOperationSummary[] = [];
 
-    // 1. 普通未知歌曲写入 (长期未知待确认)
+    // 1. 普通未知歌曲写入 (必须是三轮补查结束后的长期未知待确认)
     const songOps = this.database
       .select({
         id: operation.id,
@@ -58,12 +59,18 @@ export class AbnormalOperationsService {
         version: operation.version,
         updatedAt: operation.updatedAt,
         playlistId: publicSongRequest.playlistId,
-        songId: publicSongRequest.songId,
         checkRound: publicSongRequest.checkRound
       })
       .from(operation)
       .innerJoin(publicSongRequest, eq(publicSongRequest.operationId, operation.id))
-      .where(and(eq(operation.kind, "requestPublicSong"), eq(operation.status, "awaitingConfirmation")))
+      .where(
+        and(
+          eq(operation.kind, "requestPublicSong"),
+          eq(operation.status, "awaitingConfirmation"),
+          sql`${publicSongRequest.checkRound} >= 3`,
+          isNull(publicSongRequest.nextCheckAt)
+        )
+      )
       .orderBy(desc(operation.updatedAt))
       .all();
 
@@ -75,7 +82,7 @@ export class AbnormalOperationsService {
         targetId: op.playlistId,
         status: op.status,
         version: op.version,
-        summary: `长期未知写入 (第 ${op.checkRound}/3 轮核查已结束，目标歌单: ${op.playlistId}, 歌曲: ${op.songId})`,
+        summary: `长期未知写入已停止自动补查 (第 ${op.checkRound}/3 轮已结束，目标歌单: ${op.playlistId})`,
         updatedAt: op.updatedAt
       });
     }
@@ -146,7 +153,7 @@ export class AbnormalOperationsService {
         targetId: acc.accountId,
         status: "paused",
         version: null,
-        summary: "网易云账号已风控暂停 (上游调度已阻塞)",
+        summary: `网易云账号已风控暂停 (原因: ${acc.pauseReason ?? "RATE_LIMITED"})`,
         updatedAt: acc.nextStartAt
       });
     }
@@ -170,7 +177,6 @@ export class AbnormalOperationsService {
             version: op.version,
             roomId: op.roomId,
             playlistId: req.playlistId,
-            songId: req.songId,
             checkRound: req.checkRound,
             lastErrorCode: op.errorCode,
             impactDescription: "终结后解除该公共歌单的目标写入阻塞，不宣称失败、不回滚、不补写；后续业务必须先刷新并使用新幂等键",
@@ -236,6 +242,7 @@ export class AbnormalOperationsService {
         targetId: acc.accountId,
         status: "paused",
         version: null,
+        pauseReason: acc.pauseReason ?? "RATE_LIMITED",
         impactDescription: "风控暂停恢复：重新核实当前真实账号与有效授权，解除该账号的上游调度阻塞",
         updatedAt: acc.nextStartAt
       };
@@ -247,7 +254,7 @@ export class AbnormalOperationsService {
   resolveSongWrite(
     adminUserId: string,
     operationId: string,
-    input: { reason: string; expectedVersion?: number }
+    input: { reason: string; expectedVersion: number }
   ): AbnormalActionResult {
     const validatedReason = validateAdminReason(input.reason);
 
@@ -258,13 +265,17 @@ export class AbnormalOperationsService {
     if (op.status !== "awaitingConfirmation") {
       throw new BusinessError(409, "INVALID_STATUS", `当前操作状态为 ${op.status}，非待确认状态无法由管理员终结`);
     }
-    if (input.expectedVersion !== undefined && op.version !== input.expectedVersion) {
+    if (op.version !== input.expectedVersion) {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
     }
 
     const req = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, operationId)).get();
     if (!req) {
       throw new BusinessError(404, "NOT_FOUND", "未找到对应的点歌请求详情");
+    }
+    // 只有在自动补查 3 轮均已结束且不再调度时，才属于规范定义的“长期未知”
+    if (req.checkRound < 3 || req.nextCheckAt !== null) {
+      throw new BusinessError(409, "CHECK_IN_PROGRESS", "自动补查尚未结束，非长期未知状态禁止提前终结");
     }
 
     const nextVersion = op.version + 1;
@@ -289,6 +300,7 @@ export class AbnormalOperationsService {
         .where(eq(publicSongRequest.operationId, operationId))
         .run();
 
+      // 严格脱敏：绝不记录昵称、歌曲、凭据、Cookie 或完整错误响应
       tx.insert(adminAuditLog)
         .values({
           id: v7(),
@@ -300,7 +312,7 @@ export class AbnormalOperationsService {
           previousStatus: "awaitingConfirmation",
           nextStatus: "stopped",
           result: "succeeded",
-          details: JSON.stringify({ playlistId: req.playlistId, songId: req.songId }),
+          details: JSON.stringify({ playlistId: req.playlistId, operationKind: "requestPublicSong" }),
           createdAt: new Date(this.now())
         })
         .run();
@@ -326,7 +338,7 @@ export class AbnormalOperationsService {
   resolvePlaylistCreate(
     adminUserId: string,
     operationId: string,
-    input: { reason: string; expectedVersion?: number }
+    input: { reason: string; expectedVersion: number }
   ): AbnormalActionResult {
     const validatedReason = validateAdminReason(input.reason);
 
@@ -337,7 +349,7 @@ export class AbnormalOperationsService {
     if (op.status !== "needsAdministrator") {
       throw new BusinessError(409, "INVALID_STATUS", `当前操作状态为 ${op.status}，非需管理员处理状态`);
     }
-    if (input.expectedVersion !== undefined && op.version !== input.expectedVersion) {
+    if (op.version !== input.expectedVersion) {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
     }
 
@@ -409,55 +421,9 @@ export class AbnormalOperationsService {
     const nextVersion = op.version + 1;
 
     if (isBusinessValid) {
-      // 业务仍有效：恢复绑定
+      // 业务仍有效：恢复绑定 (下沉至领域对象 PublicPlaylists 处理，维护单一职责)
       this.database.transaction(tx => {
-        tx.insert(publicPlaylistBinding)
-          .values({
-            roomId: op.roomId,
-            accountId: op.accountId!,
-            playlistId: candidate.id,
-            name: candidate.name,
-            creationOperationId: op.id,
-            generation: 1
-          })
-          .run();
-
-        tx.insert(playlistSnapshot)
-          .values({
-            accountId: op.accountId!,
-            playlistId: candidate.id,
-            snapshotVersion: 0,
-            createdAt: this.now(),
-            updatedAt: this.now()
-          })
-          .onConflictDoNothing()
-          .run();
-
-        tx.update(publicPlaylistCreation)
-          .set({
-            playlistId: candidate.id,
-            step: "succeeded",
-            recovered: true
-          })
-          .where(eq(publicPlaylistCreation.operationId, operationId))
-          .run();
-
-        tx.update(operation)
-          .set({
-            status: "succeeded",
-            accountId: null,
-            authorizationId: null,
-            generation: null,
-            version: nextVersion,
-            updatedAt: this.now()
-          })
-          .where(eq(operation.id, operationId))
-          .run();
-
-        tx.update(room)
-          .set({ version: sql`${room.version} + 1` })
-          .where(eq(room.id, op.roomId))
-          .run();
+        this.playlists.restoreCreatedBindingInTx(tx, op.roomId, op.accountId!, candidate.id, candidate.name, op.id);
 
         tx.insert(adminAuditLog)
           .values({
@@ -565,7 +531,7 @@ export class AbnormalOperationsService {
   authorizeCleanupRetry(
     adminUserId: string,
     cleanupId: string,
-    input: { reason: string; expectedVersion?: number }
+    input: { reason: string; expectedVersion: number }
   ): AbnormalActionResult {
     const validatedReason = validateAdminReason(input.reason);
 
@@ -576,16 +542,13 @@ export class AbnormalOperationsService {
     if (cleanup.status === "succeeded") {
       throw new BusinessError(409, "INVALID_STATUS", "该清理任务已经完成，无需授权重试");
     }
-    if (input.expectedVersion !== undefined && cleanup.version !== input.expectedVersion) {
+    if (cleanup.version !== input.expectedVersion) {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
     }
 
-    if (
-      cleanup.checkFact === "tombstone_confirmed_deleted" ||
-      cleanup.checkFact === "not_found_confirmed" ||
-      cleanup.checkFact === "deleted_confirmed"
-    ) {
-      throw new BusinessError(409, "TARGET_ALREADY_DELETED", "目标歌单已确认删除，无需重试");
+    // 只有在核实原具体目标仍存活（checkFact === target_still_active）且仍应清理后，才允许管理员明确授权单次重试删除
+    if (cleanup.checkFact !== "target_still_active") {
+      throw new BusinessError(409, "TARGET_NOT_ACTIVE", "未核实原目标仍存活且仍应清理，禁止授权重试删除");
     }
 
     const nextVersion = cleanup.version + 1;
@@ -634,7 +597,7 @@ export class AbnormalOperationsService {
   verifyManualCleanup(
     adminUserId: string,
     cleanupId: string,
-    input: { reason: string; expectedVersion?: number }
+    input: { reason: string; expectedVersion: number }
   ): AbnormalActionResult {
     const validatedReason = validateAdminReason(input.reason);
 
@@ -645,8 +608,16 @@ export class AbnormalOperationsService {
     if (cleanup.status === "succeeded") {
       throw new BusinessError(409, "INVALID_STATUS", "该清理任务已经完成，无需手工核验");
     }
-    if (input.expectedVersion !== undefined && cleanup.version !== input.expectedVersion) {
+    if (cleanup.version !== input.expectedVersion) {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
+    }
+
+    // 只有在上游明确拒绝后（needsAdministrator 且 TARGET_PERMISSION / upstream_rejected），才允许记录手工处理
+    const isExplicitlyRejected =
+      cleanup.status === "needsAdministrator" &&
+      (cleanup.lastErrorCode === "TARGET_PERMISSION" || cleanup.checkFact === "upstream_rejected");
+    if (!isExplicitlyRejected) {
+      throw new BusinessError(409, "INVALID_STATE", "仅在上游明确拒绝删除后，才可记录手工处理并触发只读核验");
     }
 
     const nextVersion = cleanup.version + 1;
@@ -691,11 +662,11 @@ export class AbnormalOperationsService {
     };
   }
 
-  resumeRiskPause(
+  async resumeRiskPause(
     adminUserId: string,
     accountId: string,
     input: { reason: string }
-  ): AbnormalActionResult {
+  ): Promise<AbnormalActionResult> {
     const validatedReason = validateAdminReason(input.reason);
 
     const acc = this.database.select().from(upstreamAccount).where(eq(upstreamAccount.accountId, accountId)).get();
@@ -712,14 +683,32 @@ export class AbnormalOperationsService {
       throw new BusinessError(409, "AUTH_UNAVAILABLE", "该账号在系统中无有效活跃授权，无法恢复风控暂停");
     }
 
+    let cookie: string;
     try {
-      this.vault.decrypt(auth.credentials, {
+      cookie = this.vault.decrypt(auth.credentials, {
         authorizationId: auth.id,
         accountId: auth.accountId,
         generation: auth.generation
       });
     } catch {
       throw new BusinessError(409, "AUTH_UNAVAILABLE", "该账号授权凭据无法解密核验，无法恢复风控暂停");
+    }
+
+    // 重新核实当前真实账号：调度执行一次只读 identity 调用，核实网易云服务端当前识别的账号
+    try {
+      const verifyResult = await this.scheduler.executeMemoryTask(
+        accountId,
+        async () => {
+          return this.adapter.call({ operation: "identity", cookie });
+        },
+        { allowPaused: true }
+      );
+      if (!verifyResult.ok || verifyResult.data.accountId !== accountId) {
+        throw new BusinessError(409, "AUTH_UNAVAILABLE", "上游真实账号核验未通过，无法恢复风控暂停");
+      }
+    } catch (err) {
+      if (err instanceof BusinessError) throw err;
+      throw new BusinessError(409, "AUTH_UNAVAILABLE", "上游真实账号核验通信失败，无法恢复风控暂停");
     }
 
     this.database.transaction(tx => {
@@ -734,7 +723,7 @@ export class AbnormalOperationsService {
           previousStatus: "paused",
           nextStatus: "active",
           result: "succeeded",
-          details: JSON.stringify({ accountId }),
+          details: JSON.stringify({ accountId, pauseReason: acc.pauseReason ?? "RATE_LIMITED" }),
           createdAt: new Date(this.now())
         })
         .run();

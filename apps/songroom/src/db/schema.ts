@@ -213,7 +213,8 @@ export const upstreamAccount = sqliteTable("upstream_account", {
   accountId: text("account_id").primaryKey(),
   nextStartAt: integer("next_start_at").notNull().default(0),
   runningOperationId: text("running_operation_id"),
-  paused: integer("paused", { mode: "boolean" }).notNull().default(false)
+  paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+  pauseReason: text("pause_reason")
 }, table => [check("upstream_account_next_start_valid", sql`${table.nextStartAt} >= 0`)]);
 
 // 规范化云端歌单权威快照元数据；跨房间绑定共享同一记录。

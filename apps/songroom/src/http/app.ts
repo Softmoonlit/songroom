@@ -80,7 +80,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const scheduler = new UpstreamScheduler(database, eventStream, dependencies.now);
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
-  const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, vault, eventStream, dependencies.now);
+  const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, adapter, vault, eventStream, dependencies.now);
   binding.onRevoke = userId => playlists.onOwnerRevoked(userId);
   binding.onReauthorize = (userId, authId, accountId, generation) => playlists.onReauthorized(userId, authId, accountId, generation);
   let state: RuntimeState = "starting";

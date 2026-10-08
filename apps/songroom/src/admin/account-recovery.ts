@@ -8,6 +8,7 @@ import { adminAuditLog } from "../db/schema.js";
 
 export type AdminCliErrorCode =
   | "NON_TTY"
+  | "CLI_USAGE"
   | "INSECURE_PROTOCOL"
   | "INVALID_REASON"
   | "INVALID_PASSWORD"
