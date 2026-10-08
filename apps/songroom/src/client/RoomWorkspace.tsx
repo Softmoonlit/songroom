@@ -245,6 +245,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     return (
       <section className="rooms-page">
         <Link className="back-link" to="/rooms">
+          <ArrowLeft size={16} aria-hidden="true" />
           返回房间列表
         </Link>
         <QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} />
@@ -255,19 +256,21 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     <section className={`room-workspace${keyboardOpen ? " keyboard-open" : ""}`}>
       <aside className="room-context">
         <Link className="back-link" to="/rooms">
-          <ArrowLeft size={17} aria-hidden="true" />
+          <ArrowLeft size={16} aria-hidden="true" />
           返回房间列表
         </Link>
-        <h1>{room.name}</h1>
-        <p>当前角色：{roleLabels[room.role]}</p>
-        <p>当前昵称：{room.nickname}</p>
+        <h1 className="room-title">{room.name}</h1>
+        <div className="room-identity-meta">
+          <p className="room-meta-pill">当前角色：{roleLabels[room.role]}</p>
+          <p className="room-meta-pill">当前昵称：{room.nickname}</p>
+        </div>
         <nav className="room-navigation" aria-label="房间导航">
           <button
             type="button"
             aria-current={active === "public" ? "page" : undefined}
             onClick={() => selectTab("public")}
           >
-            <Music2 size={20} aria-hidden="true" />
+            <Music2 size={18} aria-hidden="true" />
             公共歌单
           </button>
           <button
@@ -276,7 +279,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             aria-current={active === "members" ? "page" : undefined}
             onClick={() => selectTab("members")}
           >
-            <Users size={20} aria-hidden="true" />
+            <Users size={18} aria-hidden="true" />
             房间成员
             {query.data.allowedActions.includes("reviewApplications") && query.data.pendingCount !== null && query.data.pendingCount > 0 && <span className="pending-badge" aria-label={`待审批申请：${query.data.pendingCount}份`}>{query.data.pendingCount > 9 ? "9+" : query.data.pendingCount}</span>}
           </button>
@@ -285,7 +288,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             aria-current={active === "settings" ? "page" : undefined}
             onClick={() => selectTab("settings")}
           >
-            <Settings size={20} aria-hidden="true" />
+            <Settings size={18} aria-hidden="true" />
             房间设置
           </button>
         </nav>

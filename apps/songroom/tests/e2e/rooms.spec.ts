@@ -410,3 +410,147 @@ for (const allowed of [false, true]) {
     }
   });
 }
+
+test("Ticket 02: 房间工作台双栏吸附居中布局与移动端紧凑顶部/底栏自适应", async ({ page }) => {
+  await signedIn(page);
+
+  // 1. 桌面 1440px 宽屏：弹性双栏、吸附侧栏、居中工作区
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/rooms/${roomId}`);
+
+  const workspace = page.locator(".room-workspace");
+  await expect(workspace).toBeVisible();
+
+  const desktopLayout = await workspace.evaluate((el) => {
+    const style = window.getComputedStyle(el);
+    return {
+      display: style.display,
+      paddingLeft: style.paddingLeft,
+      flexDirection: style.flexDirection,
+    };
+  });
+  expect(desktopLayout.display).toBe("flex");
+  expect(desktopLayout.paddingLeft).not.toBe("242px");
+  expect(desktopLayout.flexDirection).toBe("row");
+
+  const sidebar = page.locator(".room-context");
+  const sidebarStyles = await sidebar.evaluate((el) => {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return {
+      position: style.position,
+      width: rect.width,
+    };
+  });
+  expect(sidebarStyles.position).toBe("sticky");
+  expect(sidebarStyles.width).toBeGreaterThanOrEqual(220);
+  expect(sidebarStyles.width).toBeLessThanOrEqual(245);
+
+  // 紧凑展示房间名、角色/昵称胶囊以及垂直导航项
+  await expect(sidebar.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
+  const identityMeta = sidebar.locator(".room-identity-meta");
+  await expect(identityMeta).toBeVisible();
+  await expect(identityMeta.getByText("当前角色：房主", { exact: true })).toBeVisible();
+  await expect(identityMeta.getByText("当前昵称：小林", { exact: true })).toBeVisible();
+
+  const nav = sidebar.locator(".room-navigation");
+  await expect(nav).toBeVisible();
+  const navDisplay = await nav.evaluate((el) => window.getComputedStyle(el).flexDirection);
+  expect(navDisplay).toBe("column");
+
+  // 右侧主工作区内部容器限定最大宽度并自动外边距居中
+  const content = page.locator(".room-page-content");
+  await expect(content).toBeVisible();
+  const contentMetrics = await content.evaluate((el) => {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const parentRect = el.parentElement!.getBoundingClientRect();
+    const remainingRightAreaStart = parentRect.left + 230 + 40; // sidebar + gap
+    const remainingRightAreaEnd = parentRect.right;
+    const remainingRightAreaCenter = (remainingRightAreaStart + remainingRightAreaEnd) / 2;
+    const contentCenter = (rect.left + rect.right) / 2;
+    return {
+      maxWidth: style.maxWidth,
+      minWidth: style.minWidth,
+      renderedWidth: rect.width,
+      contentCenter,
+      remainingRightAreaCenter,
+    };
+  });
+  expect(contentMetrics.maxWidth).toBe("860px");
+  expect(contentMetrics.minWidth).toBe("0px");
+  expect(contentMetrics.renderedWidth).toBeCloseTo(860, 1);
+  expect(Math.abs(contentMetrics.contentCenter - contentMetrics.remainingRightAreaCenter)).toBeLessThan(15);
+
+  // 视口无横向溢出
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  // 2. 移动端 320px 窄屏：折叠为单列、紧凑顶部房间条、第一视口直达内容、底部固定导航
+  await page.setViewportSize({ width: 320, height: 800 });
+
+  const mobileLayout = await workspace.evaluate((el) => {
+    const style = window.getComputedStyle(el);
+    return {
+      flexDirection: style.flexDirection,
+    };
+  });
+  expect(mobileLayout.flexDirection).toBe("column");
+
+  const mobileSidebarPos = await sidebar.evaluate((el) => window.getComputedStyle(el).position);
+  expect(mobileSidebarPos).toBe("static");
+
+  // 顶部紧凑信息不遮挡第一视口：主标题位于顶部附近
+  const contentHeading = page.getByRole("heading", { name: "公共歌单", exact: true });
+  await expect(contentHeading).toBeVisible();
+  const headingBox = await contentHeading.boundingBox();
+  expect(headingBox).not.toBeNull();
+  expect(headingBox!.y).toBeLessThan(250);
+
+  // 底部固定导航栏
+  const mobileNavStyles = await nav.evaluate((el) => {
+    const style = window.getComputedStyle(el);
+    return {
+      position: style.position,
+      bottom: style.bottom,
+    };
+  });
+  expect(mobileNavStyles.position).toBe("fixed");
+  expect(mobileNavStyles.bottom).toBe("0px");
+
+  // 3. 移动端输入聚焦与软键盘展开时不破坏工作台布局与视口滚动
+  await page.getByRole("region", { name: "公共歌单", exact: true }).evaluate((el) => {
+    const testInput = document.createElement("input");
+    testInput.setAttribute("aria-label", "工作台软键盘适配测试输入");
+    el.prepend(testInput);
+  });
+  const mobileInput = page.getByRole("textbox", { name: "工作台软键盘适配测试输入" });
+  await mobileInput.focus();
+
+  // 模拟手机软键盘弹出：visualViewport 与 innerHeight 缩减至 420px
+  await page.evaluate(() => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 420 });
+    Object.defineProperty(window.visualViewport!, "height", { configurable: true, value: 420 });
+    window.visualViewport!.dispatchEvent(new Event("resize"));
+  });
+  await expect(nav).toBeHidden();
+
+  // 验证输入元素仍在可视视口范围内且无水平溢出
+  await mobileInput.scrollIntoViewIfNeeded();
+  const inputRect = await mobileInput.evaluate((el) => el.getBoundingClientRect());
+  expect(inputRect.top).toBeGreaterThanOrEqual(0);
+  expect(inputRect.bottom).toBeLessThanOrEqual(420);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  // 软键盘收起：恢复视口高度与失焦
+  await mobileInput.evaluate((el) => el.blur());
+  await page.evaluate(() => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    Object.defineProperty(window.visualViewport!, "height", { configurable: true, value: 800 });
+    window.visualViewport!.dispatchEvent(new Event("resize"));
+  });
+  await expect(nav).toBeVisible();
+
+  // 移动端视口无横向溢出
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
