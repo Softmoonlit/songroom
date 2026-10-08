@@ -278,13 +278,14 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
         return (await res.json()).playlist?.id;
       }, { timeout: 15_000 }).toBe("cloud-pl-v1");
 
-      await page.getByRole("button", { name: "更新状态" }).click();
       await expect(page.getByRole("heading", { name: "songroom-离线重建房-公共" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "刷新歌单" })).toBeVisible();
+      // 等待首次进入歌单的自动同步完成
+      await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeEnabled();
+      await expect(page.getByText("歌单已同步")).toBeVisible();
 
-      // 2. 模拟网易云端歌单被删除，用户点击刷新歌单
+      // 2. 模拟网易云端歌单被删除，用户点击同步歌单
       playlistState = "deleted";
-      await page.getByRole("button", { name: "刷新歌单" }).click();
+      await page.getByRole("button", { name: "同步歌单", exact: true }).click();
 
       // 3. 验证页面更新为已确认失效，并出现重新创建按钮
       await expect(page.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
@@ -298,8 +299,9 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
         return (await res.json()).playlist?.id;
       }, { timeout: 15_000 }).toBe("cloud-pl-v2");
 
-      // 5. 更新状态验证新歌单绑定生效
-      await page.getByRole("button", { name: "更新状态" }).click();
+      // 5. 验证新歌单绑定生效
+      await expect(page.getByRole("heading", { name: "songroom-离线重建房-公共" })).toBeVisible();
+      await page.getByRole("button", { name: "歌单技术信息" }).click();
       await expect(page.getByText("cloud-pl-v2")).toBeVisible();
       await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
     } finally {

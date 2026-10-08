@@ -49,9 +49,10 @@ for (const width of [320, 390, 900, 1440]) {
     await expect(create).toHaveCount(0);
     expect(writes).toBe(1);
     const before = reads;
-    view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null, version: 2 }, allowedActions: [], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
-    await page.getByRole("button", { name: "更新状态", exact: true }).click();
+    view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null, version: 2 }, allowedActions: ["refreshPublicPlaylist"], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
+    await page.reload();
     await expect(page.getByRole("heading", { name: view.playlist!.name })).toBeVisible();
+    await page.getByRole("button", { name: "歌单技术信息" }).click();
     await expect(page.getByText("cloud-071", { exact: true })).toBeVisible();
     await expect(page.getByRole("status")).toContainText("已创建并绑定");
     expect(reads).toBe(before + 1);
@@ -81,9 +82,6 @@ for (const [status, text] of [
     await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(text);
     expect(reads).toBe(1);
-    await page.getByRole("button", { name: "更新状态", exact: true }).click();
-    await expect(page.getByRole("button", { name: "更新状态", exact: true })).toBeEnabled();
-    expect(reads).toBe(2);
   });
 }
 
@@ -210,18 +208,19 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
       const response = await page.request.get(`${url.replace("/rooms/", "/api/rooms/")}/public-playlist`);
       return publicPlaylistView.parse(await response.json()).operation?.status;
     }, { timeout: 15_000 }).toBe("succeeded");
-    await page.getByRole("button", { name: "更新状态", exact: true }).click();
     await expect(page.getByRole("heading", { name: "songroom-离线音乐间-公共" })).toBeVisible();
+    await page.getByRole("button", { name: "歌单技术信息" }).click();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
     // 进入歌单后显式刷新歌单详情，确认发生了一次 detail 调用
     await expect.poll(() => fixture.outbound.filter(call => call.url.includes("playlist/detail")).length).toBe(1);
     const count = fixture.outbound.length;
-    await page.getByRole("button", { name: "更新状态", exact: true }).click();
-    await expect(page.getByRole("button", { name: "更新状态", exact: true })).toBeEnabled();
-    // 纯更新状态不发起上游调用
-    expect(fixture.outbound).toHaveLength(count);
+    await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+    await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeEnabled();
+    // 显式同步发起上游调用
+    await expect.poll(() => fixture.outbound.length).toBe(count + 1);
     await page.reload();
+    await page.getByRole("button", { name: "歌单技术信息" }).click();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
     await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);

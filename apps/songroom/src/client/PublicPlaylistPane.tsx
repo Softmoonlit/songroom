@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Music2, Search, X } from "lucide-react";
+import { Check, Info, Music2, RotateCw, Search, X } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
@@ -60,7 +60,7 @@ function TrackList({ tracks, active }: { tracks: PublicPlaylistTrack[]; active: 
   const virtualizer = useVirtualizer({
     count: tracks.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 72,
+    estimateSize: () => 64,
     overscan: 10
   });
 
@@ -109,15 +109,21 @@ function TrackList({ tracks, active }: { tracks: PublicPlaylistTrack[]; active: 
               <span className="track-index" aria-hidden="true">{track.position + 1}</span>
               <div className="track-info">
                 <span className="track-name" title={track.name}>{track.name}</span>
-                <span className="track-artists-album" title={`${track.artists.join(" / ")}${track.album ? ` - ${track.album}` : ""}`}>
-                  {track.artists.join(" / ")}{track.album ? ` · ${track.album}` : ""}
+                <span className="track-artists-album" title={`${track.artists.join(" / ")}${track.album ? ` · ${track.album}` : ""}`}>
+                  <span className="track-artists">{track.artists.join(" / ")}</span>
+                  {track.album && <span className="track-album"> · {track.album}</span>}
                 </span>
-                {track.requesters.length > 0 && (
-                  <div className="track-requesters" aria-label={`点歌人：${track.requesters.join("、")}`}>
-                    <span className="requester-badge">点歌人：{track.requesters.join("、")}</span>
-                  </div>
-                )}
               </div>
+              {track.requesters.length > 0 && (
+                <div className="track-requesters-side" aria-label={`点歌人：${track.requesters.join("、")}`}>
+                  {track.requesters.map(requester => (
+                    <span key={requester} className="requester-capsule" title={`点歌人：${requester}`}>
+                      <span className="requester-label">点歌人：</span>
+                      <span className="requester-name">{requester}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -135,6 +141,28 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const controller = useRef<AbortController | null>(null);
   const refreshController = useRef<AbortController | null>(null);
   const [refreshError, setRefreshError] = useState("");
+  const [showMetaPopover, setShowMetaPopover] = useState(false);
+  const metaPopoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMetaPopover) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (metaPopoverRef.current && !metaPopoverRef.current.contains(event.target as Node)) {
+        setShowMetaPopover(false);
+      }
+    }
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowMetaPopover(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showMetaPopover]);
 
   // 搜索与点歌状态
   const [searchQueryText, setSearchQueryText] = useState("");
@@ -350,43 +378,147 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
 
   return <>
     <h2>公共歌单</h2>
-    <div className="empty-card">
-      <Music2 size={27} aria-hidden="true" />
-      {view.playlist ? <>
-        <h3>{view.playlist.name}</h3>
-        <dl className="netease-identity"><div><dt>网易云歌单 ID</dt><dd>{view.playlist.id}</dd></div></dl>
-      </> : view.invalidatedTarget ? <>
-        <h3>公共歌单已确认失效</h3>
-        <p className="field-help" role="alert">原公共歌单「{view.invalidatedTarget.name}」（ID: {view.invalidatedTarget.playlistId}）已从网易云删除。最后核查状态：已确认失效（{formatTime(view.invalidatedTarget.checkedAt)}）。</p>
-        {view.disabledReason === "OWNER_ONLY" && <p className="field-help" role="status">已确认失效，等待房主重新创建公共歌单。</p>}
-      </> : <>
-        <h3>尚未创建公共歌单</h3>
-        <p>创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
-      </>}
-      {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
-      {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
-      {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && (!view.invalidatedTarget || view.disabledReason !== "OWNER_ONLY") && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
-      {!view.playlist && view.disabledReason === "PUBLIC_PLAYLIST_EXISTS" && <p className="field-help">{disabledMessages.PUBLIC_PLAYLIST_EXISTS}</p>}
-      {view.allowedActions.includes("createPublicPlaylist") && <button className="primary-button" type="button" disabled={mutation.isPending || query.isFetching || view.disabledReason !== null} onClick={() => {
-        if (mutation.isPending || view.disabledReason) return;
-        const next = command ?? { idempotencyKey: uuidv7() };
-        setCommand(next);
-        setMessage("");
-        mutation.mutate(next);
-      }}>{mutation.isPending ? "正在提交创建…" : view.invalidatedTarget ? "重新创建公共歌单" : "创建公共歌单"}</button>}
-      {view.playlist && <>
-        {view.snapshot?.syncedAt ? <p className="sync-time">最近成功同步：{formatTime(view.snapshot.syncedAt)}</p> : null}
-        {refreshMutation.isPending ? <p className="netease-status" role="status">正在刷新歌单…</p> : null}
-        {!refreshMutation.isPending && view.lastRefreshError ? <p className="field-help" role="alert">暂时读取失败（刷新未成功：{errorMessageForCode(view.lastRefreshError)}），已保留上次快照</p> : null}
-        {!refreshMutation.isPending && refreshError ? <p className="form-message" role="alert">{refreshError}</p> : null}
-        {!refreshMutation.isPending && !view.lastRefreshError && !refreshError && view.snapshot?.syncedAt ? <p className="netease-status" role="status">歌单已同步</p> : null}
-        <div className="invite-actions">
-          {view.allowedActions.includes("refreshPublicPlaylist") && <button className="primary-button" type="button" disabled={refreshMutation.isPending || view.disabledReason === "ACCOUNT_PAUSED"} onClick={() => {
-            setRefreshError("");
-            refreshMutation.mutate();
-          }}>{refreshMutation.isPending ? "正在刷新…" : "刷新歌单"}</button>}
-          <button className="secondary-button" type="button" disabled={query.isFetching || mutation.isPending || refreshMutation.isPending} onClick={() => void query.refetch()}>{query.isFetching ? "正在更新状态…" : "更新状态"}</button>
+    {!view.playlist ? (
+      view.invalidatedTarget ? (
+        <div className="playlist-empty-state-card invalidated" role="region" aria-label="公共歌单失效状态">
+          <div className="empty-state-icon-wrapper danger">
+            <Music2 size={28} aria-hidden="true" />
+          </div>
+          <h3>公共歌单已确认失效</h3>
+          <p className="field-help" role="alert">
+            原公共歌单「{view.invalidatedTarget.name}」（ID: {view.invalidatedTarget.playlistId}）已从网易云删除。最后核查状态：已确认失效（{formatTime(view.invalidatedTarget.checkedAt)}）。
+          </p>
+          {view.disabledReason === "OWNER_ONLY" && <p className="field-help" role="status">已确认失效，等待房主重新创建公共歌单。</p>}
+          {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
+          {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
+          {view.disabledReason && view.disabledReason !== "OWNER_ONLY" && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
+          {view.allowedActions.includes("createPublicPlaylist") && (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={mutation.isPending || query.isFetching || view.disabledReason !== null}
+              onClick={() => {
+                if (mutation.isPending || view.disabledReason) return;
+                const next = command ?? { idempotencyKey: uuidv7() };
+                setCommand(next);
+                setMessage("");
+                mutation.mutate(next);
+              }}
+            >
+              {mutation.isPending ? "正在提交创建…" : "重新创建公共歌单"}
+            </button>
+          )}
+          {message && <p className="form-message" role="alert">{message}</p>}
         </div>
+      ) : (
+        <div className="playlist-empty-state-card uncreated" role="region" aria-label="创建公共歌单">
+          <div className="empty-state-icon-wrapper">
+            <Music2 size={28} aria-hidden="true" />
+          </div>
+          <h3>尚未创建公共歌单</h3>
+          <p className="empty-state-desc">创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
+          {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
+          {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
+          {view.disabledReason && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
+          {view.allowedActions.includes("createPublicPlaylist") && (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={mutation.isPending || query.isFetching || view.disabledReason !== null}
+              onClick={() => {
+                if (mutation.isPending || view.disabledReason) return;
+                const next = command ?? { idempotencyKey: uuidv7() };
+                setCommand(next);
+                setMessage("");
+                mutation.mutate(next);
+              }}
+            >
+              {mutation.isPending ? "正在提交创建…" : "创建公共歌单"}
+            </button>
+          )}
+          {message && <p className="form-message" role="alert">{message}</p>}
+        </div>
+      )
+    ) : (
+      <div className="public-playlist-view">
+        <header className="playlist-header">
+          <div className="playlist-header-left">
+            <div className="playlist-title-row">
+              <h3 className="playlist-name">{view.playlist.name}</h3>
+              {view.snapshot && (
+                <span className="playlist-track-badge" aria-label={`共 ${view.snapshot.trackCount} 首歌曲`}>
+                  {view.snapshot.trackCount} 首歌曲
+                </span>
+              )}
+            </div>
+            <div className="playlist-header-meta">
+              {refreshMutation.isPending ? (
+                <span className="sync-micro-status status-pending" role="status">正在同步歌单…</span>
+              ) : view.lastRefreshError ? (
+                <span className="sync-micro-status status-error" role="alert">
+                  暂时读取失败（刷新未成功：{errorMessageForCode(view.lastRefreshError)}），已保留上次快照
+                </span>
+              ) : refreshError ? (
+                <span className="sync-micro-status status-error" role="alert">{refreshError}</span>
+              ) : view.snapshot?.syncedAt ? (
+                <span className="sync-micro-status status-synced" role="status">
+                  <Check size={13} aria-hidden="true" /> 歌单已同步
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="playlist-header-right">
+            <div className="playlist-meta-popover-anchor" ref={metaPopoverRef}>
+              <button
+                type="button"
+                className="playlist-info-btn"
+                aria-label="歌单技术信息"
+                title="查看歌单技术信息"
+                aria-expanded={showMetaPopover}
+                onClick={() => setShowMetaPopover(v => !v)}
+              >
+                <Info size={15} aria-hidden="true" />
+              </button>
+              {showMetaPopover && (
+                <div className="playlist-meta-popover" role="dialog" aria-label="歌单技术信息">
+                  <div className="meta-popover-item">
+                    <span className="meta-popover-label">网易云歌单 ID</span>
+                    <span className="meta-popover-value font-mono">{view.playlist.id}</span>
+                  </div>
+                  {view.snapshot?.syncedAt && (
+                    <div className="meta-popover-item">
+                      <span className="meta-popover-label">快照时间</span>
+                      <span className="meta-popover-value font-mono">{formatTime(view.snapshot.syncedAt)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {view.allowedActions.includes("refreshPublicPlaylist") && (
+              <button
+                className="secondary-button sync-playlist-button"
+                type="button"
+                disabled={refreshMutation.isPending || view.disabledReason === "ACCOUNT_PAUSED"}
+                onClick={() => {
+                  setRefreshError("");
+                  refreshMutation.mutate();
+                }}
+                aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
+              >
+                <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
+                <span>{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
+        {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
+        {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && (
+          <p className="field-help">{disabledMessages[view.disabledReason]}</p>
+        )}
 
         {/* 吸顶直接搜索工具栏 */}
         {view.allowedActions.includes("requestSong") && (
@@ -437,7 +569,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                   <p className="search-empty-text">未找到相关单曲，请尝试其他关键词。</p>
                 ) : !selectedCandidate ? (
                   <ul className="candidate-list" role="listbox" aria-label="搜索候选列表">
-                    {candidates.map((song, idx) => (
+                    {candidates.map(song => (
                       <li
                         key={song.id}
                         role="option"
@@ -507,14 +639,29 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
         )}
 
-        {(!view.snapshot || view.snapshot.syncedAt === null) ? <div className="initial-sync-card">
-          <p>正在进行首次同步，请稍候…</p>
-        </div> : view.snapshot.trackCount === 0 ? <div className="empty-playlist-card">
-          <p>歌单暂无歌曲。房主和室友可直接在上方搜索单曲点歌。</p>
-        </div> : <TrackList tracks={view.snapshot.tracks} active={active} />}
-      </>}
-      {!view.playlist && <button className="secondary-button" type="button" disabled={query.isFetching || mutation.isPending} onClick={() => void query.refetch()}>{query.isFetching ? "正在更新状态…" : "更新状态"}</button>}
-      {message && <p className="form-message" role="alert">{message}</p>}
-    </div>
+        {(!view.snapshot || view.snapshot.syncedAt === null) ? (
+          <div className="initial-sync-card">
+            <p>正在进行首次同步，请稍候…</p>
+          </div>
+        ) : view.snapshot.trackCount === 0 ? (
+          <div className="empty-playlist-card" role="region" aria-label="空歌单提示">
+            <div className="empty-playlist-illustration" aria-hidden="true">
+              <div className="empty-disc-glow" />
+              <div className="empty-disc">
+                <Music2 size={36} className="empty-music-icon" />
+              </div>
+            </div>
+            <h4 className="empty-playlist-title">歌单暂无歌曲</h4>
+            <p className="empty-playlist-guidance">
+              房主和室友可直接在上方搜索单曲点歌，为你和室友添上第一首背景音乐。
+            </p>
+          </div>
+        ) : (
+          <TrackList tracks={view.snapshot.tracks} active={active} />
+        )}
+
+        {message && <p className="form-message" role="alert">{message}</p>}
+      </div>
+    )}
   </>;
 }

@@ -72,10 +72,11 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
     };
 
     await page.route(endpoint, route => route.fulfill({ json: emptySyncView }));
-    await page.getByRole("button", { name: "更新状态", exact: true }).click();
+    await page.route(refreshEndpoint, route => route.fulfill({ json: emptySyncView }));
+    await page.getByRole("button", { name: "同步歌单", exact: true }).click();
     await expect(page.getByText("正在进行首次同步，请稍候…")).toHaveCount(0);
     await expect(page.getByText("歌单暂无歌曲")).toBeVisible();
-    await expect(page.getByText("最近成功同步：")).toBeVisible();
+    await expect(page.getByText("歌单已同步")).toBeVisible();
   });
 
   test("展示歌曲真实顺序与元数据，支持键盘焦点导航，320px/900px/1440px 响应式无横向溢出", async ({ page }) => {
@@ -153,7 +154,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
 
     // 触发刷新返回失败
     await page.route(refreshEndpoint, route => route.fulfill({ json: failedView }));
-    await page.getByRole("button", { name: "刷新歌单", exact: true }).click();
+    await page.getByRole("button", { name: "同步歌单", exact: true }).click();
 
     // 歌曲与同步时间仍保留，同时展示刷新未成功说明
     await expect(page.getByText("晴天", { exact: true })).toBeVisible();
