@@ -30,7 +30,7 @@ test("健康状态读取失败时显示错误并支持重试", async ({ page }) 
   available = true;
   await retryButton.click();
   await expect(page.getByRole("heading", { name: "应用已准备就绪" })).toBeVisible();
-  await expect(page.getByText("运行正常").first()).toBeVisible();
+  await expect(page.getByTitle("服务状态：运行正常")).toBeVisible();
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
 });

@@ -14,6 +14,7 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
 
   // 1. 房主登录并建房
   await register(page, "房主");
+  await page.getByRole("button", { name: "账号菜单" }).click();
   await page.getByRole("link", { name: "账号设置", exact: true }).click();
   await page.getByRole("button", { name: "开始扫码绑定" }).click();
   await expect(page.getByRole("img", { name: "网易云授权二维码" })).toBeVisible();
@@ -21,7 +22,7 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
   await page.getByRole("button", { name: "确认绑定此网易云账号" }).click();
   await expect(page.getByText("已绑定网易云账号", { exact: true })).toBeVisible();
 
-  await page.getByRole("link", { name: "我的房间", exact: true }).click();
+  await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await page.getByLabel("房间名称").fill("SSE测试音乐间");
   await page.getByLabel("我的房间昵称").fill("房主小王");

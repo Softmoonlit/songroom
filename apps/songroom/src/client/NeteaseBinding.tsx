@@ -167,7 +167,6 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
   return (
     <section className="settings-card netease-binding" aria-labelledby="netease-heading">
       <h2 id="netease-heading">网易云账号</h2>
-      <p className="field-help">绑定后，你创建的全部房间共用这份网易云授权。</p>
       {bindingQuery.isPending ? <p role="status">正在读取网易云绑定…</p> : bindingQuery.isError ? (
         <>
           <p className="form-message" role="alert">{errorMessage(bindingQuery.error)}</p>

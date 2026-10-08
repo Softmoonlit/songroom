@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { ArrowLeft, CircleAlert, CircleCheck, LogOut, Music2, UserRound } from "lucide-react";
+import { ArrowLeft, ChevronDown, CircleAlert, CircleCheck, LogOut, Music2, Settings, UserRound } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router";
 import { healthResponse, type HealthResponse } from "../shared/contracts";
 import { NeteaseBinding } from "./NeteaseBinding";
@@ -137,7 +137,7 @@ function AppContent() {
         </Link>
         <div className="header-actions">
           <HealthStatus query={healthQuery} />
-          {sessionQuery.data && <UserMenu user={sessionQuery.data.user} />}
+          {sessionQuery.data && <UserCapsule user={sessionQuery.data.user} />}
         </div>
       </header>
 
@@ -201,28 +201,104 @@ type HealthQuery = ReturnType<typeof useQuery<HealthResponse, Error>>;
 
 function HealthStatus({ query }: { query: HealthQuery }) {
   const status = query.data?.status;
-  const label = query.isPending ? "读取中" : query.isError ? "暂不可用" : status ? statusLabels[status] : "未知";
-  const stateClass = query.isError ? "error" : status === "ready" ? "ready" : "pending";
+  const isError = query.isError;
+  const isReady = status === "ready";
+  const label = query.isPending ? "读取中" : isError ? "暂不可用" : isReady ? "运行正常" : "未知";
+  const stateClass = isError ? "error" : isReady ? "ready" : "pending";
 
   return (
-    <div className={`health-status ${stateClass}`} aria-label={`应用状态：${label}`} aria-live="polite">
-      <span aria-hidden="true">●</span>
-      <span className="health-label">应用状态</span>
-      <strong>{label}</strong>
+    <div
+      className={`health-dot ${stateClass}`}
+      title={`服务状态：${label}`}
+    >
+      <span className="dot-indicator" aria-hidden="true" />
+      <span className="sr-only">服务状态：{label}</span>
+      {!isReady && <span className="health-dot-label" aria-hidden="true">{label}</span>}
     </div>
   );
 }
 
-function UserMenu({ user }: { user: SessionData["user"] }) {
+function UserCapsule({ user }: { user: SessionData["user"] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const capsuleRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (capsuleRef.current && !capsuleRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen]);
+
+  async function handleSignOut() {
+    setIsOpen(false);
+    await authAction("/sign-out", {});
+    window.location.assign("/");
+  }
+
+  const initial = (user.name || "用").trim().slice(0, 1).toUpperCase();
+
   return (
-    <nav className="user-menu" aria-label="账号导航">
-      <span className="user-greeting">
-        <UserRound size={16} aria-hidden="true" />
-        {user.name}
-      </span>
-      <Link to="/rooms">我的房间</Link>
-      <Link to="/account">账号设置</Link>
-    </nav>
+    <div
+      ref={capsuleRef}
+      className={`user-capsule ${isOpen ? "open" : ""}`}
+      onMouseEnter={() => setIsOpen(true)}
+      onMouseLeave={() => setIsOpen(false)}
+    >
+      <button
+        type="button"
+        className="user-capsule-trigger"
+        onClick={() => setIsOpen(open => !open)}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label="账号菜单"
+      >
+        <span className="user-avatar" aria-hidden="true">
+          {initial}
+        </span>
+        <span className="user-name">{user.name}</span>
+        <ChevronDown size={14} className="capsule-chevron" aria-hidden="true" />
+      </button>
+
+      <div
+        className={`user-dropdown ${isOpen ? "visible" : ""}`}
+        aria-label="账号操作"
+      >
+        <div className="user-dropdown-profile">
+          <span className="dropdown-user-name">{user.name}</span>
+          <span className="dropdown-user-email">{user.email}</span>
+        </div>
+        <div className="user-dropdown-divider" aria-hidden="true" />
+        <Link
+          to="/account"
+          className="user-dropdown-item"
+          onClick={() => setIsOpen(false)}
+        >
+          <Settings size={15} aria-hidden="true" />
+          <span>账号设置</span>
+        </Link>
+        <button
+          type="button"
+          className="user-dropdown-item danger"
+          onClick={() => void handleSignOut()}
+        >
+          <LogOut size={15} aria-hidden="true" />
+          <span>退出登录</span>
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -477,22 +553,26 @@ function AccountPage({ session }: { session?: SessionData | null }) {
 
   return (
     <section className="account-page" aria-labelledby="account-heading">
+      <Link className="back-link" to="/rooms">
+        <ArrowLeft size={16} aria-hidden="true" />
+        返回房间列表
+      </Link>
       <div className="page-heading">
         <p className="eyebrow">
           <UserRound size={16} aria-hidden="true" />
           账号设置
         </p>
         <h1 id="account-heading">管理你的点歌台账号</h1>
-        <p>账号称呼可以修改并允许重复。邮箱是唯一登录标识，当前版本不提供修改入口。</p>
       </div>
       <div className="settings-grid">
         <form className="settings-card" onSubmit={updateName}>
-          <h2>账号称呼</h2>
+          <h2>个人资料</h2>
           <label>
             称呼
             <input
               value={name}
               onChange={event => setName(event.target.value)}
+              placeholder="输入账号称呼"
               required
               maxLength={100}
               autoComplete="name"
@@ -512,6 +592,7 @@ function AccountPage({ session }: { session?: SessionData | null }) {
               type="password"
               value={currentPassword}
               onChange={event => setCurrentPassword(event.target.value)}
+              placeholder="输入当前密码"
               required
               autoComplete="current-password"
             />
@@ -522,13 +603,13 @@ function AccountPage({ session }: { session?: SessionData | null }) {
               type="password"
               value={newPassword}
               onChange={event => setNewPassword(event.target.value)}
+              placeholder="8-128位新密码"
               required
               minLength={8}
               maxLength={128}
               autoComplete="new-password"
             />
           </label>
-          <p className="field-help">修改密码不会自动撤销其他设备会话。</p>
           <button className="primary-button" type="submit" disabled={pending}>更新密码</button>
         </form>
       </div>
@@ -543,10 +624,12 @@ function AccountPage({ session }: { session?: SessionData | null }) {
           {message}
         </p>
       )}
-      <button className="logout-button" type="button" onClick={() => void signOut()} disabled={pending}>
-        <LogOut size={17} aria-hidden="true" />
-        退出当前设备
-      </button>
+      <div className="account-logout">
+        <button className="logout-button" type="button" onClick={() => void signOut()} disabled={pending}>
+          <LogOut size={17} aria-hidden="true" />
+          退出当前设备
+        </button>
+      </div>
     </section>
   );
 }

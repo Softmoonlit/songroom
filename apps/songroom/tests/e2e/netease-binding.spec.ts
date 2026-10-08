@@ -74,7 +74,8 @@ test("替代扫码后晚到的旧身份不会覆盖新流程，离开后二维�
   await page.getByRole("button", { name: "检查扫码状态" }).click();
   await expect(page.getByRole("status").filter({ hasText: "已扫码" })).toBeVisible();
   await expect(page.getByText(identity.nickname)).toHaveCount(0);
-  await page.getByRole("link", { name: "我的房间", exact: true }).click();
+  await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
+  await page.getByRole("button", { name: "账号菜单" }).click();
   await page.getByRole("link", { name: "账号设置", exact: true }).click();
   await expect(page.getByRole("button", { name: "开始扫码绑定" })).toBeVisible();
   await expect(page.getByRole("img", { name: "网易云授权二维码" })).toHaveCount(0);
@@ -118,7 +119,8 @@ test("会话更新销毁临时二维码，旧会话检查响应不能恢复身�
   await expect(page.getByRole("button", { name: "开始扫码绑定" })).toBeVisible();
   await expect(page.getByRole("img", { name: "网易云授权二维码" })).toHaveCount(0);
   releaseCheck();
-  await page.getByRole("link", { name: "我的房间", exact: true }).click();
+  await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
+  await page.getByRole("button", { name: "账号菜单" }).click();
   await page.getByRole("link", { name: "账号设置", exact: true }).click();
   await expect(page.getByRole("button", { name: "开始扫码绑定" })).toBeVisible();
   await expect(page.getByText(identity.nickname)).toHaveCount(0);

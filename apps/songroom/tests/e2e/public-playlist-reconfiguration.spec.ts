@@ -256,13 +256,14 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       await page.getByLabel("密码").fill("correct horse battery staple");
       await page.getByRole("button", { name: "注册并进入房间列表" }).click();
 
+      await page.getByRole("button", { name: "账号菜单" }).click();
       await page.getByRole("link", { name: "账号设置", exact: true }).click();
       await page.getByRole("button", { name: "开始扫码绑定" }).click();
       await page.getByRole("button", { name: "检查扫码状态" }).click();
       await page.getByRole("button", { name: "确认绑定此网易云账号" }).click();
       await expect(page.getByText("已绑定网易云账号", { exact: true })).toBeVisible();
 
-      await page.getByRole("link", { name: "我的房间", exact: true }).click();
+      await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
       await page.getByRole("link", { name: "创建房间", exact: true }).click();
       await page.getByLabel("房间名称").fill("离线重建房");
       await page.getByLabel("我的房间昵称").fill("房主");

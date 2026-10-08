@@ -179,7 +179,7 @@ test("完整应用：注册扫码绑定后创建同名房间，身份规范化�
   await expect(page.getByText("已绑定网易云账号", { exact: true })).toBeVisible();
   const createdUrls: string[] = [];
   for (const nickname of [" 林 ", " e\u0301 ", "第三个昵称"]) {
-    await page.getByRole("link", { name: "我的房间", exact: true }).click();
+    await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
     await page.getByRole("link", { name: "创建房间", exact: true }).click();
     await page.getByLabel("房间名称").fill(" 同名宿舍 ");
     await page.getByLabel("我的房间昵称").fill(nickname);

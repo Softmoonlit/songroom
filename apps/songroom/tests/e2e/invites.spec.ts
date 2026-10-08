@@ -227,13 +227,14 @@ test("完整应用：房主建房邀请，注册与登录回跳申请、撤回�
   await page.getByLabel("密码").fill(password);
   await page.getByRole("button", { name: "注册并进入房间列表" }).click();
   await expect(page).toHaveURL(/\/rooms$/);
+  await page.getByRole("button", { name: "账号菜单" }).click();
   await page.getByRole("link", { name: "账号设置", exact: true }).click();
   await page.getByRole("button", { name: "开始扫码绑定" }).click();
   await expect(page.getByRole("img", { name: "网易云授权二维码" })).toBeVisible();
   await page.getByRole("button", { name: "检查扫码状态" }).click();
   await page.getByRole("button", { name: "确认绑定此网易云账号" }).click();
   await expect(page.getByText("已绑定网易云账号", { exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "我的房间", exact: true }).click();
+  await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await page.getByLabel("房间名称").fill("完整邀请房间");
   await page.getByLabel("我的房间昵称").fill("房主");
@@ -277,6 +278,7 @@ test("完整应用：房主建房邀请，注册与登录回跳申请、撤回�
     await guest.getByRole("link", { name: "查看申请：完整邀请房间" }).click();
     await guest.getByRole("button", { name: "撤回申请", exact: true }).click();
     await expect(guest.getByRole("status")).toHaveText("申请已撤回");
+    await guest.getByRole("button", { name: "账号菜单" }).click();
     await guest.getByRole("link", { name: "账号设置", exact: true }).click();
     await guest.getByRole("button", { name: "退出当前设备" }).click();
     await expect(guest).toHaveURL(/\/$/);

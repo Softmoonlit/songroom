@@ -219,13 +219,14 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     await expect(target).toHaveURL(/\/rooms$/);
   }
   await register(page, "房主账号");
+  await page.getByRole("button", { name: "账号菜单" }).click();
   await page.getByRole("link", { name: "账号设置", exact: true }).click();
   await page.getByRole("button", { name: "开始扫码绑定" }).click();
   await expect(page.getByRole("img", { name: "网易云授权二维码" })).toBeVisible();
   await page.getByRole("button", { name: "检查扫码状态" }).click();
   await page.getByRole("button", { name: "确认绑定此网易云账号" }).click();
   await expect(page.getByText("已绑定网易云账号", { exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "我的房间", exact: true }).click();
+  await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await page.getByLabel("房间名称").fill("真实审批音乐间");
   await page.getByLabel("我的房间昵称").fill("房主昵称");
