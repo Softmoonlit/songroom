@@ -22,15 +22,16 @@ test("健康状态读取失败时显示错误并支持重试", async ({ page }) 
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "暂时无法连接服务" })).toBeVisible();
+  // 首页主视觉彻底移出大号服务状态看板（降噪）
+  await expect(page.locator(".status-card")).toHaveCount(0);
   await expect(page.getByText("暂不可用").first()).toBeVisible();
   const retryButton = page.getByRole("button", { name: "重新读取状态" });
   await expect(retryButton).toBeVisible();
 
   available = true;
   await retryButton.click();
-  await expect(page.getByRole("heading", { name: "应用已准备就绪" })).toBeVisible();
   await expect(page.getByTitle("服务状态：运行正常")).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新读取状态" })).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
 });

@@ -98,6 +98,7 @@ export const publicPlaylistCleanupList = z.object({
 });
 
 export type RoomSummary = z.infer<typeof roomSummary>;
+export type RoomListItem = z.infer<typeof roomListItem>;
 export type RoomCreateCommand = z.infer<typeof roomCreateCommand>;
 export type RoomCreateView = z.infer<typeof roomCreateView>;
 export type RoomMember = z.infer<typeof roomMember>;

@@ -273,7 +273,11 @@ test("删除确认后返回房间列表，房间已移除，且显示独立的�
   // 房间已从列表中彻底移除
   await expect(page.getByText("测试音乐间")).toHaveCount(0);
 
-  // 显示独立的公共歌单清理区域（与房间物理分离，明确标明房间不可恢复）
+  // 房间列表主视图不再展示底层公共歌单清理进度（彻底移出并归入账号高级设置）
+  await expect(page.getByRole("heading", { name: "公共歌单清理" })).toHaveCount(0);
+
+  // 移步账号设置，在高级设置中查看独立的公共歌单待清理状态与下一步
+  await page.goto("/account");
   await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
   await expect(page.getByText("网易云歌单 ID：pl-cloud-1")).toBeVisible();
   await expect(page.getByText("等待重新授权")).toBeVisible();

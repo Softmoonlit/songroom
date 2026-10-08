@@ -145,16 +145,7 @@ function AppContent() {
         <Routes>
           <Route
             path="/"
-            element={
-              <Landing
-                session={sessionQuery.data}
-                health={healthQuery.data}
-                isHealthError={healthQuery.isError}
-                isHealthRetrying={healthQuery.isFetching}
-                onRetry={() => void healthQuery.refetch()}
-                onAuthenticated={onAuthenticated}
-              />
-            }
+            element={<Landing session={sessionQuery.data} onAuthenticated={onAuthenticated} />}
           />
           <Route
             path="/login"
@@ -191,7 +182,7 @@ function AppContent() {
       <footer className="app-footer">
         <span>SongRoom</span>
         <span aria-hidden="true">·</span>
-        <span>同源安全登录</span>
+        <span>宿舍音乐共享与协作点歌</span>
       </footer>
     </div>
   );
@@ -214,6 +205,16 @@ function HealthStatus({ query }: { query: HealthQuery }) {
       <span className="dot-indicator" aria-hidden="true" />
       <span className="sr-only">服务状态：{label}</span>
       {!isReady && <span className="health-dot-label" aria-hidden="true">{label}</span>}
+      {isError && (
+        <button
+          type="button"
+          className="secondary-button health-retry-button"
+          onClick={() => void query.refetch()}
+          disabled={query.isFetching}
+        >
+          {query.isFetching ? "重试中" : "重新读取状态"}
+        </button>
+      )}
     </div>
   );
 }
@@ -314,12 +315,8 @@ function UserCapsule({ user }: { user: SessionData["user"] }) {
   );
 }
 
-function Landing({ session, health, isHealthError, isHealthRetrying, onRetry, onAuthenticated }: {
+function Landing({ session, onAuthenticated }: {
   session?: SessionData | null;
-  health?: HealthResponse;
-  isHealthError: boolean;
-  isHealthRetrying: boolean;
-  onRetry: () => void;
   onAuthenticated: () => Promise<void>;
 }) {
   if (session) return <Navigate to="/rooms" replace />;
@@ -334,7 +331,7 @@ function Landing({ session, health, isHealthError, isHealthRetrying, onRetry, on
         <h1 id="welcome-heading">SongRoom 点歌台</h1>
         <p className="hero-subtitle">和室友一起点歌</p>
         <p className="hero-description">
-          账号与房间功能正在交付。使用一个点歌台账号恢复你的房间身份，在熟悉的设备之间继续分享想听的歌。
+          专为宿舍打造的共享音乐点歌台。一个账号，与室友同步公共歌单、实时协作点歌，在熟悉的设备之间随时畅听。
         </p>
       </div>
       <div className="auth-card">
@@ -343,25 +340,6 @@ function Landing({ session, health, isHealthError, isHealthRetrying, onRetry, on
           <span>还没有点歌台账号？</span>
           <Link className="text-link" to="/register">立即注册</Link>
         </div>
-      </div>
-      <div className={`status-card ${isHealthError ? "error" : health?.status === "ready" ? "ready" : "pending"}`}>
-        <div className="status-card-icon" aria-hidden="true">
-          {isHealthError ? <CircleAlert size={25} /> : <CircleCheck size={25} />}
-        </div>
-        <div className="status-card-copy">
-          <p className="eyebrow">服务状态</p>
-          <h2>
-            {isHealthError ? "暂时无法连接服务" : health?.status === "ready" ? "应用已准备就绪" : "正在确认应用状态"}
-          </h2>
-          <p>
-            {isHealthError ? "暂时无法读取应用状态，请稍后重试。" : "账号、房间与点歌功能在可信同源入口中运行。"}
-          </p>
-        </div>
-        {isHealthError && (
-          <button className="secondary-button" type="button" onClick={onRetry} disabled={isHealthRetrying}>
-            {isHealthRetrying ? "重试中" : "重新读取状态"}
-          </button>
-        )}
       </div>
     </section>
   );

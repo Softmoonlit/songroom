@@ -12,7 +12,8 @@ for (const width of [320, 900, 1440]) {
     await page.goto("/");
     await expect(page).toHaveTitle("SongRoom 点歌台");
     await expect(page.getByRole("heading", { name: "SongRoom 点歌台" })).toBeVisible();
-    await expect(page.getByText("账号与房间功能正在交付")).toBeVisible();
+    await expect(page.getByText("专为宿舍打造的共享音乐点歌台")).toBeVisible();
+    await expect(page.locator(".status-card")).toHaveCount(0);
     await expect(page.getByTitle("服务状态：运行正常")).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 

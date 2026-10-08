@@ -403,7 +403,7 @@ for (const allowed of [false, true]) {
     }) }));
     await page.goto("/rooms");
     await expect(page.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
-    for (const name of ["创建房间", "通过邀请码申请加入", `进入房间：${room.name}`]) {
+    for (const name of ["创建房间", "输入邀请码加入", `进入房间：${room.name}`]) {
       const link = page.getByRole("link", { name, exact: true });
       if (allowed) await expect(link).toBeVisible();
       else await expect(link).toHaveCount(0);

@@ -52,7 +52,7 @@ async function setupMocks(page: Page, cleanupsList: any[] = []) {
 }
 
 test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", () => {
-  test("房间列表清晰区分 5 种清理状态及下一步，不暴露敏感证据与凭据", async ({ page }) => {
+  test("公共歌单清理彻底移出房间列表视图并归入账号高级设置，清晰区分 5 种清理状态及下一步", async ({ page }) => {
     const mockCleanups = [
       {
         id: "0195cf0d-6a80-7000-8000-000000000001",
@@ -107,8 +107,12 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
     ];
 
     await setupMocks(page, mockCleanups);
+    // 1. 房间列表主视图彻底移出公共歌单清理
     await page.goto("/rooms");
+    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toHaveCount(0);
 
+    // 2. 归入账号高级设置中展示
+    await page.goto("/account");
     await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
 
     // 1. 等待重新授权
@@ -186,7 +190,7 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
 
     for (const width of [320, 900, 1440]) {
       await page.setViewportSize({ width, height: 800 });
-      await page.goto("/rooms");
+      await page.goto("/account");
 
       await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
       await expect(page.getByText("网易云歌单 ID：pl-responsive")).toBeVisible();
