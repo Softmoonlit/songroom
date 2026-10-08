@@ -7,6 +7,7 @@ import {
   getFriendlyApprovalDisabledReason,
   getFriendlyDecisionFeedback
 } from "./application-decision-messages.js";
+import type { JoinApplicationStatusType } from "./application-timeline.js";
 import { InviteError } from "./InviteError.js";
 import { queryOptions, request, RoomRequestError } from "./room-http.js";
 
@@ -17,9 +18,11 @@ export interface ApplicationsDrawerProps {
   roomId: string;
 }
 
-interface ItemResult {
+interface ProcessedItem {
+  id: string;
+  nickname: string;
   decision: "approve" | "reject";
-  status: JoinApplicationView["status"] | string;
+  status: JoinApplicationStatusType;
   message: string;
 }
 
@@ -40,7 +43,7 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
   });
 
   const [operatingId, setOperatingId] = useState<string | null>(null);
-  const [itemResults, setItemResults] = useState<Record<string, ItemResult>>({});
+  const [processedItems, setProcessedItems] = useState<ProcessedItem[]>([]);
   const controller = useRef<AbortController | null>(null);
 
   // Esc 按键监听
@@ -61,7 +64,7 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
   useEffect(() => {
     if (!open) {
       setOperatingId(null);
-      setItemResults({});
+      setProcessedItems([]);
     }
   }, [open]);
 
@@ -85,14 +88,16 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
     onSuccess: (application, variables) => {
       if (controller.current?.signal.aborted) return;
       const message = getFriendlyDecisionFeedback(application.status, application.nickname);
-      setItemResults(prev => ({
-        ...prev,
-        [variables.applicationId]: {
+      setProcessedItems(prev => [
+        {
+          id: variables.applicationId,
+          nickname: application.nickname,
           decision: variables.decision,
           status: application.status,
           message
-        }
-      }));
+        },
+        ...prev.filter(item => item.id !== variables.applicationId)
+      ]);
       setOperatingId(null);
 
       // 失效并同步更新相关查询
@@ -101,7 +106,7 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
       void queryClient.invalidateQueries({ queryKey: ["room-invite", sessionId, roomId] });
       void queryClient.invalidateQueries({ queryKey });
     },
-    onError: (failure, variables) => {
+    onError: failure => {
       if (controller.current?.signal.aborted) return;
       setOperatingId(null);
       if (failure instanceof RoomRequestError) {
@@ -129,8 +134,10 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
   if (!open) return null;
 
   const applications = query.data?.applications ?? [];
-  const activeApplications = applications.filter(app => !itemResults[app.id]);
+  const processedIds = new Set(processedItems.map(item => item.id));
+  const activeApplications = applications.filter(app => !processedIds.has(app.id));
   const hasRemaining = activeApplications.length > 0;
+  const hasProcessed = processedItems.length > 0;
 
   return (
     <>
@@ -159,12 +166,12 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
         </div>
 
         <div className="drawer-content applications-drawer-body">
-          {query.isPending ? (
+          {query.isPending && !hasProcessed ? (
             <div className="drawer-loading" role="status">
               <Clock size={20} className="spin" aria-hidden="true" />
               <span>正在读取待处理申请…</span>
             </div>
-          ) : query.isError ? (
+          ) : query.isError && !hasProcessed ? (
             <div className="drawer-error">
               <InviteError
                 error={query.error}
@@ -174,7 +181,105 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
             </div>
           ) : (
             <div className="applications-list-container">
-              {!hasRemaining && Object.keys(itemResults).length === 0 ? (
+              {/* 已处理结果列表：保持视觉留存，保证用户清晰感知审批结果 */}
+              {hasProcessed && (
+                <div className="processed-results-section" aria-label="刚刚处理的申请">
+                  <span className="processed-section-title">处理反馈</span>
+                  <ul className="drawer-application-list">
+                    {processedItems.map(item => {
+                      const isApproved = item.decision === "approve" && item.status === "approved";
+                      return (
+                        <li
+                          key={item.id}
+                          className={`drawer-application-card result-feedback${isApproved ? " approved" : " rejected"}`}
+                        >
+                          <div className="application-result-badge">
+                            {isApproved ? (
+                              <CheckCircle2 size={18} aria-hidden="true" />
+                            ) : (
+                              <XCircle size={18} aria-hidden="true" />
+                            )}
+                            <span className="application-result-text">{item.message}</span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {/* 待处理申请列表 */}
+              {hasRemaining ? (
+                <div className="pending-section">
+                  {hasProcessed && <span className="processed-section-title">其他待审批申请</span>}
+                  <ul className="drawer-application-list">
+                    {activeApplications.map(application => {
+                      const isOperating = operatingId === application.id;
+                      const disabledReason = application.disabledReasons.approveApplication;
+                      const disabledReasonText = getFriendlyApprovalDisabledReason(disabledReason);
+
+                      return (
+                        <li key={application.id} className="drawer-application-card">
+                          <div className="application-applicant-info">
+                            <div className="applicant-avatar" aria-hidden="true">
+                              {application.nickname.slice(0, 1).toUpperCase()}
+                            </div>
+                            <div className="applicant-meta">
+                              <span className="applicant-nickname">{application.nickname}</span>
+                              <span className="applicant-hint">申请加入房间</span>
+                            </div>
+                          </div>
+
+                          {disabledReasonText && (
+                            <div className="application-disabled-tip" role="alert">
+                              {disabledReasonText}
+                            </div>
+                          )}
+
+                          <div className="application-actions">
+                            {application.allowedActions.includes("approveApplication") && (
+                              <button
+                                type="button"
+                                className="application-action-btn approve"
+                                disabled={
+                                  isOperating ||
+                                  decisionMutation.isPending ||
+                                  query.isFetching ||
+                                  Boolean(disabledReason)
+                                }
+                                onClick={() => handleDecide(application.id, "approve")}
+                                aria-label={`批准 ${application.nickname}`}
+                              >
+                                {isOperating ? (
+                                  <span>处理中…</span>
+                                ) : (
+                                  <>
+                                    <Check size={14} aria-hidden="true" />
+                                    <span>批准</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+
+                            {application.allowedActions.includes("rejectApplication") && (
+                              <button
+                                type="button"
+                                className="application-action-btn reject"
+                                disabled={isOperating || decisionMutation.isPending || query.isFetching}
+                                onClick={() => handleDecide(application.id, "reject")}
+                                aria-label={`拒绝 ${application.nickname}`}
+                              >
+                                <X size={14} aria-hidden="true" />
+                                <span>拒绝</span>
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : !hasProcessed ? (
                 <div className="drawer-empty-state">
                   <div className="drawer-empty-icon" aria-hidden="true">
                     <UserCheck size={28} />
@@ -185,93 +290,9 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
                   </p>
                 </div>
               ) : (
-                <ul className="drawer-application-list">
-                  {applications.map(application => {
-                    const result = itemResults[application.id];
-                    const isOperating = operatingId === application.id;
-                    const disabledReason = application.disabledReasons.approveApplication;
-                    const disabledReasonText = getFriendlyApprovalDisabledReason(disabledReason);
-
-                    // 已有操作结果展示即时反馈态
-                    if (result) {
-                      const isApproved = result.decision === "approve" && result.status === "approved";
-                      return (
-                        <li
-                          key={application.id}
-                          className={`drawer-application-card result-feedback${isApproved ? " approved" : " rejected"}`}
-                        >
-                          <div className="application-result-badge">
-                            {isApproved ? (
-                              <CheckCircle2 size={18} aria-hidden="true" />
-                            ) : (
-                              <XCircle size={18} aria-hidden="true" />
-                            )}
-                            <span className="application-result-text">{result.message}</span>
-                          </div>
-                        </li>
-                      );
-                    }
-
-                    return (
-                      <li key={application.id} className="drawer-application-card">
-                        <div className="application-applicant-info">
-                          <div className="applicant-avatar" aria-hidden="true">
-                            {application.nickname.slice(0, 1).toUpperCase()}
-                          </div>
-                          <div className="applicant-meta">
-                            <span className="applicant-nickname">{application.nickname}</span>
-                            <span className="applicant-hint">申请加入房间</span>
-                          </div>
-                        </div>
-
-                        {disabledReasonText && (
-                          <div className="application-disabled-tip" role="alert">
-                            {disabledReasonText}
-                          </div>
-                        )}
-
-                        <div className="application-actions">
-                          {application.allowedActions.includes("approveApplication") && (
-                            <button
-                              type="button"
-                              className="application-action-btn approve"
-                              disabled={
-                                isOperating ||
-                                decisionMutation.isPending ||
-                                query.isFetching ||
-                                Boolean(disabledReason)
-                              }
-                              onClick={() => handleDecide(application.id, "approve")}
-                              aria-label={`批准 ${application.nickname}`}
-                            >
-                              {isOperating ? (
-                                <span>处理中…</span>
-                              ) : (
-                                <>
-                                  <Check size={14} aria-hidden="true" />
-                                  <span>批准</span>
-                                </>
-                              )}
-                            </button>
-                          )}
-
-                          {application.allowedActions.includes("rejectApplication") && (
-                            <button
-                              type="button"
-                              className="application-action-btn reject"
-                              disabled={isOperating || decisionMutation.isPending || query.isFetching}
-                              onClick={() => handleDecide(application.id, "reject")}
-                              aria-label={`拒绝 ${application.nickname}`}
-                            >
-                              <X size={14} aria-hidden="true" />
-                              <span>拒绝</span>
-                            </button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <div className="drawer-all-done-hint" role="status">
+                  <span>所有待处理申请已审批完毕</span>
+                </div>
               )}
 
               {decisionMutation.isError && (

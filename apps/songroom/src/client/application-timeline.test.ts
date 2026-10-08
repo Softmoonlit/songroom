@@ -4,7 +4,6 @@ import { getApplicationTimeline } from "./application-timeline.js";
 describe("application-timeline", () => {
   it("处理 pending 状态（等待房主审批中）", () => {
     const timeline = getApplicationTimeline("pending", "阿强");
-    expect(timeline.canAutoNavigate).toBe(false);
     expect(timeline.canReapply).toBe(false);
 
     // 第一步：提交申请
@@ -22,9 +21,8 @@ describe("application-timeline", () => {
     expect(timeline.steps[2].status).toBe("pending");
   });
 
-  it("处理 approved 状态（获批通过，自动进入房间）", () => {
+  it("处理 approved 状态（获批通过）", () => {
     const timeline = getApplicationTimeline("approved", "阿强");
-    expect(timeline.canAutoNavigate).toBe(true);
     expect(timeline.canReapply).toBe(false);
 
     expect(timeline.steps[0].status).toBe("completed");
@@ -37,7 +35,6 @@ describe("application-timeline", () => {
 
   it("处理 rejected 状态（已被拒绝，支持重新申请）", () => {
     const timeline = getApplicationTimeline("rejected", "阿强");
-    expect(timeline.canAutoNavigate).toBe(false);
     expect(timeline.canReapply).toBe(true);
 
     expect(timeline.steps[0].status).toBe("completed");
@@ -48,7 +45,6 @@ describe("application-timeline", () => {
 
   it("处理 nickname_conflict 状态（昵称冲突，支持重新申请）", () => {
     const timeline = getApplicationTimeline("nickname_conflict", "阿强");
-    expect(timeline.canAutoNavigate).toBe(false);
     expect(timeline.canReapply).toBe(true);
 
     expect(timeline.steps[1].status).toBe("failed");

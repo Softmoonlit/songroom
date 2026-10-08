@@ -1,10 +1,11 @@
-import type { approvalDisabledReason } from "../shared/invite-contracts.js";
+import type { approvalDisabledReason, joinApplicationStatus } from "../shared/invite-contracts.js";
 import type { z } from "zod";
 
+type JoinApplicationStatusType = z.infer<typeof joinApplicationStatus>;
 type ApprovalDisabledReasonType = z.infer<typeof approvalDisabledReason>;
 
 export function getFriendlyDecisionFeedback(
-  decisionStatus: string,
+  decisionStatus: JoinApplicationStatusType,
   nickname: string
 ): string {
   switch (decisionStatus) {
@@ -14,13 +15,15 @@ export function getFriendlyDecisionFeedback(
       return `已拒绝：${nickname} 的申请`;
     case "nickname_conflict":
       return `拟用昵称已被占用：${nickname}；申请已终结，请申请人重新提交。`;
-    default:
-      return "申请状态已更新，请查看最新待处理申请。";
+    case "pending":
+    case "withdrawn":
+    case "cancelled":
+      return `申请状态：${decisionStatus}（${nickname}）`;
   }
 }
 
 export function getFriendlyApprovalDisabledReason(
-  reason?: ApprovalDisabledReasonType | string
+  reason?: ApprovalDisabledReasonType
 ): string {
   if (!reason) return "";
   switch (reason) {
@@ -34,7 +37,5 @@ export function getFriendlyApprovalDisabledReason(
       return "申请人加入的房间数已达上限";
     case "INVITE_RESET":
       return "邀请已重置，该申请已取消";
-    default:
-      return "当前暂无法批准该申请";
   }
 }

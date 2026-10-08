@@ -13,12 +13,6 @@ describe("application-decision-messages", () => {
         "拟用昵称已被占用：小李；申请已终结，请申请人重新提交。"
       );
     });
-
-    it("未知状态返回兜底提示", () => {
-      expect(getFriendlyDecisionFeedback("unknown", "小李")).toBe(
-        "申请状态已更新，请查看最新待处理申请。"
-      );
-    });
   });
 
   describe("getFriendlyApprovalDisabledReason", () => {
@@ -28,11 +22,7 @@ describe("application-decision-messages", () => {
       expect(getFriendlyApprovalDisabledReason("ROOM_MEMBER_LIMIT")).toBe("房间成员人数已达上限");
       expect(getFriendlyApprovalDisabledReason("JOINED_ROOM_LIMIT")).toBe("申请人加入的房间数已达上限");
       expect(getFriendlyApprovalDisabledReason("INVITE_RESET")).toBe("邀请已重置，该申请已取消");
-    });
-
-    it("空或未知码返回兜底提示", () => {
       expect(getFriendlyApprovalDisabledReason(undefined)).toBe("");
-      expect(getFriendlyApprovalDisabledReason("OTHER_REASON")).toBe("当前暂无法批准该申请");
     });
   });
 });

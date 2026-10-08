@@ -1,5 +1,7 @@
-import type { JoinApplicationView } from "../shared/invite-contracts.js";
+import type { joinApplicationStatus } from "../shared/invite-contracts.js";
+import type { z } from "zod";
 
+export type JoinApplicationStatusType = z.infer<typeof joinApplicationStatus>;
 export type TimelineStepStatus = "completed" | "current" | "pending" | "failed";
 
 export interface TimelineStep {
@@ -11,12 +13,11 @@ export interface TimelineStep {
 
 export interface ApplicationTimelineView {
   steps: [TimelineStep, TimelineStep, TimelineStep];
-  canAutoNavigate: boolean;
   canReapply: boolean;
 }
 
 export function getApplicationTimeline(
-  status: JoinApplicationView["status"] | string,
+  status: JoinApplicationStatusType,
   nickname: string
 ): ApplicationTimelineView {
   const step1: TimelineStep = {
@@ -28,7 +29,6 @@ export function getApplicationTimeline(
 
   let step2: TimelineStep;
   let step3: TimelineStep;
-  let canAutoNavigate = false;
   let canReapply = false;
 
   switch (status) {
@@ -60,7 +60,6 @@ export function getApplicationTimeline(
         description: "欢迎加入！正在进入房间点歌台…",
         status: "completed"
       };
-      canAutoNavigate = true;
       break;
 
     case "rejected":
@@ -126,27 +125,10 @@ export function getApplicationTimeline(
       };
       canReapply = true;
       break;
-
-    default:
-      step2 = {
-        step: 2,
-        title: "审批状态未知",
-        description: "请刷新后查看",
-        status: "failed"
-      };
-      step3 = {
-        step: 3,
-        title: "进入房间",
-        description: "未知状态",
-        status: "failed"
-      };
-      canReapply = true;
-      break;
   }
 
   return {
     steps: [step1, step2, step3],
-    canAutoNavigate,
     canReapply
   };
 }

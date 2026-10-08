@@ -1219,8 +1219,7 @@ h1 {
   gap: 6px;
 }
 
-.room-list-card,
-.member-card {
+.room-list-card {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -1608,28 +1607,6 @@ h1 {
   margin-top: 0;
 }
 
-.member-card {
-  width: 100%;
-  min-height: 78px;
-  text-align: left;
-  color: var(--text-main);
-  cursor: pointer;
-  font-weight: 650;
-  transition: background-color var(--transition-fast),
-              border-color var(--transition-fast),
-              box-shadow var(--transition-fast),
-              transform var(--transition-fast);
-}
-
-.member-card:hover {
-  border-color: var(--border-medium);
-  background: var(--bg-subtle);
-}
-
-.member-card:active {
-  transform: scale(var(--scale-active));
-}
-
 @media (max-width: 768px) {
   .room-workspace {
     flex-direction: column;
@@ -1954,9 +1931,14 @@ h1 {
   background: var(--primary-hover);
 }
 
-/* 成员列表卡片精致升级 */
+/* 成员列表卡片 */
 .member-card {
   display: flex;
+  width: 100%;
+  min-height: 72px;
+  text-align: left;
+  color: var(--text-main);
+  cursor: pointer;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -1965,7 +1947,21 @@ h1 {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-sm);
-  transition: all var(--transition-fast);
+  font-weight: 650;
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              transform var(--transition-fast);
+}
+
+.member-card:hover {
+  border-color: var(--border-medium);
+  background: var(--bg-subtle);
+  box-shadow: var(--shadow-md);
+}
+
+.member-card:active {
+  transform: scale(var(--scale-active));
 }
 
 .member-card-left {
@@ -3119,15 +3115,41 @@ h1 {
   font-weight: 700;
   line-height: 1;
 }
-.application-review-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.processed-results-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
 }
-.application-review-list li {
-  padding: 0.75rem 0;
-  border-bottom: 1px solid #e5e8ef;
-  overflow-wrap: anywhere;
+
+.pending-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.processed-section-title {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.drawer-all-done-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: var(--success-text);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  text-align: center;
+  margin-top: 12px;
 }
 
 /* 歌单空状态与失效卡片 */
