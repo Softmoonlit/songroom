@@ -145,7 +145,50 @@ sudo systemctl enable --now songroom
 
 ### 场景三：升级检查与前后端原子发布（Atomic Release）
 
-为保证升级期间前后端产物一致且数据库不发生并发损坏，发布必须遵循“独立目录构建 -> 停机 -> 离线迁移 -> 软链接原子切换 -> 启动”的标准流程：
+为保证升级期间前后端产物一致且数据库不发生并发损坏，发布遵循标准原子发布流程。
+
+> **提示（低内存 VPS 建议）**：若服务器内存较低（如 2GB 以下且常驻其他服务），在服务器本地运行 `pnpm build`（Vite + tsc）易触发内存耗尽（OOM）。推荐采用**本地构建产物直接同步**（方案 A）；若服务器内存充裕可采用**服务端从源码构建**（方案 B）。
+
+#### 方案 A：本地构建产物同步发布（低内存环境推荐，0 编译开销）
+
+```bash
+# 1. 本地机（配置充裕）执行编译
+pnpm build
+
+# 2. 远端服务器初始化新版本目录并复用依赖（硬链接秒级完成，零冗余磁盘开销）
+RELEASE_TAG=$(date +%Y%m%d%H%M%S)
+TARGET_DIR="/opt/songroom/releases/${RELEASE_TAG}"
+ssh aliyun "
+mkdir -p \"${TARGET_DIR}/apps/songroom\" \"${TARGET_DIR}/packages/netease-vendor\"
+if [ -d /opt/songroom/releases/initial/node_modules ]; then
+  cp -al /opt/songroom/releases/initial/node_modules \"${TARGET_DIR}/\"
+fi
+if [ -d /opt/songroom/releases/initial/apps/songroom/node_modules ]; then
+  cp -al /opt/songroom/releases/initial/apps/songroom/node_modules \"${TARGET_DIR}/apps/songroom/\"
+fi
+if [ -d /opt/songroom/releases/initial/packages/netease-vendor/node_modules ]; then
+  cp -al /opt/songroom/releases/initial/packages/netease-vendor/node_modules \"${TARGET_DIR}/packages/netease-vendor/\" || true
+fi
+"
+
+# 3. 同步源码与编译好的 dist 产物至服务器
+rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.scratch' --exclude='apps/songroom/tests' ./ root@aliyun:${TARGET_DIR}/
+ssh aliyun "chown -R songroom:songroom ${TARGET_DIR}"
+
+# 4. 停机保证独占，执行数据库迁移与只读自检
+ssh aliyun "
+sudo systemctl stop songroom
+sudo -H -u songroom SONGROOM_CONFIG=/etc/songroom/config.json node \"${TARGET_DIR}/apps/songroom/dist/cli.js\" db migrate
+sudo -H -u songroom SONGROOM_CONFIG=/etc/songroom/config.json node \"${TARGET_DIR}/apps/songroom/dist/cli.js\" db check
+
+# 5. 原子切换软链接并恢复启动
+sudo ln -sfn \"${TARGET_DIR}\" /opt/songroom/current
+sudo systemctl start songroom
+curl -fsS http://127.0.0.1:3000/healthz
+"
+```
+
+#### 方案 B：服务端直接构建发布（服务器内存 4GB+ 适用）
 
 ```bash
 RELEASE_TAG=$(date +%Y%m%d%H%M%S)
