@@ -1,10 +1,6 @@
 import { z } from "zod";
-import { uuidv7 } from "./contracts.js";
+import { normalizedText, uuidv7 } from "./contracts.js";
 
-function normalizedText(max: number) {
-  return z.string().transform(value => value.trim().normalize("NFC"))
-    .refine(value => [...value].length >= 1 && [...value].length <= max && !/\p{Cc}/u.test(value), `请输入 1 到 ${max} 个字符，不能包含控制字符`);
-}
 export const roomName = normalizedText(16);
 export const roomNickname = normalizedText(12);
 export const roomRole = z.enum(["owner", "roommate"]);

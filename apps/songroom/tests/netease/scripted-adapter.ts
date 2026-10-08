@@ -10,6 +10,7 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
   userPlaylists?: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> | AdapterResult<"userPlaylists">;
   playlistCreate?: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> | AdapterResult<"playlistCreate">;
   playlistDelete?: (input: Extract<AdapterInput, { operation: "playlistDelete" }>) => Promise<AdapterResult<"playlistDelete">> | AdapterResult<"playlistDelete">;
+  trackAdd?: (input: Extract<AdapterInput, { operation: "trackAdd" }>) => Promise<AdapterResult<"trackAdd">> | AdapterResult<"trackAdd">;
   #qr = 0;
   async assertVendorIntegrity() {}
   async dispose() {}
@@ -35,6 +36,10 @@ export class ScriptedNeteaseAdapter implements NeteaseAdapter {
         break;
       case "playlistDelete":
         if (this.playlistDelete) return await this.playlistDelete(input) as AdapterResult<I["operation"]>;
+        data = { acknowledged: true };
+        break;
+      case "trackAdd":
+        if (this.trackAdd) return await this.trackAdd(input) as AdapterResult<I["operation"]>;
         data = { acknowledged: true };
         break;
       case "playlistDetail":

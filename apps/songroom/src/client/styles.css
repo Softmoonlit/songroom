@@ -1690,5 +1690,34 @@ h1 {
   color: #1e40af;
 }
 
+@media (prefers-contrast: more) {
+  :root {
+    color: #000000;
+    background: #ffffff;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button,
+  .logout-button,
+  input {
+    border: 2px solid currentColor;
+  }
+
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible {
+    outline: 3px solid #000000;
+    outline-offset: 3px;
+  }
+}
+
+@media (forced-colors: active) {
+  button,
+  input {
+    forced-color-adjust: auto;
+  }
+}
+
 
 

@@ -41,6 +41,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.63.0",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "24.10.1",

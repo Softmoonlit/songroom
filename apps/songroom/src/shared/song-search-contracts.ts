@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { adapterErrorCodeSchema } from "../netease/protocol.js";
-import { uuidv7 } from "./contracts.js";
+import { normalizedText, uuidv7 } from "./contracts.js";
 
 export const songCandidate = z.strictObject({
   id: z.string().min(1),
@@ -10,8 +10,10 @@ export const songCandidate = z.strictObject({
 });
 export type SongCandidate = z.infer<typeof songCandidate>;
 
+export const searchText = normalizedText(200);
+
 export const searchCommand = z.strictObject({
-  query: z.string().trim().min(1).max(400)
+  query: searchText
 });
 export type SearchCommand = z.infer<typeof searchCommand>;
 

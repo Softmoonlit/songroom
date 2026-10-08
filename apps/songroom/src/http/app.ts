@@ -33,6 +33,7 @@ import { registerAdminOperationRoutes } from "./admin-operations.js";
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 
 export interface SongRoomApp {
+  config: AppConfig;
   fastify: FastifyInstance;
   database: AppDatabase;
   auth: SongRoomAuth;
@@ -148,6 +149,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       for (const [name, value] of Object.entries(request.headers as Record<string, string | string[] | undefined>)) {
         if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
       }
+      headers.set("x-forwarded-for", request.ip);
       const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== undefined && request.body !== null;
       if (!hasBody) {
         headers.delete("content-type");
@@ -259,5 +261,5 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     fastify.log.info({ state, address }, "application lifecycle");
     return address;
   };
-  return { fastify, database, auth, eventStream, searchService, playlists, scheduler, abnormalService, getState: () => state, listen, drain, close };
+  return { config, fastify, database, auth, eventStream, searchService, playlists, scheduler, abnormalService, getState: () => state, listen, drain, close };
 }

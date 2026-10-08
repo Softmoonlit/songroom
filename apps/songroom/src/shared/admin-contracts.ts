@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizedText } from "./contracts.js";
 
 export const abnormalOperationTypeSchema = z.enum([
   "unknown_song_write",
@@ -66,8 +67,10 @@ export const abnormalOperationDetailSchema = z.object({
 });
 export type AbnormalOperationDetail = z.infer<typeof abnormalOperationDetailSchema>;
 
-export const abnormalActionRequestSchema = z.object({
-  reason: z.string().min(1).max(500),
+export const adminReason = normalizedText(500);
+
+export const abnormalActionRequestSchema = z.strictObject({
+  reason: adminReason,
   expectedVersion: z.number().int().positive()
 });
 export type AbnormalActionRequest = z.infer<typeof abnormalActionRequestSchema>;

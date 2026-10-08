@@ -5,6 +5,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { AppConfig } from "./config.js";
 import { type AppDatabase } from "./db/database.js";
 import { authSchema } from "./db/schema.js";
+import { accountName } from "./shared/contracts.js";
 
 export const MAX_ACCOUNTS = 100;
 export const SESSION_EXPIRES_IN_SECONDS = 7 * 24 * 60 * 60;
@@ -51,10 +52,28 @@ export function createAuth(database: AppDatabase, config: AppConfig) {
     databaseHooks: {
       user: {
         create: {
-          before: async () => {
+          before: async (user) => {
             const count = database.$client.prepare("SELECT COUNT(*) AS count FROM user").pluck().get() as number;
             if (count >= MAX_ACCOUNTS) {
               throw new APIError("FORBIDDEN", { message: "ACCOUNT_LIMIT_REACHED" });
+            }
+            if (user.name) {
+              const validated = accountName.safeParse(user.name);
+              if (!validated.success) {
+                throw new APIError("BAD_REQUEST", { message: "请输入 1 到 40 个字符，不能包含控制字符" });
+              }
+              return { data: { ...user, name: validated.data } };
+            }
+          }
+        },
+        update: {
+          before: async (user) => {
+            if (user.name !== undefined) {
+              const validated = accountName.safeParse(user.name);
+              if (!validated.success) {
+                throw new APIError("BAD_REQUEST", { message: "请输入 1 到 40 个字符，不能包含控制字符" });
+              }
+              return { data: { ...user, name: validated.data } };
             }
           }
         }
