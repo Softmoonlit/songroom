@@ -376,6 +376,14 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const formatTime = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
   const candidates = searchQuery.data?.songs ?? [];
 
+  const handleCreatePlaylist = () => {
+    if (mutation.isPending || view.disabledReason) return;
+    const next = command ?? { idempotencyKey: uuidv7() };
+    setCommand(next);
+    setMessage("");
+    mutation.mutate(next);
+  };
+
   return <>
     <h2>公共歌单</h2>
     {!view.playlist ? (
@@ -397,13 +405,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               className="primary-button"
               type="button"
               disabled={mutation.isPending || query.isFetching || view.disabledReason !== null}
-              onClick={() => {
-                if (mutation.isPending || view.disabledReason) return;
-                const next = command ?? { idempotencyKey: uuidv7() };
-                setCommand(next);
-                setMessage("");
-                mutation.mutate(next);
-              }}
+              onClick={handleCreatePlaylist}
             >
               {mutation.isPending ? "正在提交创建…" : "重新创建公共歌单"}
             </button>
@@ -425,13 +427,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               className="primary-button"
               type="button"
               disabled={mutation.isPending || query.isFetching || view.disabledReason !== null}
-              onClick={() => {
-                if (mutation.isPending || view.disabledReason) return;
-                const next = command ?? { idempotencyKey: uuidv7() };
-                setCommand(next);
-                setMessage("");
-                mutation.mutate(next);
-              }}
+              onClick={handleCreatePlaylist}
             >
               {mutation.isPending ? "正在提交创建…" : "创建公共歌单"}
             </button>

@@ -1753,12 +1753,6 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.sync-time {
-  margin: 0.25rem 0;
-  font-size: 0.85rem;
-  color: #666;
-}
-
 /* 歌单空状态与失效卡片 */
 .playlist-empty-state-card {
   padding: 2.5rem 1.5rem;
@@ -2164,7 +2158,8 @@ h1 {
 .track-requesters-side {
   flex-shrink: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
   align-items: center;
   justify-content: flex-end;
   gap: 0.35rem;
