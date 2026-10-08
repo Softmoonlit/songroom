@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Music2 } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { v7 as uuidv7 } from "uuid";
 import {
@@ -23,11 +23,24 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
   });
   const [name, setName] = useState("");
   const [nickname, setNickname] = useState("");
-  const [confirmedAuthorizationId, setConfirmedAuthorizationId] = useState<string | null>(null);
+  const [selectedAuthorizationId, setSelectedAuthorizationId] = useState<string | null>(null);
+  const initialSelectedRef = useRef(false);
   const [validation, setValidation] = useState("");
   const [lastCommand, setLastCommand] = useState<RoomCreateCommand | null>(null);
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
+
+  const authorization = query.data?.authorization;
+  const allowed = !!authorization && query.data?.allowedActions.includes("createRoom");
+
+  // 当存在有效授权且具备建房权限时，初始默认选中该账号作为播放源
+  useEffect(() => {
+    if (authorization && allowed && !initialSelectedRef.current) {
+      initialSelectedRef.current = true;
+      setSelectedAuthorizationId(authorization.id);
+    }
+  }, [authorization, allowed]);
+
   const mutation = useMutation({
     mutationFn: (command: RoomCreateCommand) => {
       controller.current = new AbortController();
@@ -47,7 +60,7 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
           error.code
         )
       )
-        setConfirmedAuthorizationId(null);
+        setSelectedAuthorizationId(null);
     },
     onSuccess: async room => {
       if (controller.current?.signal.aborted) return;
@@ -55,9 +68,8 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
       if (!controller.current?.signal.aborted) navigate(`/rooms/${room.id}`);
     }
   });
-  const authorization = query.data?.authorization;
-  const allowed = !!authorization && query.data?.allowedActions.includes("createRoom");
-  const confirmed = !!authorization && confirmedAuthorizationId === authorization.id;
+
+  const confirmed = !!authorization && selectedAuthorizationId === authorization.id;
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!authorization || !allowed || !confirmed || mutation.isPending) return;
@@ -82,7 +94,8 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
     mutation.mutate(command);
   }
   function reloadIdentity() {
-    setConfirmedAuthorizationId(null);
+    initialSelectedRef.current = false;
+    setSelectedAuthorizationId(null);
     mutation.reset();
     void query.refetch();
   }
@@ -94,7 +107,7 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
       </Link>
       <div className="page-heading">
         <h1 id="create-room-heading">创建房间</h1>
-        <p>房间创建后你将成为房主。建房不会创建网易云歌单。</p>
+        <p>创建后你将成为房主，可邀请室友共同点歌。</p>
       </div>
       {query.isPending ? (
         <p role="status">正在读取网易云身份…</p>
@@ -102,33 +115,88 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
         <QueryError error={query.error} retrying={query.isFetching} retry={reloadIdentity} />
       ) : (
         <form className="settings-card room-create-form" onSubmit={submit}>
-          {authorization && (
-            <>
-              <h2>用于此房间的网易云账号</h2>
-              <dl className="netease-identity">
-                <div>
-                  <dt>网易云昵称</dt>
-                  <dd>{authorization.identity.nickname || "未设置昵称"}</dd>
+          <div className="source-account-selection-section">
+            <h2>选择房间播放源账号</h2>
+            {!allowed ? (
+              <div className="playback-source-unbound">
+                <p role="status">
+                  {query.data.disabledReason
+                    ? errorMessages[query.data.disabledReason]
+                    : "暂时无法创建房间，请稍后重试。"}
+                </p>
+                <Link className="text-link" to="/account">
+                  前往账号设置
+                </Link>
+              </div>
+            ) : (
+              <div className="playback-source-list" role="radiogroup" aria-label="选择房间播放源账号">
+                <label
+                  className={`playback-source-card selectable ${confirmed ? "selected" : ""}`}
+                  htmlFor="playback-source-netease"
+                >
+                  <div className="playback-source-radio-col">
+                    <input
+                      id="playback-source-netease"
+                      type="radio"
+                      name="playbackSource"
+                      value={authorization.id}
+                      checked={confirmed}
+                      disabled={mutation.isPending}
+                      onChange={() => setSelectedAuthorizationId(authorization.id)}
+                      aria-label={`网易云音乐 - ${authorization.identity.nickname || "未设置昵称"}`}
+                    />
+                  </div>
+                  <div className="playback-source-content">
+                    <div className="playback-source-header">
+                      <div className="playback-source-title">
+                        <span className="platform-icon" aria-hidden="true">
+                          <Music2 size={16} />
+                        </span>
+                        <strong>网易云音乐</strong>
+                      </div>
+                      <span className="platform-badge active">已授权</span>
+                    </div>
+                    <dl className="netease-identity">
+                      <div>
+                        <dt>网易云昵称</dt>
+                        <dd>{authorization.identity.nickname || "未设置昵称"}</dd>
+                      </div>
+                      <div>
+                        <dt>网易云账号 ID</dt>
+                        <dd>{authorization.identity.accountId}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </label>
+
+                {/* 预留未来平台单选卡片扩展位 */}
+                <div className="playback-source-card placeholder" aria-disabled="true">
+                  <div className="playback-source-radio-col">
+                    <input
+                      type="radio"
+                      disabled
+                      aria-disabled="true"
+                      name="playbackSource"
+                      aria-label="QQ 音乐（即将支持）"
+                    />
+                  </div>
+                  <div className="playback-source-content">
+                    <div className="playback-source-header">
+                      <div className="playback-source-title">
+                        <span className="platform-icon placeholder" aria-hidden="true">
+                          <Music2 size={16} />
+                        </span>
+                        <strong>QQ 音乐</strong>
+                      </div>
+                      <span className="platform-badge coming-soon">即将支持</span>
+                    </div>
+                    <p className="platform-placeholder-hint">暂未开放此平台授权</p>
+                  </div>
                 </div>
-                <div>
-                  <dt>网易云账号 ID</dt>
-                  <dd>{authorization.identity.accountId}</dd>
-                </div>
-              </dl>
-            </>
-          )}
-          {!allowed && (
-            <>
-              <p role="status">
-                {query.data.disabledReason
-                  ? errorMessages[query.data.disabledReason]
-                  : "暂时无法创建房间，请稍后重试。"}
-              </p>
-              <Link className="text-link" to="/account">
-                前往账号设置
-              </Link>
-            </>
-          )}
+              </div>
+            )}
+          </div>
+
           {allowed && (
             <>
               <label>
@@ -136,33 +204,22 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
                 <input
                   value={name}
                   disabled={mutation.isPending}
+                  placeholder="输入房间名称（1 到 16 个字符）"
                   onChange={event => setName(event.target.value)}
                   required
                   autoComplete="off"
                 />
-                <span className="field-help">1 到 16 个字符，房间名称可以重复。</span>
               </label>
               <label>
                 我的房间昵称
                 <input
                   value={nickname}
                   disabled={mutation.isPending}
+                  placeholder="输入你在房间内的昵称（1 到 12 个字符）"
                   onChange={event => setNickname(event.target.value)}
                   required
                   autoComplete="off"
                 />
-                <span className="field-help">1 到 12 个字符，只用于这个房间。</span>
-              </label>
-              <label className="identity-confirmation">
-                <input
-                  type="checkbox"
-                  disabled={mutation.isPending}
-                  checked={confirmed}
-                  onChange={event =>
-                    setConfirmedAuthorizationId(event.target.checked ? authorization!.id : null)
-                  }
-                />
-                确认使用此网易云账号创建房间
               </label>
               <button
                 className="primary-button"

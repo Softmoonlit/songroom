@@ -5,8 +5,20 @@ import { roomName, roomNickname, roomShellView } from "../shared/room-contracts"
 import { errorMessage, errorMessageForCode, request, RoomRequestError } from "./room-http";
 
 const identityFields = {
-  name: { schema: roomName, label: "房间名称", saved: "房间名称已更新。", button: "保存房间名称" },
-  nickname: { schema: roomNickname, label: "我的房间昵称", saved: "我的房间昵称已更新。", button: "保存我的昵称" }
+  name: {
+    schema: roomName,
+    label: "房间名称",
+    placeholder: "输入新的房间名称（1 到 16 个字符）",
+    saved: "房间名称已更新。",
+    button: "保存房间名称"
+  },
+  nickname: {
+    schema: roomNickname,
+    label: "我的房间昵称",
+    placeholder: "输入你在房间内的新昵称（1 到 12 个字符）",
+    saved: "我的房间昵称已更新。",
+    button: "保存我的昵称"
+  }
 };
 
 export function IdentityForm({ sessionId, roomId, field, current, disabledReason }: {
@@ -61,7 +73,16 @@ export function IdentityForm({ sessionId, roomId, field, current, disabledReason
     setMessage("");
     mutation.mutate(next);
   }}>
-    <label>{config.label}<input value={input} disabled={mutation.isPending || !!disabledReason} onChange={event => { setInput(event.target.value); setMessage(""); }} autoComplete="off" /></label>
+    <label>
+      {config.label}
+      <input
+        value={input}
+        placeholder={config.placeholder}
+        disabled={mutation.isPending || !!disabledReason}
+        onChange={event => { setInput(event.target.value); setMessage(""); }}
+        autoComplete="off"
+      />
+    </label>
     {disabledReason && <p className="field-help">{errorMessageForCode(disabledReason)}</p>}
     <button className="primary-button" type="submit" disabled={mutation.isPending || !!disabledReason}>{mutation.isPending ? "保存中…" : config.button}</button>
     {message && <p className={saved ? "netease-status" : "form-message"} role={saved ? "status" : "alert"}>{message}</p>}

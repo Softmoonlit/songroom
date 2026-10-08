@@ -79,10 +79,11 @@ test("确认本地网易云身份后建房，进入公共歌单而不创建云�
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await expect(page.getByText(identity.nickname, { exact: true })).toBeVisible();
   await expect(page.getByText(identity.accountId, { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "选择房间播放源账号" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: /网易云/ })).toBeChecked();
   await page.getByLabel("房间名称").fill(" 晚间音乐 ");
   await page.getByLabel("我的房间昵称").fill(" 小林 ");
-  await expect(page.getByRole("button", { name: "创建并进入房间" })).toBeDisabled();
-  await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
+  await expect(page.getByRole("button", { name: "创建并进入房间" })).toBeEnabled();
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page).toHaveURL(new RegExp(`/rooms/${roomId}$`));
   await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
@@ -183,7 +184,6 @@ test("完整应用：注册扫码绑定后创建同名房间，身份规范化�
     await page.getByRole("link", { name: "创建房间", exact: true }).click();
     await page.getByLabel("房间名称").fill(" 同名宿舍 ");
     await page.getByLabel("我的房间昵称").fill(nickname);
-    await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
     await page.getByRole("button", { name: "创建并进入房间" }).click();
     await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     createdUrls.push(page.url());
@@ -316,7 +316,6 @@ test("离开建房页后，晚到的建房成功不会跳转回旧房间", async
   await page.goto("/rooms/new");
   await page.getByLabel("房间名称").fill("晚间音乐");
   await page.getByLabel("我的房间昵称").fill("小林");
-  await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
   const sending = page.waitForRequest(
     request => request.url().endsWith("/api/rooms") && request.method() === "POST"
   );
@@ -355,14 +354,14 @@ test("建房输入越界不提交，授权失效后撤销身份确认并展示�
   await page.goto("/rooms/new");
   await page.getByLabel("房间名称").fill("abcdefghijklmnopq");
   await page.getByLabel("我的房间昵称").fill("小林");
-  await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
+  await expect(page.getByRole("radio", { name: /网易云/ })).toBeChecked();
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page.getByRole("alert")).toContainText("16");
   expect(posts).toBe(0);
   await page.getByLabel("房间名称").fill("晚间音乐");
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page.getByRole("alert")).toHaveText("请先在账号设置中绑定有效的网易云账号。");
-  await expect(page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" })).not.toBeChecked();
+  await expect(page.getByRole("radio", { name: /网易云/ })).not.toBeChecked();
   await expect(page.getByRole("button", { name: "创建并进入房间" })).toBeDisabled();
   await expect(page.getByText("raw MUSIC_U_sensitive")).toHaveCount(0);
   await page.getByRole("button", { name: "重新读取网易云身份" }).click();

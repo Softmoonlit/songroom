@@ -211,55 +211,103 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             pendingCount={query.data.pendingCount}
           />
         </section>
-        <section hidden={active !== "settings"} aria-label="房间设置">
-          <h2>房间设置</h2>
-          {query.data.allowedActions.includes("renameRoom") && <IdentityForm sessionId={sessionId} roomId={roomId} field="name" current={room.name} disabledReason={query.data.disabledReasons.renameRoom} />}
-          {query.data.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={room.nickname} />}
-          <dl className="netease-identity">
-            <div>
-              <dt>房间名称</dt>
-              <dd>{room.name}</dd>
+        <section hidden={active !== "settings"} aria-label="房间设置" className="room-settings-pane">
+          <div className="room-settings-header">
+            <h2>房间设置</h2>
+            <p className="room-settings-subtitle">管理房间基础属性、关联播放源与成员权限。</p>
+          </div>
+
+          <div className="room-settings-section">
+            <div className="room-settings-section-header">
+              <h3>基本信息</h3>
+              <p>修改房间公开名称与你在该房间内显示的昵称。</p>
             </div>
-            <div>
-              <dt>我的房间昵称</dt>
-              <dd>{room.nickname}</dd>
+            <div className="room-settings-cards">
+              {query.data.allowedActions.includes("renameRoom") && (
+                <IdentityForm sessionId={sessionId} roomId={roomId} field="name" current={room.name} disabledReason={query.data.disabledReasons.renameRoom} />
+              )}
+              {query.data.allowedActions.includes("renameNickname") && (
+                <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={room.nickname} />
+              )}
             </div>
-            <div>
-              <dt>当前角色</dt>
-              <dd>{roleLabels[room.role]}</dd>
+          </div>
+
+          <div className="room-settings-section">
+            <div className="room-settings-section-header">
+              <h3>关联平台账号</h3>
+              <p>本房间的公共歌单与播放同步依赖房主授权的音乐平台。</p>
             </div>
-          </dl>
-          {query.data.allowedActions.includes("leaveRoom") && (
-            <div className="room-leave-action">
-              <DestructiveConfirmDialog
-                triggerText="退出房间"
-                title="退出房间？"
-                descriptionText={`确定要退出房间“${room.name}”吗？退出后将立即撤销你在该房间的所有访问与操作权限，并清除你的点歌人标签。`}
-                badges={[
-                  { label: "权限立即撤销", variant: "danger" },
-                  { label: "清除点歌标签", variant: "danger" },
-                  { label: `释放昵称“${room.nickname}”`, variant: "neutral" }
-                ]}
-                confirmText="确认退出"
-                pendingText="正在退出…"
-                cancelText="取消"
-                open={leaveOpen}
-                onOpenChange={open => { setLeaveOpen(open); if (open) setLeaveError(""); }}
-                onConfirm={() => leaveMutation.mutate()}
-                isPending={leaveMutation.isPending}
-                error={leaveError}
-              />
+            <div className="settings-card platform-linked-card">
+              <div className="platform-linked-header">
+                <div className="platform-title-wrap">
+                  <span className="platform-icon" aria-hidden="true"><Music2 size={18} /></span>
+                  <div className="platform-title-text">
+                    <strong>网易云音乐</strong>
+                    <span className="platform-meta-tag">{room.role === "owner" ? "使用房主（本人）授权" : "使用房主授权"}</span>
+                  </div>
+                </div>
+                <span className="platform-badge active">主播放源</span>
+              </div>
+              <p className="platform-linked-desc">
+                房间的歌曲搜索、公共点歌与歌单快照均以此账号作为权威来源。如需管理或重新授权平台，请前往
+                <Link className="text-link inline-link" to="/account">账号设置</Link>。
+              </p>
             </div>
-          )}
-          {query.data.allowedActions.includes("deleteRoom") && (
-            <div className="room-delete-action">
-              <DeleteRoomDialog
-                sessionId={sessionId}
-                roomId={roomId}
-                roomName={room.name}
-                open={deleteOpen}
-                onOpenChange={setDeleteOpen}
-              />
+          </div>
+
+          {(query.data.allowedActions.includes("leaveRoom") || query.data.allowedActions.includes("deleteRoom")) && (
+            <div className="room-settings-section danger-zone-section">
+              <div className="room-settings-section-header danger-header">
+                <h3 className="danger-zone-heading">危险区域</h3>
+                <p>下列操作为破坏性操作，执行后无法恢复，请谨慎操作。</p>
+              </div>
+              <div className="danger-zone-card">
+                {query.data.allowedActions.includes("leaveRoom") && (
+                  <div className="danger-action-row">
+                    <div className="danger-action-info">
+                      <strong>退出房间</strong>
+                      <p>退出后将立即失去此房间访问与操作权限，清除本人点歌人标签并释放昵称。</p>
+                    </div>
+                    <div className="danger-action-trigger">
+                      <DestructiveConfirmDialog
+                        triggerText="退出房间"
+                        title="退出房间？"
+                        descriptionText={`确定要退出房间“${room.name}”吗？退出后将立即撤销你在该房间的所有访问与操作权限，并清除你的点歌人标签。`}
+                        badges={[
+                          { label: "权限立即撤销", variant: "danger" },
+                          { label: "清除点歌标签", variant: "danger" },
+                          { label: `释放昵称“${room.nickname}”`, variant: "neutral" }
+                        ]}
+                        confirmText="确认退出"
+                        pendingText="正在退出…"
+                        cancelText="取消"
+                        open={leaveOpen}
+                        onOpenChange={open => { setLeaveOpen(open); if (open) setLeaveError(""); }}
+                        onConfirm={() => leaveMutation.mutate()}
+                        isPending={leaveMutation.isPending}
+                        error={leaveError}
+                      />
+                    </div>
+                  </div>
+                )}
+                {query.data.allowedActions.includes("deleteRoom") && (
+                  <div className="danger-action-row">
+                    <div className="danger-action-info">
+                      <strong>删除房间</strong>
+                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动专用公共歌单清理。</p>
+                    </div>
+                    <div className="danger-action-trigger">
+                      <DeleteRoomDialog
+                        sessionId={sessionId}
+                        roomId={roomId}
+                        roomName={room.name}
+                        open={deleteOpen}
+                        onOpenChange={setDeleteOpen}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>

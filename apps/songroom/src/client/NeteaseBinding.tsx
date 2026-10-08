@@ -1,8 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { Music2 } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import type { z } from "zod";
 import { neteaseBindingView, qrFlowView, type QrFlowView } from "../shared/netease-contracts";
+import { FUTURE_PLATFORMS } from "./music-platforms";
 
 const errorMessages: Record<string, string> = {
   SESSION_REQUIRED: "点歌台会话已失效，请重新登录。",
@@ -165,91 +167,264 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
 
   const binding = bindingQuery.data?.binding;
   return (
-    <section className="settings-card netease-binding" aria-labelledby="netease-heading">
-      <h2 id="netease-heading">网易云账号</h2>
-      {bindingQuery.isPending ? <p role="status">正在读取网易云绑定…</p> : bindingQuery.isError ? (
-        <>
-          <p className="form-message" role="alert">{errorMessage(bindingQuery.error)}</p>
-          <button className="secondary-button" type="button" disabled={bindingQuery.isFetching} onClick={() => void bindingQuery.refetch()}>重新读取绑定状态</button>
-        </>
-      ) : binding ? (
-        <>
-          {binding.status === "active" ? (
+    <section className="platform-authorizations-section" aria-labelledby="platforms-heading">
+      <div className="section-header">
+        <h2 id="platforms-heading">音乐平台授权</h2>
+        <p className="section-description">绑定音乐平台账号作为房间点歌与公共歌单的同步播放源。</p>
+      </div>
+
+      <div className="platform-cards-grid">
+        <div className="settings-card platform-card active-platform-card netease-binding" aria-labelledby="netease-heading">
+          <div className="platform-card-header">
+            <div className="platform-title-wrap">
+              <span className="platform-icon" aria-hidden="true">
+                <Music2 size={18} />
+              </span>
+              <h3 id="netease-heading" className="platform-name">网易云账号</h3>
+            </div>
+            <span
+              className={`platform-badge ${
+                binding?.status === "active"
+                  ? "active"
+                  : binding?.status === "waitingAuthorization"
+                  ? "warning"
+                  : "coming-soon"
+              }`}
+            >
+              {binding?.status === "active"
+                ? "已授权"
+                : binding?.status === "waitingAuthorization"
+                ? "待重新授权"
+                : "未绑定"}
+            </span>
+          </div>
+
+          {bindingQuery.isPending ? (
+            <p role="status">正在读取网易云绑定…</p>
+          ) : bindingQuery.isError ? (
             <>
-              <p className="netease-status" role="status">已绑定网易云账号</p>
-              <Identity identity={binding.identity} />
-              {confirmingRevoke ? (
-                <div className="revoke-confirm-card">
-                  <p>确定要退出网易云授权吗？退出后，你创建的全部房间将暂停与网易云的同步，直到你重新授权同一个网易云账号。</p>
-                  <div className="action-row">
-                    <button className="primary-button" type="button" disabled={pending === "revoke"} onClick={() => void act("revoke")}>
-                      {pending === "revoke" ? "正在退出…" : "确认退出授权"}
-                    </button>
-                    <button className="secondary-button" type="button" disabled={pending === "revoke"} onClick={() => setConfirmingRevoke(false)}>
-                      取消
-                    </button>
-                  </div>
-                </div>
+              <p className="form-message" role="alert">
+                {errorMessage(bindingQuery.error)}
+              </p>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={bindingQuery.isFetching}
+                onClick={() => void bindingQuery.refetch()}
+              >
+                重新读取绑定状态
+              </button>
+            </>
+          ) : binding ? (
+            <>
+              {binding.status === "active" ? (
+                <>
+                  <p className="netease-status" role="status">
+                    已绑定网易云账号
+                  </p>
+                  <Identity identity={binding.identity} />
+                  {confirmingRevoke ? (
+                    <div className="revoke-confirm-card">
+                      <p>
+                        确定要退出网易云授权吗？退出后，你创建的全部房间将暂停与网易云的同步，直到你重新授权同一个网易云账号。
+                      </p>
+                      <div className="action-row">
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={pending === "revoke"}
+                          onClick={() => void act("revoke")}
+                        >
+                          {pending === "revoke" ? "正在退出…" : "确认退出授权"}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={pending === "revoke"}
+                          onClick={() => setConfirmingRevoke(false)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    bindingQuery.data?.allowedActions.includes("revoke") && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={pending !== null}
+                        onClick={() => setConfirmingRevoke(true)}
+                      >
+                        退出网易云授权
+                      </button>
+                    )
+                  )}
+                </>
               ) : (
-                bindingQuery.data?.allowedActions.includes("revoke") && (
-                  <button className="secondary-button" type="button" disabled={pending !== null} onClick={() => setConfirmingRevoke(true)}>
-                    退出网易云授权
-                  </button>
-                )
+                <>
+                  <p className="netease-status warning" role="status">
+                    网易云授权已退出，等待重新授权
+                  </p>
+                  <Identity identity={binding.identity} />
+                  <p className="field-help">
+                    原账号绑定已保留。请使用同一个网易云账号重新扫码恢复授权。
+                  </p>
+                  {flow && (
+                    <div className="netease-flow">
+                      <p role="status">
+                        {flow.status === "awaitingConfirmation"
+                          ? "身份已核实，请确认重新授权。"
+                          : flow.status === "scanned"
+                          ? "已扫码，请在网易云中确认授权，再检查状态。"
+                          : "请用同一个网易云音乐 App 扫码并确认授权。"}
+                      </p>
+                      {flow.qrImage && (
+                        <img className="netease-qr" src={flow.qrImage} alt="网易云授权二维码" />
+                      )}
+                      <p className="field-help">
+                        二维码有效至{" "}
+                        <time dateTime={flow.expiresAt}>
+                          {new Date(flow.expiresAt).toLocaleTimeString("zh-CN")}
+                        </time>
+                        ，过期后请重新扫码。
+                      </p>
+                      {flow.identity && <Identity identity={flow.identity} />}
+                      {flow.allowedActions.includes("check") && (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={pending !== null}
+                          onClick={() => void act("check")}
+                        >
+                          {pending === "check" ? "检查中…" : "检查扫码状态"}
+                        </button>
+                      )}
+                      {flow.identity && flow.allowedActions.includes("confirm") && (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={pending !== null}
+                          onClick={() => void act("confirm")}
+                        >
+                          {pending === "confirm" ? "确认中…" : "确认重新授权"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {bindingQuery.data?.allowedActions.includes("startQr") && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={pending === "start" || pending === "confirm"}
+                      onClick={() => void act("start")}
+                    >
+                      {pending === "start"
+                        ? "正在生成二维码…"
+                        : flow
+                        ? "重新扫码（替代当前流程）"
+                        : "重新扫码授权"}
+                    </button>
+                  )}
+                </>
               )}
             </>
           ) : (
             <>
-              <p className="netease-status warning" role="status">网易云授权已退出，等待重新授权</p>
-              <Identity identity={binding.identity} />
-              <p className="field-help">原账号绑定已保留。请使用同一个网易云账号重新扫码恢复授权。</p>
+              <p>尚未绑定网易云账号</p>
               {flow && (
                 <div className="netease-flow">
-                  <p role="status">{flow.status === "awaitingConfirmation" ? "身份已核实，请确认重新授权。" : flow.status === "scanned" ? "已扫码，请在网易云中确认授权，再检查状态。" : "请用同一个网易云音乐 App 扫码并确认授权。"}</p>
-                  {flow.qrImage && <img className="netease-qr" src={flow.qrImage} alt="网易云授权二维码" />}
-                  <p className="field-help">二维码有效至 <time dateTime={flow.expiresAt}>{new Date(flow.expiresAt).toLocaleTimeString("zh-CN")}</time>，过期后请重新扫码。</p>
+                  <p role="status">
+                    {flow.status === "awaitingConfirmation"
+                      ? "身份已核实，请确认要绑定的账号。"
+                      : flow.status === "scanned"
+                      ? "已扫码，请在网易云中确认授权，再检查状态。"
+                      : "请用网易云音乐 App 扫码并确认授权。"}
+                  </p>
+                  {flow.qrImage && (
+                    <img className="netease-qr" src={flow.qrImage} alt="网易云授权二维码" />
+                  )}
+                  <p className="field-help">
+                    二维码有效至{" "}
+                    <time dateTime={flow.expiresAt}>
+                      {new Date(flow.expiresAt).toLocaleTimeString("zh-CN")}
+                    </time>
+                    ，过期后请重新扫码。
+                  </p>
                   {flow.identity && <Identity identity={flow.identity} />}
                   {flow.allowedActions.includes("check") && (
-                    <button className="primary-button" type="button" disabled={pending !== null} onClick={() => void act("check")}>{pending === "check" ? "检查中…" : "检查扫码状态"}</button>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={pending !== null}
+                      onClick={() => void act("check")}
+                    >
+                      {pending === "check" ? "检查中…" : "检查扫码状态"}
+                    </button>
                   )}
                   {flow.identity && flow.allowedActions.includes("confirm") && (
-                    <button className="primary-button" type="button" disabled={pending !== null} onClick={() => void act("confirm")}>{pending === "confirm" ? "确认中…" : "确认重新授权"}</button>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={pending !== null}
+                      onClick={() => void act("confirm")}
+                    >
+                      {pending === "confirm" ? "确认中…" : "确认绑定此网易云账号"}
+                    </button>
                   )}
                 </div>
               )}
               {bindingQuery.data?.allowedActions.includes("startQr") && (
-                <button className="secondary-button" type="button" disabled={pending === "start" || pending === "confirm"} onClick={() => void act("start")}>
-                  {pending === "start" ? "正在生成二维码…" : flow ? "重新扫码（替代当前流程）" : "重新扫码授权"}
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={pending === "start" || pending === "confirm"}
+                  onClick={() => void act("start")}
+                >
+                  {pending === "start"
+                    ? "正在生成二维码…"
+                    : flow
+                    ? "重新扫码（替代当前流程）"
+                    : "开始扫码绑定"}
                 </button>
               )}
             </>
           )}
-        </>
-      ) : (
-        <>
-          <p>尚未绑定网易云账号</p>
-          {flow && (
-            <div className="netease-flow">
-              <p role="status">{flow.status === "awaitingConfirmation" ? "身份已核实，请确认要绑定的账号。" : flow.status === "scanned" ? "已扫码，请在网易云中确认授权，再检查状态。" : "请用网易云音乐 App 扫码并确认授权。"}</p>
-              {flow.qrImage && <img className="netease-qr" src={flow.qrImage} alt="网易云授权二维码" />}
-              <p className="field-help">二维码有效至 <time dateTime={flow.expiresAt}>{new Date(flow.expiresAt).toLocaleTimeString("zh-CN")}</time>，过期后请重新扫码。</p>
-              {flow.identity && <Identity identity={flow.identity} />}
-              {flow.allowedActions.includes("check") && (
-                <button className="primary-button" type="button" disabled={pending !== null} onClick={() => void act("check")}>{pending === "check" ? "检查中…" : "检查扫码状态"}</button>
-              )}
-              {flow.identity && flow.allowedActions.includes("confirm") && (
-                <button className="primary-button" type="button" disabled={pending !== null} onClick={() => void act("confirm")}>{pending === "confirm" ? "确认中…" : "确认绑定此网易云账号"}</button>
-              )}
+          {message && (
+            <p className="form-message" role="alert">
+              {message}
+            </p>
+          )}
+        </div>
+
+        {FUTURE_PLATFORMS.map(platform => (
+          <div
+            key={platform.id}
+            className="settings-card platform-card placeholder-platform-card"
+            aria-disabled="true"
+          >
+            <div className="platform-card-header">
+              <div className="platform-title-wrap">
+                <span className="platform-icon placeholder" aria-hidden="true">
+                  <Music2 size={18} />
+                </span>
+                <h3 className="platform-name">{platform.name}</h3>
+              </div>
+              <span className="platform-badge coming-soon">{platform.statusText}</span>
             </div>
-          )}
-          {bindingQuery.data?.allowedActions.includes("startQr") && (
-            <button className="secondary-button" type="button" disabled={pending === "start" || pending === "confirm"} onClick={() => void act("start")}>
-              {pending === "start" ? "正在生成二维码…" : flow ? "重新扫码（替代当前流程）" : "开始扫码绑定"}
-            </button>
-          )}
-        </>
-      )}
-      {message && <p className="form-message" role="alert">{message}</p>}
+            <p className="platform-desc">{platform.description}</p>
+            <div className="platform-card-action">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled
+                aria-disabled="true"
+              >
+                敬请期待
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

@@ -196,7 +196,6 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     await page.getByRole("link", { name: "创建房间", exact: true }).click();
     await page.getByLabel("房间名称").fill("离线音乐间");
     await page.getByLabel("我的房间昵称").fill("房主");
-    await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
     await page.getByRole("button", { name: "创建并进入房间" }).click();
     await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(0);
