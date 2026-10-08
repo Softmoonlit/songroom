@@ -14,6 +14,9 @@ export class CredentialVault {
   readonly #key: Buffer;
 
   constructor(keyPath: string) {
+    if (fs.lstatSync(keyPath).isSymbolicLink()) {
+      throw new Error("凭据主密钥禁止使用符号链接");
+    }
     const descriptor = fs.openSync(keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
       const stat = fs.fstatSync(descriptor);

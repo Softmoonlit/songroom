@@ -142,7 +142,7 @@ function classifyDatabaseError(action: string, error: unknown): CliError {
   if (/already exists/i.test(detail)) {
     return new CliError("DB_ALREADY_EXISTS", "数据库已存在", { cause: error });
   }
-  if (/schema|migration hash|integrity|journal mode|foreign key/i.test(detail)) {
+  if (/schema|migration hash|integrity|journal mode|foreign key|mode 0600|owned by current user/i.test(detail)) {
     return new CliError("DB_SCHEMA_INVALID", "数据库 schema 或迁移事实不匹配", { cause: error });
   }
   if (action === "check") {

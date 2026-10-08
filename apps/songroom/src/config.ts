@@ -41,6 +41,9 @@ export const configSchema = configFields.superRefine((config, ctx) => {
 export type AppConfig = z.infer<typeof configSchema>;
 
 export function loadConfig(filePath = process.env.SONGROOM_CONFIG ?? "/etc/songroom/config.json"): AppConfig {
+  if (fs.lstatSync(filePath).isSymbolicLink()) {
+    throw new Error("配置文件禁止使用符号链接");
+  }
   const stat = fs.statSync(filePath);
   if (!stat.isFile() || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()) {
     throw new Error("配置须由当前用户持有，且仅当前用户可读写（0600 或 0400）");

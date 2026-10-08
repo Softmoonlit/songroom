@@ -23,6 +23,17 @@ pnpm start
 
 生产入口必须配置精确 HTTPS origin，应用只监听 `127.0.0.1` 并仅信任本机代理。公网 Caddy、可信证书、systemd 和真实机器资源由部署工单验收，本地运行通过不代表可以上线。数据库、私有配置、凭据密钥和运行临时目录须放在静态资源目录之外。`credentialKeyPath` 指向当前用户持有、权限为 0600 或 0400 的独立 32 字节二进制主密钥文件；禁止重新生成或替换已有密钥。密钥缺失、权限错误及已有凭据无法解密时启动失败。`authSecret` 保存在受限配置文件中，两类密钥均不得放入环境变量或命令行。
 
+## 生产部署与运维
+
+SongRoom 第一期生产运行包采用单台公网 VPS 单体架构，由 systemd 保证唯一应用进程，Caddy 作为唯一公网入口：
+- **生产配置与单元文件**：
+  - `deploy/systemd/songroom.service`：受限专用系统用户（`songroom`）与 systemd 安全沙箱（`NoNewPrivileges`、`ProtectSystem=strict`、目录权限隔离、35 秒优雅停机上限）。
+  - `deploy/systemd/songroom-journald.conf`：本机结构化日志限量保留配置（上限 100 MiB、最长保留 7 天、速率限制）。
+  - `deploy/caddy/Caddyfile`：公网可信 HTTPS 入口反向代理，提供浏览器默认受信任证书自动签发与续期、128 KiB 请求体限制及代理头传递。
+  - `deploy/songroom.config.production.json`：生产私有配置文件基准模板。
+- **精简运维清单与操作手册**：
+  - 完整的部署初始化、服务启停与排空、前后端原子发布升级、管理员声明、线下账号恢复、异常任务处置、原账号手工清理核验、风控恢复、密钥缺失处置及数据库灾难边界，详见 [`docs/operations.md`](docs/operations.md)。
+
 ## 数据库维护
 
 `pnpm db:init` 独占创建数据库并应用仓库中的 Drizzle 迁移，重复初始化拒绝覆盖。`pnpm db:migrate` 只显式迁移已有数据库；命令先占用与应用相同的回环端口，应用运行中或端口占用时拒绝执行。迁移期间应保持 systemd 停止；不增加数据库租约或分布式锁。

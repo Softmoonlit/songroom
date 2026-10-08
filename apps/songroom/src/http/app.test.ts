@@ -84,6 +84,18 @@ describe("同源应用运行边界", () => {
     await expect(createApp(config)).rejects.toThrow();
   });
 
+  it("数据库权限错误或凭据密钥使用符号链接启动失败", async () => {
+    const config = await fixture();
+    await fs.chmod(config.dbPath, 0o644);
+    await expect(createApp(config)).rejects.toThrow(/mode 0600/);
+    await fs.chmod(config.dbPath, 0o600);
+
+    const realKey = config.credentialKeyPath;
+    const symlinkKey = path.join(path.dirname(realKey), "symlink.key");
+    await fs.symlink(realKey, symlinkKey);
+    await expect(createApp({ ...config, credentialKeyPath: symlinkKey })).rejects.toThrow(/符号链接/);
+  });
+
   it("缺少或错误 Origin 的非GET请求拒绝，关闭CORS", async () => {
     const config = await fixture(); await start(config);
     for (const origin of [undefined, "https://untrusted.example"]) {

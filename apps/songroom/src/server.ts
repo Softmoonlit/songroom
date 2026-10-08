@@ -5,8 +5,24 @@ async function main(): Promise<void> {
   assertRuntime();
   const config = loadConfig();
   const app = await createApp(config);
+  let shuttingDown = false;
   const shutdown = (): void => {
-    void app.close().catch(() => { process.exitCode = 1; });
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const forceTimer = setTimeout(() => {
+      console.error(JSON.stringify({ state: "failed", code: "SHUTDOWN_TIMEOUT", message: "停机超时，强制退出" }));
+      process.exit(1);
+    }, 35_000);
+    forceTimer.unref();
+    void app.close()
+      .catch((error) => {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "SHUTDOWN_FAILED";
+        console.error(JSON.stringify({ state: "failed", code, message: "停机清理失败" }));
+        process.exitCode = 1;
+      })
+      .finally(() => {
+        clearTimeout(forceTimer);
+      });
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);

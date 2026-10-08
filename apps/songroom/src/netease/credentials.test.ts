@@ -34,3 +34,12 @@ it("逐条随机加密且密文只可用于原授权、真实账号和凭据代�
   await fs.chmod(keyPath, 0o644);
   expect(() => new CredentialVault(keyPath)).toThrow(/私有/);
 });
+
+it("凭据主密钥禁止使用符号链接", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "songroom-key-")); roots.push(root);
+  const realKey = path.join(root, "real.key");
+  await fs.writeFile(realKey, randomBytes(32), { mode: 0o600 });
+  const symlinkKey = path.join(root, "symlink.key");
+  await fs.symlink(realKey, symlinkKey);
+  expect(() => new CredentialVault(symlinkKey)).toThrow(/符号链接/);
+});

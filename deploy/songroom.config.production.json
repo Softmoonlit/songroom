@@ -1,0 +1,11 @@
+{
+  "nodeEnv": "production",
+  "host": "127.0.0.1",
+  "port": 3000,
+  "baseUrl": "https://songs.example.com",
+  "dbPath": "/var/lib/songroom/data/songroom.sqlite",
+  "staticRoot": "/opt/songroom/current/apps/songroom/dist/client",
+  "authSecret": "REPLACE_WITH_OUTPUT_OF_OPENSSL_RAND_BASE64_32",
+  "credentialKeyPath": "/var/lib/songroom/private/netease-credentials.key",
+  "adminUserIds": []
+}

@@ -67,7 +67,7 @@ export function initializeDatabase(filePath: string): void {
 }
 
 export function migrateDatabase(filePath: string): void {
-  assertDatabasePath(filePath);
+  assertDatabasePath(filePath, true);
   const client = new Database(filePath, { fileMustExist: true });
   try {
     const expectedMigrations = readMigrations();
@@ -81,7 +81,7 @@ export function migrateDatabase(filePath: string): void {
 }
 
 export function openDatabase(filePath: string): AppDatabase {
-  assertDatabasePath(filePath);
+  assertDatabasePath(filePath, true);
   const client = new Database(filePath, { fileMustExist: true });
   try {
     configureConnection(client);
@@ -271,9 +271,26 @@ function readMigrations(): MigrationMeta[] {
   return readMigrationFiles({ migrationsFolder });
 }
 
-function assertDatabasePath(filePath: string): void {
+function assertDatabasePath(filePath: string, requireWritable = false): void {
   if (!databaseExists(filePath)) {
     throw new Error(`database does not exist: ${filePath}; run db init`);
+  }
+  if (fs.lstatSync(filePath).isSymbolicLink()) {
+    throw new Error(`database file must not be a symbolic link: ${filePath}`);
+  }
+  const stat = fs.statSync(filePath);
+  const mode = stat.mode & 0o777;
+  if (process.getuid && stat.uid !== process.getuid()) {
+    throw new Error(`database file must be owned by current user: ${filePath}`);
+  }
+  if (requireWritable) {
+    if (mode !== 0o600) {
+      throw new Error(`database file must have mode 0600: ${filePath}`);
+    }
+  } else {
+    if (mode !== 0o600 && mode !== 0o400) {
+      throw new Error(`database file must have mode 0600 or 0400: ${filePath}`);
+    }
   }
 }
 

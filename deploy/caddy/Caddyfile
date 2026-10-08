@@ -1,0 +1,34 @@
+# SongRoom 生产 Caddyfile
+# Caddy 是唯一公网入口，提供浏览器默认信任的 HTTPS、精确 Origin、代理信任与自动证书续期
+
+{$SONGROOM_DOMAIN:songs.example.com} {
+    # 自动申请并维护浏览器受信任的公共 TLS 证书（Let's Encrypt / ZeroSSL），支持自动续期
+    # 生产严禁使用 tls internal 或自签 CA 代替可信证书
+
+    # 请求体限制：与应用 128 KiB 上限对齐，超出请求由网关层拒绝
+    request_body {
+        max_size 128KB
+    }
+
+    # 反向代理至本机回环地址，应用仅监听 127.0.0.1，不暴露公网端口
+    reverse_proxy 127.0.0.1:3000 {
+        # 传递真实主机名与客户端 IP，应用 trustProxy 仅信任 127.0.0.1
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {host}
+
+        # 超时设置：支持长轮询与排空平滑过渡
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 30s
+        }
+    }
+
+    # 访问日志输出至 stderr，由 systemd/journald 统一收集，不包含邀请码（邀请码位于 URL fragment #code）
+    log {
+        output stderr
+        format json
+    }
+}

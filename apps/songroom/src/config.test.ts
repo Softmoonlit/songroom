@@ -18,6 +18,15 @@ describe("应用启动配置", () => {
     await fs.chmod(file, 0o644); expect(() => loadConfig(file)).toThrow();
   });
 
+  it("配置文件禁止使用符号链接", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "songroom-config-")); roots.push(root);
+    const realFile = path.join(root, "real-config.json");
+    await fs.writeFile(realFile, JSON.stringify(settings), { mode: 0o600 });
+    const symlinkFile = path.join(root, "symlink-config.json");
+    await fs.symlink(realFile, symlinkFile);
+    expect(() => loadConfig(symlinkFile)).toThrow(/符号链接/);
+  });
+
   it("拒绝生产明文入口、非回环监听、非精确origin及静态目录中的数据库", () => {
     for (const change of [
       { baseUrl: "http://songs.example" }, { host: "0.0.0.0" }, { baseUrl: "https://songs.example/" },

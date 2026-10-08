@@ -46,6 +46,7 @@ function createOldDatabase(filePath: string, versions = 1): void {
     fs.copyFileSync(path.join(migrationFolder, `${entry.tag}.sql`), path.join(fixtureFolder, `${entry.tag}.sql`));
   }
   const oldClient = new Database(filePath);
+  fs.chmodSync(filePath, 0o600);
   oldClient.pragma("foreign_keys = ON");
   oldClient.pragma("busy_timeout = 5000");
   oldClient.pragma("journal_mode = WAL");
@@ -158,6 +159,28 @@ describe("database lifecycle", () => {
     migrateDatabase(filePath);
 
     expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  it("rejects database file with invalid permissions or symbolic link", () => {
+    const filePath = temporaryDatabasePath();
+    initializeDatabase(filePath);
+    fs.chmodSync(filePath, 0o644);
+    expect(() => checkDatabase(filePath)).toThrow(/0600 or 0400/);
+    expect(() => openDatabase(filePath)).toThrow(/mode 0600/);
+    expect(() => migrateDatabase(filePath)).toThrow(/mode 0600/);
+
+    fs.chmodSync(filePath, 0o400);
+    // 0400 is allowed for read-only check, but rejected for writable open and migration
+    expect(checkDatabase(filePath).ok).toBe(true);
+    expect(() => openDatabase(filePath)).toThrow(/mode 0600/);
+    expect(() => migrateDatabase(filePath)).toThrow(/mode 0600/);
+
+    fs.chmodSync(filePath, 0o600);
+    const symlinkPath = path.join(path.dirname(filePath), "symlink.sqlite");
+    fs.symlinkSync(filePath, symlinkPath);
+    expect(() => checkDatabase(symlinkPath)).toThrow(/symbolic link/);
+    expect(() => openDatabase(symlinkPath)).toThrow(/symbolic link/);
+    expect(() => migrateDatabase(symlinkPath)).toThrow(/symbolic link/);
   });
 
   it("公共歌单清理表迁移升级时保守保留发送状态，非 ready 状态任务升级为 has_sent=1", () => {

@@ -88,3 +88,24 @@ it("真实服务缺库启动失败，不隐式初始化", async () => {
   expect(result.output).toContain('"state":"failed","code":"ENOENT"');
   await expect(fs.access(database)).rejects.toThrow();
 }, 10_000);
+
+it("真实服务密钥权限错误启动失败，不隐式重置密钥", async () => {
+  const fixtureData = await fixture();
+  const keyPath = path.join(fixtureData.root, "netease.key");
+  await fs.chmod(keyPath, 0o644);
+  const launched = runServer(fixtureData.config);
+  const result = await launched.exited;
+  expect(result.code).toBe(1);
+  expect(result.output).toContain('"state":"failed"');
+}, 10_000);
+
+it("真实服务生产模式拒绝明文 HTTP 入口配置", async () => {
+  const fixtureData = await fixture();
+  const configContent = JSON.parse(await fs.readFile(fixtureData.config, "utf8")) as Record<string, unknown>;
+  configContent.nodeEnv = "production";
+  await fs.writeFile(fixtureData.config, JSON.stringify(configContent), { mode: 0o600 });
+  const launched = runServer(fixtureData.config);
+  const result = await launched.exited;
+  expect(result.code).toBe(1);
+  expect(result.output).toContain('"state":"failed"');
+}, 10_000);

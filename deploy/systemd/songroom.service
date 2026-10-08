@@ -1,0 +1,68 @@
+[Unit]
+Description=SongRoom 一起点歌服务
+Documentation=https://github.com/Softmoonlit/songroom
+After=network.target
+
+[Service]
+Type=simple
+User=songroom
+Group=songroom
+
+# 工作目录与执行命令（单实例长期运行，不使用 Docker、多实例或外部进程管理器）
+WorkingDirectory=/opt/songroom/current/apps/songroom
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5s
+
+# 停机限制：先拒绝新业务命令和派发，最多等待当前 25 秒子进程，总停机上限 35 秒
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=35s
+SendSIGKILL=yes
+
+# 环境变量：指定受限配置文件路径、生产环境与临时目录
+Environment=NODE_ENV=production
+Environment=SONGROOM_CONFIG=/etc/songroom/config.json
+Environment=TMPDIR=/run/songroom
+
+# 系统受限目录生命周期管理（分别由 systemd 自动创建并赋予受限权限）
+RuntimeDirectory=songroom
+RuntimeDirectoryMode=0700
+StateDirectory=songroom
+StateDirectoryMode=0700
+ConfigurationDirectory=songroom
+ConfigurationDirectoryMode=0750
+
+# systemd 安全限制：无新权限、只读系统区域与最小必要可写范围
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Node.js V8 引擎 JIT 内存需要允许写入执行转换
+MemoryDenyWriteExecute=false
+
+# 严格限定只读与可写路径：持久数据与运行临时目录可写；代码、配置及私有密钥严格只读
+ReadOnlyPaths=/opt/songroom /etc/songroom /var/lib/songroom/private
+ReadWritePaths=/var/lib/songroom/data /run/songroom /tmp
+
+# 能力集收缩：移除所有超级用户特权
+CapabilityBoundingSet=
+
+# 结构化日志输出至 journald 限量保留，服务级速率限制
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=songroom
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=1000
+
+[Install]
+WantedBy=multi-user.target

@@ -233,6 +233,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     if (state !== "stopped" && state !== "draining") {
       state = "draining";
       scheduler.stop();
+      playlists.stop();
       eventStream.close();
       binding.clear();
       fastify.log.info({ state }, "application lifecycle");
@@ -241,14 +242,18 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const close = (): Promise<void> => {
     closing ??= (async () => {
       drain();
-      try { await fastify.close(); }
-      finally {
+      try {
+        await fastify.close();
+      } finally {
         binding.clear();
-        await adapter.dispose();
-        await scheduler.settle();
-        database.$client.close();
-        state = "stopped";
-        fastify.log.info({ state }, "application lifecycle");
+        try {
+          await scheduler.settle();
+        } finally {
+          await adapter.dispose();
+          database.$client.close();
+          state = "stopped";
+          fastify.log.info({ state }, "application lifecycle");
+        }
       }
     })();
     return closing;
