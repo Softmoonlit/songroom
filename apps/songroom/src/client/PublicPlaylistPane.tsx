@@ -42,6 +42,25 @@ export function getOperationMessage(op: NonNullable<PublicPlaylistView["operatio
   return operationMessages[op.status];
 }
 
+function getPlaylistRefreshErrorMessage(code: string): string {
+  switch (code) {
+    case "MODULE_ERROR":
+      return "网易云服务暂时响应异常，请稍后刷新重试。";
+    case "NETWORK_ERROR":
+      return "网络连接失败，请稍后重试。";
+    case "DEADLINE":
+      return "网易云请求超时，请稍后重试。";
+    case "PARSE_ERROR":
+      return "网易云返回数据解析异常。";
+    case "RATE_LIMITED":
+      return "网易云请求受限，请稍后重试。";
+    case "AUTH_UNAVAILABLE":
+      return "网易云授权失效，请房主前往账号设置检查。";
+    default:
+      return errorMessageForCode(code);
+  }
+}
+
 const disabledMessages = {
   OWNER_ONLY: "只有房主可以创建公共歌单。",
   NETEASE_AUTH_REQUIRED: "请房主先在账号设置中绑定有效的网易云账号。",
@@ -462,7 +481,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                 <span className="sync-micro-status status-pending" role="status">正在同步歌单…</span>
               ) : view.lastRefreshError ? (
                 <span className="sync-micro-status status-error" role="alert">
-                  暂时读取失败（刷新未成功：{errorMessageForCode(view.lastRefreshError)}），已保留上次快照
+                  暂时读取失败（刷新未成功：{getPlaylistRefreshErrorMessage(view.lastRefreshError)}），已保留上次快照
                 </span>
               ) : refreshError ? (
                 <span className="sync-micro-status status-error" role="alert">{refreshError}</span>

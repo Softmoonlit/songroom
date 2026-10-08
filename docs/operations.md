@@ -159,21 +159,24 @@ pnpm build
 RELEASE_TAG=$(date +%Y%m%d%H%M%S)
 TARGET_DIR="/opt/songroom/releases/${RELEASE_TAG}"
 ssh aliyun "
-mkdir -p \"${TARGET_DIR}/apps/songroom\" \"${TARGET_DIR}/packages/netease-vendor\"
+mkdir -p \"${TARGET_DIR}/apps/songroom\" \"${TARGET_DIR}/packages/vendor/netease-cloud-music-api-enhanced\"
 if [ -d /opt/songroom/releases/initial/node_modules ]; then
   cp -al /opt/songroom/releases/initial/node_modules \"${TARGET_DIR}/\"
 fi
 if [ -d /opt/songroom/releases/initial/apps/songroom/node_modules ]; then
   cp -al /opt/songroom/releases/initial/apps/songroom/node_modules \"${TARGET_DIR}/apps/songroom/\"
 fi
-if [ -d /opt/songroom/releases/initial/packages/netease-vendor/node_modules ]; then
-  cp -al /opt/songroom/releases/initial/packages/netease-vendor/node_modules \"${TARGET_DIR}/packages/netease-vendor/\" || true
+if [ -d /opt/songroom/releases/initial/packages/vendor/netease-cloud-music-api-enhanced/node_modules ]; then
+  cp -al /opt/songroom/releases/initial/packages/vendor/netease-cloud-music-api-enhanced/node_modules \"${TARGET_DIR}/packages/vendor/netease-cloud-music-api-enhanced/\" || true
 fi
 "
 
-# 3. 同步源码与编译好的 dist 产物至服务器
+# 3. 同步源码与编译好的 dist 产物至服务器，并补齐 vendor 软链接
 rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.scratch' --exclude='apps/songroom/tests' ./ root@aliyun:${TARGET_DIR}/
-ssh aliyun "chown -R songroom:songroom ${TARGET_DIR}"
+ssh aliyun "
+ln -sfn ../../../../../packages/vendor/netease-cloud-music-api-enhanced/node_modules \"${TARGET_DIR}/apps/songroom/dist/netease/vendor/node_modules\"
+chown -R songroom:songroom \"${TARGET_DIR}\"
+"
 
 # 4. 停机保证独占，执行数据库迁移与只读自检
 ssh aliyun "

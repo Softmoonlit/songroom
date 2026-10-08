@@ -258,9 +258,9 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
 
           {(query.data.allowedActions.includes("leaveRoom") || query.data.allowedActions.includes("deleteRoom")) && (
             <div className="room-settings-section danger-zone-section">
-              <div className="room-settings-section-header danger-header">
-                <h3 className="danger-zone-heading">危险区域</h3>
-                <p>下列操作为破坏性操作，执行后无法恢复，请谨慎操作。</p>
+              <div className="room-settings-section-header">
+                <h3>{room.role === "owner" ? "解散房间" : "退出房间"}</h3>
+                <p>{room.role === "owner" ? "永久解散并删除此房间，所有成员将立即失去访问权限。" : "退出此房间，立即撤销访问权限并释放昵称。"}</p>
               </div>
               <div className="danger-zone-card">
                 {query.data.allowedActions.includes("leaveRoom") && (
@@ -435,11 +435,11 @@ function MembersPane({
           {canReview && !hasPending && (
             <button
               type="button"
-              className="applications-trigger-btn secondary-action"
+              className="secondary-button applications-trigger-btn"
               onClick={() => setApplicationsDrawerOpen(true)}
               aria-label="审批加入申请"
             >
-              审批申请
+              申请记录
             </button>
           )}
           {query.data.allowedActions.includes("readInvite") && (

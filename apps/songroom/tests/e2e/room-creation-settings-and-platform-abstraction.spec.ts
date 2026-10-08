@@ -181,6 +181,9 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
     await setupMocks(page, "owner");
     await page.goto(`/rooms/${roomId}`);
 
+    // 默认在公共歌单 tab 时，房间设置必须绝对隐藏，不得穿透泄漏
+    await expect(page.getByRole("region", { name: "房间设置" })).not.toBeVisible();
+
     await page.getByRole("button", { name: "房间设置" }).click();
     await expect(page.getByRole("heading", { name: "房间设置", exact: true })).toBeVisible();
 
@@ -201,7 +204,9 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
     const settingsPane = page.getByRole("region", { name: "房间设置" });
     await expect(settingsPane.locator("dl.netease-identity")).toHaveCount(0);
 
-    // 4. 分区 3: 独立红框隔离危险区域 (房主显示删除房间，不显示退出房间)
+    // 4. 分区 3: 移除生硬的“危险区域”大标题，使用生活化解散/退出卡片 (房主显示解散/删除房间，不显示退出房间)
+    await expect(settingsPane.getByRole("heading", { name: "危险区域" })).toHaveCount(0);
+    await expect(settingsPane.getByRole("heading", { name: "解散房间" })).toBeVisible();
     const dangerZone = settingsPane.locator(".danger-zone-card");
     await expect(dangerZone).toBeVisible();
     await expect(dangerZone.getByRole("button", { name: "删除房间" })).toBeVisible();
@@ -222,7 +227,9 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
     // 关联平台账号提示使用房主授权
     await expect(settingsPane.getByText("使用房主授权")).toBeVisible();
 
-    // 危险区域仅显示退出房间，不显示删除房间
+    // 危险操作仅显示退出房间，不显示删除房间，不显示生硬的“危险区域”标题
+    await expect(settingsPane.getByRole("heading", { name: "危险区域" })).toHaveCount(0);
+    await expect(settingsPane.getByRole("heading", { name: "退出房间" })).toBeVisible();
     const dangerZone = settingsPane.locator(".danger-zone-card");
     await expect(dangerZone).toBeVisible();
     await expect(dangerZone.getByRole("button", { name: "退出房间" })).toBeVisible();
