@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { ArrowLeft, Music2 } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { v7 as uuidv7 } from "uuid";
+import { FUTURE_PLATFORMS, getMusicPlatform } from "./music-platforms";
 import {
   roomCreateCommand,
   roomCreateView,
@@ -69,6 +70,7 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
     }
   });
 
+  const neteasePlatform = getMusicPlatform("netease");
   const confirmed = !!authorization && selectedAuthorizationId === authorization.id;
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -143,7 +145,7 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
                       checked={confirmed}
                       disabled={mutation.isPending}
                       onChange={() => setSelectedAuthorizationId(authorization.id)}
-                      aria-label={`网易云音乐 - ${authorization.identity.nickname || "未设置昵称"}`}
+                      aria-label={`${neteasePlatform.name} - ${authorization.identity.nickname || "未设置昵称"}`}
                     />
                   </div>
                   <div className="playback-source-content">
@@ -152,7 +154,7 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
                         <span className="platform-icon" aria-hidden="true">
                           <Music2 size={16} />
                         </span>
-                        <strong>网易云音乐</strong>
+                        <strong>{neteasePlatform.name}</strong>
                       </div>
                       <span className="platform-badge active">已授权</span>
                     </div>
@@ -170,29 +172,31 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
                 </label>
 
                 {/* 预留未来平台单选卡片扩展位 */}
-                <div className="playback-source-card placeholder" aria-disabled="true">
-                  <div className="playback-source-radio-col">
-                    <input
-                      type="radio"
-                      disabled
-                      aria-disabled="true"
-                      name="playbackSource"
-                      aria-label="QQ 音乐（即将支持）"
-                    />
-                  </div>
-                  <div className="playback-source-content">
-                    <div className="playback-source-header">
-                      <div className="playback-source-title">
-                        <span className="platform-icon placeholder" aria-hidden="true">
-                          <Music2 size={16} />
-                        </span>
-                        <strong>QQ 音乐</strong>
-                      </div>
-                      <span className="platform-badge coming-soon">即将支持</span>
+                {FUTURE_PLATFORMS.slice(0, 1).map(platform => (
+                  <div key={platform.id} className="playback-source-card placeholder" aria-disabled="true">
+                    <div className="playback-source-radio-col">
+                      <input
+                        type="radio"
+                        disabled
+                        aria-disabled="true"
+                        name="playbackSource"
+                        aria-label={`${platform.name}（即将支持）`}
+                      />
                     </div>
-                    <p className="platform-placeholder-hint">暂未开放此平台授权</p>
+                    <div className="playback-source-content">
+                      <div className="playback-source-header">
+                        <div className="playback-source-title">
+                          <span className="platform-icon placeholder" aria-hidden="true">
+                            <Music2 size={16} />
+                          </span>
+                          <strong>{platform.name}</strong>
+                        </div>
+                        <span className="platform-badge coming-soon">{platform.statusText}</span>
+                      </div>
+                      <p className="platform-placeholder-hint">暂未开放此平台授权</p>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
             )}
           </div>

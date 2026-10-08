@@ -13,6 +13,7 @@ import { ApplicationsDrawer } from "./ApplicationsDrawer";
 import { InviteDialog } from "./InviteDialog";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
+import { getMusicPlatform } from "./music-platforms";
 
 function DeleteRoomDialog({
   sessionId,
@@ -242,7 +243,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                 <div className="platform-title-wrap">
                   <span className="platform-icon" aria-hidden="true"><Music2 size={18} /></span>
                   <div className="platform-title-text">
-                    <strong>网易云音乐</strong>
+                    <strong>{getMusicPlatform("netease").name}</strong>
                     <span className="platform-meta-tag">{room.role === "owner" ? "使用房主（本人）授权" : "使用房主授权"}</span>
                   </div>
                 </div>

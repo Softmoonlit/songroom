@@ -184,14 +184,20 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
             </div>
             <span
               className={`platform-badge ${
-                binding?.status === "active"
+                bindingQuery.isPending || bindingQuery.isError
+                  ? "coming-soon"
+                  : binding?.status === "active"
                   ? "active"
                   : binding?.status === "waitingAuthorization"
                   ? "warning"
                   : "coming-soon"
               }`}
             >
-              {binding?.status === "active"
+              {bindingQuery.isPending
+                ? "读取中…"
+                : bindingQuery.isError
+                ? "读取失败"
+                : binding?.status === "active"
                 ? "已授权"
                 : binding?.status === "waitingAuthorization"
                 ? "待重新授权"

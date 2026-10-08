@@ -229,7 +229,15 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
     await expect(dangerZone.getByRole("button", { name: "删除房间" })).toHaveCount(0);
   });
 
-  test("各端视口无横向滚动溢出与 Axe 无障碍扫描", async ({ page }) => {
+  test("各端视口无横向滚动溢出、无控制台错误与 Axe 无障碍合规扫描", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on("console", msg => {
+      if (msg.type() === "error" && !msg.text().includes("Failed to load resource")) {
+        consoleErrors.push(msg.text());
+      }
+    });
+    page.on("pageerror", err => consoleErrors.push(err.message));
+
     for (const width of [320, 900, 1440]) {
       await page.setViewportSize({ width, height: 800 });
       await setupMocks(page, "owner");
@@ -254,12 +262,31 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
       expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1);
     }
 
-    // Axe 无障碍检查
+    expect(consoleErrors).toEqual([]);
+
+    // Axe 无障碍检查（覆盖账号页、创建房间页与房间设置页）
     await setupMocks(page, "owner");
-    await page.goto("/rooms/new");
-    const axeResults = await new AxeBuilder({ page })
+
+    // 账号设置页 Axe
+    await page.goto("/account");
+    const accountAxe = await new AxeBuilder({ page })
       .disableRules(["color-contrast"])
       .analyze();
-    expect(axeResults.violations).toEqual([]);
+    expect(accountAxe.violations).toEqual([]);
+
+    // 创建房间页 Axe
+    await page.goto("/rooms/new");
+    const roomCreateAxe = await new AxeBuilder({ page })
+      .disableRules(["color-contrast"])
+      .analyze();
+    expect(roomCreateAxe.violations).toEqual([]);
+
+    // 房间设置页 Axe
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "房间设置" }).click();
+    const roomSettingsAxe = await new AxeBuilder({ page })
+      .disableRules(["color-contrast"])
+      .analyze();
+    expect(roomSettingsAxe.violations).toEqual([]);
   });
 });

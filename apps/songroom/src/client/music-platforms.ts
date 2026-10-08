@@ -8,7 +8,7 @@ export type MusicPlatformInfo = {
   statusText: string;
 };
 
-export const MUSIC_PLATFORMS: MusicPlatformInfo[] = [
+export const MUSIC_PLATFORMS: readonly MusicPlatformInfo[] = [
   {
     id: "netease",
     name: "网易云音乐",
@@ -19,24 +19,32 @@ export const MUSIC_PLATFORMS: MusicPlatformInfo[] = [
   {
     id: "qq",
     name: "QQ 音乐",
-    description: "支持导入 QQ 音乐歌单与逐首公共点歌",
+    description: "主流音乐流媒体平台支持",
     status: "coming-soon",
     statusText: "即将支持"
   },
   {
     id: "qishui",
     name: "汽水音乐",
-    description: "支持汽水音乐账号授权与收藏同步",
+    description: "个性化潮流音乐平台支持",
     status: "coming-soon",
     statusText: "即将支持"
   },
   {
     id: "kugou",
     name: "酷狗音乐",
-    description: "支持酷狗音乐账号授权与歌单协作",
+    description: "海量伴奏曲库音乐平台支持",
     status: "coming-soon",
     statusText: "即将支持"
   }
-];
+] as const;
 
 export const FUTURE_PLATFORMS = MUSIC_PLATFORMS.filter(p => p.status === "coming-soon");
+
+export function getMusicPlatform(id: MusicPlatformId): MusicPlatformInfo {
+  const platform = MUSIC_PLATFORMS.find(p => p.id === id);
+  if (!platform) {
+    throw new Error(`未知的音乐平台标识: ${id}`);
+  }
+  return platform;
+}
