@@ -203,7 +203,7 @@ function HealthStatus({ query }: { query: HealthQuery }) {
   const status = query.data?.status;
   const isError = query.isError;
   const isReady = status === "ready";
-  const label = query.isPending ? "读取中" : isError ? "暂不可用" : isReady ? "运行正常" : "未知";
+  const label = query.isPending ? "读取中" : isError ? "暂不可用" : status ? statusLabels[status] : "未知";
   const stateClass = isError ? "error" : isReady ? "ready" : "pending";
 
   return (
@@ -220,7 +220,9 @@ function HealthStatus({ query }: { query: HealthQuery }) {
 
 function UserCapsule({ user }: { user: SessionData["user"] }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const capsuleRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -232,6 +234,7 @@ function UserCapsule({ user }: { user: SessionData["user"] }) {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsOpen(false);
+        triggerRef.current?.focus();
       }
     }
     window.addEventListener("pointerdown", onPointerDown);
@@ -243,8 +246,13 @@ function UserCapsule({ user }: { user: SessionData["user"] }) {
   }, [isOpen]);
 
   async function handleSignOut() {
+    setSignOutError(null);
+    const result = await authAction("/sign-out", {});
+    if (!result.ok) {
+      setSignOutError(result.message);
+      return;
+    }
     setIsOpen(false);
-    await authAction("/sign-out", {});
     window.location.assign("/");
   }
 
@@ -254,15 +262,14 @@ function UserCapsule({ user }: { user: SessionData["user"] }) {
     <div
       ref={capsuleRef}
       className={`user-capsule ${isOpen ? "open" : ""}`}
-      onMouseEnter={() => setIsOpen(true)}
-      onMouseLeave={() => setIsOpen(false)}
     >
       <button
+        ref={triggerRef}
         type="button"
         className="user-capsule-trigger"
         onClick={() => setIsOpen(open => !open)}
         aria-expanded={isOpen}
-        aria-haspopup="menu"
+        aria-haspopup="true"
         aria-label="账号菜单"
       >
         <span className="user-avatar" aria-hidden="true">
@@ -280,6 +287,11 @@ function UserCapsule({ user }: { user: SessionData["user"] }) {
           <span className="dropdown-user-name">{user.name}</span>
           <span className="dropdown-user-email">{user.email}</span>
         </div>
+        {signOutError && (
+          <p className="dropdown-error" role="alert">
+            {signOutError}
+          </p>
+        )}
         <div className="user-dropdown-divider" aria-hidden="true" />
         <Link
           to="/account"

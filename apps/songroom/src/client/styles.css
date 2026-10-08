@@ -254,7 +254,7 @@ input:focus-visible {
   align-items: center;
   gap: 7px;
   margin: 0 0 15px;
-  color: #654bcf;
+  color: var(--primary);
   font-size: .78rem;
   font-weight: 800;
   letter-spacing: .1em;
@@ -270,7 +270,7 @@ p {
 
 h1,
 h2 {
-  color: #161d2c;
+  color: var(--text-main);
 }
 
 h1 {
@@ -282,7 +282,7 @@ h1 {
 
 .hero-subtitle {
   margin: 17px 0 0;
-  color: #6045d8;
+  color: var(--primary);
   font-size: clamp(1.35rem, 3vw, 1.8rem);
   font-weight: 750;
   letter-spacing: -.035em;
@@ -291,7 +291,7 @@ h1 {
 .hero-description {
   max-width: 590px;
   margin: 22px 0 0;
-  color: #5b687b;
+  color: var(--text-dim);
   font-size: clamp(1rem, 2vw, 1.18rem);
   line-height: 1.7;
 }
@@ -389,19 +389,27 @@ h1 {
 .retry-button {
   min-height: 40px;
   padding: 7px 12px;
-  border: 1px solid #d4ccef;
-  border-radius: 9px;
-  color: #5139ba;
-  background: #f8f7ff;
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-md);
+  color: var(--primary);
+  background: var(--primary-light);
   cursor: pointer;
-  font-size: .82rem;
-  font-weight: 750;
+  font-size: var(--font-sm);
+  font-weight: 650;
   white-space: nowrap;
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              color var(--transition-fast),
+              transform var(--transition-fast);
 }
 
-.retry-button:hover {
-  border-color: #bdb1ec;
-  background: #f0edff;
+.retry-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: #e0e7ff;
+}
+
+.retry-button:active:not(:disabled) {
+  transform: scale(var(--scale-active));
 }
 
 .retry-button:disabled {
@@ -419,8 +427,8 @@ h1 {
 .delivery-icon {
   width: 42px;
   height: 42px;
-  color: #654bcf;
-  background: #f0edff;
+  color: var(--primary);
+  background: var(--primary-light);
 }
 
 .delivery-card h2 {
@@ -445,8 +453,8 @@ h1 {
 .not-found-icon {
   width: 54px;
   height: 54px;
-  color: #654bcf;
-  background: #f0edff;
+  color: var(--primary);
+  background: var(--primary-light);
 }
 
 .not-found h1 {
@@ -643,13 +651,21 @@ h1 {
   pointer-events: none;
 }
 
-.user-capsule.open .user-dropdown,
-.user-capsule:hover .user-dropdown,
-.user-capsule:focus-within .user-dropdown {
+.user-capsule.open .user-dropdown {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
   pointer-events: auto;
+}
+
+.dropdown-error {
+  margin: 4px 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--error-bg);
+  color: var(--error-text);
+  font-size: var(--font-xs);
+  line-height: 1.4;
 }
 
 .user-dropdown-profile {
@@ -713,19 +729,6 @@ h1 {
   color: var(--error);
 }
 
-/* 兼容并降噪旧版用户菜单 */
-.user-menu {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
-  color: var(--text-dim);
-  font-size: var(--font-sm);
-  font-weight: 600;
-}
-
-.user-menu a,
 .text-link,
 .text-button {
   color: var(--primary);
@@ -733,18 +736,10 @@ h1 {
   transition: color var(--transition-fast);
 }
 
-.user-menu a:hover,
 .text-link:hover,
 .text-button:hover {
   color: var(--primary-hover);
   text-decoration: underline;
-}
-
-.user-greeting {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-main);
 }
 
 .page-loading {
@@ -1295,18 +1290,26 @@ h1 {
   gap: 12px;
   padding: 12px 16px;
   border: 1px solid transparent;
-  border-radius: 10px;
-  color: #526074;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
   background: transparent;
   cursor: pointer;
-  font-weight: 750;
+  font-weight: 650;
   white-space: nowrap;
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              color var(--transition-fast),
+              transform var(--transition-fast);
+}
+
+.room-navigation button:active {
+  transform: scale(var(--scale-active));
 }
 
 .room-navigation button[aria-current=page] {
-  border-color: #d4ccef;
-  color: #5139ba;
-  background: #eeebff;
+  border-color: var(--primary-border);
+  color: var(--primary);
+  background: var(--primary-light);
 }
 
 .room-page-content {
@@ -1326,14 +1329,22 @@ h1 {
   width: 100%;
   min-height: 78px;
   text-align: left;
-  color: #19212e;
+  color: var(--text-main);
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 650;
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              transform var(--transition-fast);
 }
 
 .member-card:hover {
-  border-color: #bdb1ec;
-  background: #f8f7ff;
+  border-color: var(--border-medium);
+  background: var(--bg-subtle);
+}
+
+.member-card:active {
+  transform: scale(var(--scale-active));
 }
 
 @media (max-width: 700px) {
