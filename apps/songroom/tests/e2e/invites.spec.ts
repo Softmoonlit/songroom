@@ -46,7 +46,8 @@ for (const mode of ["登录", "注册"] as const) {
     await page.getByLabel("密码").fill("correct horse battery staple");
     await page.getByRole("button", { name: mode === "注册" ? "注册并继续申请" : "登录并继续申请", exact: true }).click();
     await expect(page).toHaveURL(/\/join$/);
-    await expect(page.getByRole("heading", { name: "申请加入邀请音乐间" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "房间加入邀请函" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "邀请音乐间" })).toBeVisible();
     await expect(page.getByLabel("拟用房间昵称")).toBeFocused();
     expect(requests.every(request => !request.url.includes(code) && !request.referer?.includes(code))).toBe(true);
     expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage, history.state]))).not.toContain(code);
@@ -141,6 +142,7 @@ for (const copySucceeds of [true, false]) {
     await expect(page.getByRole("button", { name: "复制邀请链接" })).toHaveCount(0);
     expect(inviteReads).toHaveLength(0);
     await page.getByRole("button", { name: "房间成员", exact: true }).click();
+    await page.getByRole("button", { name: "邀请室友" }).click();
     await expect(page.getByText(code, { exact: true })).toBeVisible();
     const copy = page.getByRole("button", { name: "复制邀请链接" });
     await copy.focus();
@@ -181,10 +183,11 @@ test("320px 重置邀请对话框覆盖导航并捕获键盘，版本冲突留�
   });
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
-  const reset = page.getByRole("button", { name: "重置邀请", exact: true });
+  await page.getByRole("button", { name: "邀请室友" }).click();
+  const reset = page.getByRole("button", { name: "重置邀请码", exact: true });
   await reset.focus();
   await page.keyboard.press("Enter");
-  const dialog = page.getByRole("alertdialog");
+  const dialog = page.getByRole("alertdialog").filter({ hasText: "重置房间邀请？" });
   await expect(dialog).toContainText("2 份待处理申请");
   await expect(dialog.getByRole("button", { name: "保留当前邀请" })).toBeFocused();
   await page.screenshot({ path: test.info().outputPath("reset-dialog-320.png") });
@@ -238,14 +241,14 @@ test("完整应用：房主建房邀请，注册与登录回跳申请、撤回�
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await page.getByLabel("房间名称").fill("完整邀请房间");
   await page.getByLabel("我的房间昵称").fill("房主");
-  await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
   const createdRoomUrl = page.url();
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
-  const invitation = page.getByRole("region", { name: "房间邀请" });
-  const actualCode = (await invitation.locator("dd").textContent())!;
+  await page.getByRole("button", { name: "邀请室友" }).click();
+  const actualCode = (await page.locator(".invite-code-display").textContent())!.trim();
   expect(actualCode).toMatch(/^[A-Za-z0-9_-]{10}$/);
+  await page.getByRole("button", { name: "关闭邀请弹窗" }).click();
 
   const guestContext = await browser.newContext({ viewport: { width: 320, height: 800 } });
   try {
@@ -292,11 +295,13 @@ test("完整应用：房主建房邀请，注册与登录回跳申请、撤回�
     await guest.getByRole("button", { name: "提交加入申请" }).click();
     await expect(guest.getByRole("status")).toHaveText("等待房主审批");
     const secondApplicationUrl = guest.url();
-    await page.getByRole("button", { name: "重置邀请", exact: true }).click();
-    const dialog = page.getByRole("alertdialog");
+    await page.getByRole("button", { name: "邀请室友" }).click();
+    await page.getByRole("button", { name: "重置邀请码", exact: true }).click();
+    const dialog = page.getByRole("alertdialog").filter({ hasText: "重置房间邀请？" });
     await expect(dialog).toContainText("1 份待处理申请");
     await dialog.getByRole("button", { name: "确认重置邀请" }).click();
     await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "关闭邀请弹窗" }).click();
     await guest.reload();
     await expect(guest.getByRole("status")).toHaveText("邀请已重置，申请已取消");
     await expect(guest.getByRole("button", { name: "撤回申请", exact: true })).toHaveCount(0);
@@ -372,9 +377,10 @@ test("服务端 allowedActions 决定邀请和撤回按钮，普通成员不读�
   await ownerRoom(page, []);
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
+  await page.getByRole("button", { name: "邀请室友" }).click();
   await expect(page.getByText(code, { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "复制邀请链接" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "重置邀请", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "重置邀请码", exact: true })).toHaveCount(0);
   await page.route(`**/api/join-applications/${applicationId}`, route => route.fulfill({ json: { ...application, allowedActions: [] } }));
   await page.goto(`/application/${applicationId}`);
   await expect(page.getByRole("status")).toHaveText("等待房主审批");
@@ -386,7 +392,7 @@ test("服务端 allowedActions 决定邀请和撤回按钮，普通成员不读�
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
   await expect(page.getByRole("heading", { name: "房间成员", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "房间邀请" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "邀请室友" })).toHaveCount(0);
   expect(inviteRead).toBe(false);
 });
 

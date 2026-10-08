@@ -268,11 +268,12 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
     await page.goto(`/rooms/${roomId}`);
 
     await page.getByRole("button", { name: "房间成员" }).click();
-    const resetBtn = page.getByRole("button", { name: "重置邀请" });
+    await page.getByRole("button", { name: "邀请室友" }).click();
+    const resetBtn = page.getByRole("button", { name: "重置邀请码" });
     await expect(resetBtn).toBeVisible();
     await resetBtn.click();
 
-    const dialog = page.getByRole("alertdialog");
+    const dialog = page.getByRole("alertdialog").filter({ hasText: "重置房间邀请？" });
     await expect(dialog).toBeVisible();
 
     // 1. 动宾标题

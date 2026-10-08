@@ -4,10 +4,19 @@ import { Link, useNavigate, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { v7 as uuidv7 } from "uuid";
 import { joinApplicationView } from "../shared/invite-contracts.js";
-import { getApplicationTimeline, type TimelineStepStatus } from "./application-timeline.js";
+import { getApplicationTimeline, type JoinApplicationStatusType, type TimelineStepStatus } from "./application-timeline.js";
 import { InviteError } from "./InviteError.js";
 import { inviteRequest } from "./invite-http.js";
 import { queryOptions, RoomRequestError } from "./room-http.js";
+
+const statusLabels: Record<JoinApplicationStatusType, string> = {
+  pending: "等待房主审批",
+  approved: "申请已获批",
+  rejected: "房主已拒绝申请",
+  withdrawn: "申请已撤回",
+  cancelled: "邀请已重置，申请已取消",
+  nickname_conflict: "拟用昵称已被占用，申请已终结，请重新提交"
+};
 
 export function ApplicationPage({ sessionId }: { sessionId: string }) {
   const { applicationId } = useParams();
@@ -140,12 +149,10 @@ function ApplicationDetails({
                 </div>
               </div>
 
-              {query.data.status === "approved" && (
-                <div className="approved-badge-tag" role="status">
-                  <Sparkles size={14} aria-hidden="true" />
-                  <span>已获批准</span>
-                </div>
-              )}
+              <div className={`approved-badge-tag status-${query.data.status}`} role="status">
+                {query.data.status === "approved" && <Sparkles size={14} aria-hidden="true" />}
+                <span>{statusLabels[query.data.status]}</span>
+              </div>
             </div>
 
             <div className="application-applicant-pill">
@@ -205,10 +212,10 @@ function ApplicationDetails({
                                   className="primary-button enter-room-auto-btn"
                                   to={`/rooms/${query.data.room.id}`}
                                 >
-                                  <span>立即进入房间</span>
+                                  <span>进入获批房间</span>
                                   <ChevronRight size={16} aria-hidden="true" />
                                 </Link>
-                                <span className="auto-enter-tip" role="status">
+                                <span className="auto-enter-tip">
                                   系统正在自动为你跳转进房…
                                 </span>
                               </div>
@@ -229,7 +236,7 @@ function ApplicationDetails({
                       </p>
                       <Link className="primary-button reapply-btn" to="/join">
                         <RotateCcw size={15} aria-hidden="true" />
-                        <span>重新申请加入</span>
+                        <span>使用当前邀请码重新申请</span>
                       </Link>
                     </div>
                   )}

@@ -50,7 +50,7 @@ test("房间壳显示当前昵称和9+待审批角标，室友没有审批或邀
   await expect(page.getByLabel(/待审批申请/)).toHaveCount(0);
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
   await expect(page.getByRole("button", { name: "审批加入申请" })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "房间邀请" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "邀请室友" })).toHaveCount(0);
 });
 
 for (const [decision, status, result] of [
@@ -75,7 +75,7 @@ for (const [decision, status, result] of [
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: /房间成员/ }).click();
     await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
-    await expect(page.getByRole("region", { name: "加入申请审批" })).not.toContainText("private@example.com");
+    await expect(page.getByRole("dialog", { name: "加入申请审批" })).not.toContainText("private@example.com");
     await page.getByRole("button", { name: `${decision === "approve" ? "批准" : "拒绝"}：新室友`, exact: true }).click();
     await expect(page.getByRole("status")).toContainText(result);
     await expect(page.getByLabel(/待审批申请/)).toHaveCount(0);
@@ -100,7 +100,8 @@ test("房名和昵称修改后同步聚合版本，不重复读取已写入的�
   await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
   await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
   await expect.poll(() => versions)
-    .toEqual({ shell: [1], members: [1], invite: [1], applications: [1] });
+    .toEqual({ shell: [1], members: [1], invite: [], applications: [1] });
+  await page.getByRole("button", { name: "关闭审批抽屉" }).click();
   for (const [label, input, button, message, version] of [
     ["房间名称", " 新音乐间 ", "保存房间名称", "房间名称已更新。", 2],
     ["我的房间昵称", " e\u0301 ", "保存我的昵称", "我的房间昵称已更新。", 3]
@@ -110,10 +111,12 @@ test("房名和昵称修改后同步聚合版本，不重复读取已写入的�
     await page.getByRole("button", { name: button, exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: message })).toHaveText(message);
     await page.getByRole("button", { name: "房间成员", exact: true }).click();
+    await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
     await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
     // 每个失效模型都应恰好读取一次当前聚合版本，已写入的房间壳不重复读取。
     await expect.poll(() => versions)
-      .toEqual({ shell: [1], members: Array.from({ length: version }, (_, index) => index + 1), invite: Array.from({ length: version }, (_, index) => index + 1), applications: Array.from({ length: version }, (_, index) => index + 1) });
+      .toEqual({ shell: [1], members: Array.from({ length: version }, (_, index) => index + 1), invite: [], applications: Array.from({ length: version }, (_, index) => index + 1) });
+    await page.getByRole("button", { name: "关闭审批抽屉" }).click();
   }
   await expect(page.getByRole("heading", { name: "新音乐间", exact: true })).toBeVisible();
   await expect(page.getByText("当前昵称：é", { exact: true })).toBeVisible();
@@ -195,12 +198,16 @@ test("邀请重置后刷新待审批角标和打开的审批列表", async ({ pa
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
   await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
   await expect(page.getByRole("button", { name: "批准：新室友" })).toBeVisible();
-  await page.getByRole("button", { name: "重置邀请", exact: true }).click();
+  await page.getByRole("button", { name: "关闭审批抽屉" }).click();
+  await page.getByRole("button", { name: "邀请室友" }).click();
+  await page.getByRole("button", { name: "重置邀请码", exact: true }).click();
   const confirm = page.getByRole("button", { name: "确认重置邀请", exact: true });
   await expect(confirm).toBeEnabled();
   await expect.poll(() => versions).toEqual({ shell: [1], members: [1], invite: [1, 1], applications: [1] });
   await confirm.click();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByRole("alertdialog").filter({ hasText: "重置房间邀请？" })).toHaveCount(0);
+  await page.getByRole("button", { name: "关闭邀请弹窗" }).click();
+  await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
   await expect(page.getByLabel(/待审批申请/)).toHaveCount(0);
   await expect(page.getByText("暂无待处理申请", { exact: true })).toBeVisible();
   // Reset advances the shared room version; members and applications must both refresh.
@@ -230,12 +237,13 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await page.getByLabel("房间名称").fill("真实审批音乐间");
   await page.getByLabel("我的房间昵称").fill("房主昵称");
-  await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
   const actualRoomUrl = page.url();
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
-  const code = (await page.getByRole("region", { name: "房间邀请" }).locator("dd").textContent())!;
+  await page.getByRole("button", { name: "邀请室友" }).click();
+  const code = (await page.locator(".invite-code-display").textContent())!.trim();
+  await page.getByRole("button", { name: "关闭邀请弹窗" }).click();
   const guestContext = await browser.newContext({ viewport: { width: 320, height: 800 } });
   try {
     const guest = await guestContext.newPage();
@@ -261,14 +269,14 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     const binding = await guest.request.get("/api/netease/binding");
     expect((await binding.json()).binding).toBeNull();
     await guest.getByRole("button", { name: "房间成员", exact: true }).click();
-    await expect(guest.getByRole("region", { name: "房间邀请" })).toHaveCount(0);
+    await expect(guest.getByRole("button", { name: "邀请室友" })).toHaveCount(0);
     await expect(guest.getByRole("button", { name: "审批加入申请" })).toHaveCount(0);
     await guest.getByRole("button", { name: "查看成员：房主昵称", exact: true }).click();
-    await expect(guest.getByRole("button", { name: "保存我的昵称" })).toHaveCount(0);
+    await expect(guest.getByRole("region", { name: "成员详情" }).getByRole("button", { name: "保存我的昵称" })).toHaveCount(0);
     await guest.getByRole("button", { name: "返回成员列表", exact: true }).click();
     await guest.getByRole("button", { name: "查看成员：室友昵称", exact: true }).click();
     await guest.getByRole("region", { name: "成员详情", exact: true }).getByLabel("我的房间昵称", { exact: true }).fill("新昵称");
-    await guest.getByRole("button", { name: "保存我的昵称", exact: true }).click();
+    await guest.getByRole("region", { name: "成员详情", exact: true }).getByRole("button", { name: "保存我的昵称", exact: true }).click();
     await expect(guest.getByText("当前昵称：新昵称", { exact: true })).toBeVisible();
     await expect(guest.getByRole("heading", { name: "新昵称", exact: true })).toBeVisible();
     await guest.getByRole("button", { name: "房间设置", exact: true }).click();

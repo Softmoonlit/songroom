@@ -431,17 +431,29 @@ function MembersPane({
             {query.data.members.length} 人
           </span>
         </div>
-        {query.data.allowedActions.includes("readInvite") && (
-          <button
-            type="button"
-            className="invite-trigger-btn"
-            onClick={() => setInviteOpen(true)}
-            aria-label="邀请室友"
-          >
-            <UserPlus size={16} aria-hidden="true" />
-            <span>+ 邀请室友</span>
-          </button>
-        )}
+        <div className="members-header-actions">
+          {canReview && !hasPending && (
+            <button
+              type="button"
+              className="applications-trigger-btn secondary-action"
+              onClick={() => setApplicationsDrawerOpen(true)}
+              aria-label="审批加入申请"
+            >
+              审批申请
+            </button>
+          )}
+          {query.data.allowedActions.includes("readInvite") && (
+            <button
+              type="button"
+              className="invite-trigger-btn"
+              onClick={() => setInviteOpen(true)}
+              aria-label="邀请室友"
+            >
+              <UserPlus size={16} aria-hidden="true" />
+              <span>+ 邀请室友</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {canReview && hasPending && (
@@ -463,6 +475,7 @@ function MembersPane({
           <button
             type="button"
             className="pending-review-banner-btn"
+            aria-label="审批加入申请"
             onClick={() => setApplicationsDrawerOpen(true)}
           >
             处理申请

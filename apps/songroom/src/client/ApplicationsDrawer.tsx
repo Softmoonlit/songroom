@@ -199,7 +199,7 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
                             ) : (
                               <XCircle size={18} aria-hidden="true" />
                             )}
-                            <span className="application-result-text">{item.message}</span>
+                            <span className="application-result-text" role="status">{item.message}</span>
                           </div>
                         </li>
                       );
@@ -248,7 +248,7 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
                                   Boolean(disabledReason)
                                 }
                                 onClick={() => handleDecide(application.id, "approve")}
-                                aria-label={`批准 ${application.nickname}`}
+                                aria-label={`批准：${application.nickname}`}
                               >
                                 {isOperating ? (
                                   <span>处理中…</span>
@@ -267,7 +267,7 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
                                 className="application-action-btn reject"
                                 disabled={isOperating || decisionMutation.isPending || query.isFetching}
                                 onClick={() => handleDecide(application.id, "reject")}
-                                aria-label={`拒绝 ${application.nickname}`}
+                                aria-label={`拒绝：${application.nickname}`}
                               >
                                 <X size={14} aria-hidden="true" />
                                 <span>拒绝</span>
@@ -290,8 +290,8 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
                   </p>
                 </div>
               ) : (
-                <div className="drawer-all-done-hint" role="status">
-                  <span>所有待处理申请已审批完毕</span>
+                <div className="drawer-all-done-hint">
+                  <span>暂无待处理申请</span>
                 </div>
               )}
 

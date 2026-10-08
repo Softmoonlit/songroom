@@ -76,7 +76,7 @@ export function JoinPage({ sessionId }: { sessionId: string }) {
             <form className="invitation-code-form" onSubmit={handleInspect} noValidate>
               <div className="invitation-input-group">
                 <label htmlFor="invite-code-input" className="invitation-label">
-                  请输入 10 位房间邀请码
+                  邀请码
                 </label>
                 <input
                   id="invite-code-input"
@@ -98,7 +98,7 @@ export function JoinPage({ sessionId }: { sessionId: string }) {
                 </p>
               )}
 
-              <button className="primary-button invitation-submit-btn" type="submit">
+              <button className="primary-button invitation-submit-btn" type="submit" aria-label="查看邀请">
                 <span>查验邀请函</span>
                 <ChevronRight size={16} aria-hidden="true" />
               </button>
@@ -243,10 +243,10 @@ function JoinInspection({
       </div>
 
       {view.isMember ? (
-        <div className="invitation-status-box member-already">
+        <div className="invitation-status-box member-already" role="status">
           <CheckCircle2 size={24} className="status-box-icon" aria-hidden="true" />
           <div className="status-box-content">
-            <h3 className="status-box-title">你已经是此房间的成员</h3>
+            <h3 className="status-box-title">你已经是这个房间的成员</h3>
             <p className="status-box-desc">无需重复申请，可以直接前往房间点歌。</p>
           </div>
           <Link className="primary-button status-box-action" to={`/rooms/${view.room.id}`}>
@@ -254,10 +254,10 @@ function JoinInspection({
           </Link>
         </div>
       ) : view.application ? (
-        <div className="invitation-status-box pending-already">
+        <div className="invitation-status-box pending-already" role="status">
           <Clock size={24} className="status-box-icon" aria-hidden="true" />
           <div className="status-box-content">
-            <h3 className="status-box-title">已有待处理申请</h3>
+            <h3 className="status-box-title">已有这个房间的待处理申请</h3>
             <p className="status-box-desc">
               拟用昵称「{view.application.nickname}」，正在等待房主审批。
             </p>
@@ -266,14 +266,14 @@ function JoinInspection({
             className="primary-button status-box-action"
             to={`/application/${view.application.id}`}
           >
-            查看申请进度
+            查看原申请
           </Link>
         </div>
       ) : (
         <form className="invitation-nickname-form" onSubmit={handleSubmit} noValidate>
           <div className="invitation-input-group">
             <label htmlFor="join-nickname-input" className="invitation-label">
-              设置你在该房间的昵称
+              拟用房间昵称
             </label>
             <input
               id="join-nickname-input"
@@ -282,7 +282,6 @@ function JoinInspection({
               value={nickname}
               disabled={mutation.isPending}
               placeholder="1 到 12 个字符"
-              maxLength={12}
               onChange={event => setNickname(event.target.value)}
               autoComplete="off"
             />

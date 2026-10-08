@@ -26,14 +26,15 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
   await page.getByRole("link", { name: "创建房间", exact: true }).click();
   await page.getByLabel("房间名称").fill("SSE测试音乐间");
   await page.getByLabel("我的房间昵称").fill("房主小王");
-  await page.getByRole("checkbox", { name: "确认使用此网易云账号创建房间" }).check();
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
   const roomUrl = page.url();
 
   // 获取邀请码
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
-  const inviteCode = (await page.getByRole("region", { name: "房间邀请" }).locator("dd").textContent())!;
+  await page.getByRole("button", { name: "邀请室友" }).click();
+  const inviteCode = (await page.locator(".invite-code-display").textContent())!.trim();
+  await page.getByRole("button", { name: "关闭邀请弹窗" }).click();
 
   // 2. 模拟第二台设备：创建独立的浏览器上下文（320px 窄屏），以房主同账号在另一设备打开
   const ownerClient2Context = await browser.newContext({ viewport: { width: 320, height: 800 } });
@@ -84,6 +85,7 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
   await ownerClient2.getByRole("button", { name: "审批加入申请", exact: true }).click();
   await ownerClient2.getByRole("button", { name: "批准：室友阿强", exact: true }).click();
   await expect(ownerClient2.getByRole("status")).toContainText("已批准：室友阿强");
+  await ownerClient2.getByRole("button", { name: "关闭审批抽屉" }).click();
 
   // 申请人页面绝对不调用 reload()，通过 SSE 失效自动更新为「申请已获批」
   await expect(guest.getByRole("status")).toHaveText("申请已获批");

@@ -14,7 +14,7 @@ export function getFriendlyDecisionFeedback(
     case "rejected":
       return `已拒绝：${nickname} 的申请`;
     case "nickname_conflict":
-      return `拟用昵称已被占用：${nickname}；申请已终结，请申请人重新提交。`;
+      return `昵称已被占用：${nickname}；申请已终结，请申请人重新提交。`;
     case "pending":
     case "withdrawn":
     case "cancelled":
@@ -28,11 +28,11 @@ export function getFriendlyApprovalDisabledReason(
   if (!reason) return "";
   switch (reason) {
     case "NICKNAME_TAKEN":
-      return "该拟用昵称已被房间内成员占用";
+      return "这个房间昵称已被使用，请换一个昵称。";
     case "ALREADY_MEMBER":
       return "申请人已是本房间成员";
     case "ROOM_MEMBER_LIMIT":
-      return "房间成员人数已达上限";
+      return "这个房间已有 10 名成员，暂时不能批准加入。";
     case "JOINED_ROOM_LIMIT":
       return "申请人加入的房间数已达上限";
     case "INVITE_RESET":

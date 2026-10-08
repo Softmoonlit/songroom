@@ -183,6 +183,7 @@ export function InviteDialog({ open, onOpenChange, sessionId, roomId }: InviteDi
                       <button
                         type="button"
                         className={`invite-copy-btn primary-copy${copyFeedback === "link" ? " success" : ""}`}
+                        aria-label="复制邀请链接"
                         onClick={() => void handleCopy("link")}
                       >
                         {copyFeedback === "link" ? (
@@ -201,6 +202,7 @@ export function InviteDialog({ open, onOpenChange, sessionId, roomId }: InviteDi
                       <button
                         type="button"
                         className={`invite-copy-btn secondary-copy${copyFeedback === "code" ? " success" : ""}`}
+                        aria-label="仅复制邀请码"
                         onClick={() => void handleCopy("code")}
                       >
                         {copyFeedback === "code" ? (
@@ -218,6 +220,12 @@ export function InviteDialog({ open, onOpenChange, sessionId, roomId }: InviteDi
                     </>
                   )}
                 </div>
+
+                {copyFeedback && (
+                  <p className="netease-status" role="status">
+                    {copyFeedback === "link" ? "邀请链接已复制" : "邀请码已复制"}
+                  </p>
+                )}
 
                 {copyError && (
                   <p className="form-message" role="alert">
