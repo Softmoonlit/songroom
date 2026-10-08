@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Music2, Settings, Users } from "lucide-react";
+import { ArrowLeft, Bell, Music2, Settings, UserPlus, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { v7 } from "uuid";
 import { roomLeaveResult, roomMembersView, roomShellView, roomDeletionView, roomDeleteResult } from "../shared/room-contracts";
@@ -9,8 +9,8 @@ import { QueryError } from "./RoomQueryError";
 import { roleLabels } from "./room-role-labels";
 import { useVirtualKeyboard } from "./useVirtualKeyboard";
 import { IdentityForm } from "./IdentityForm";
-import { ApplicationsPane } from "./ApplicationsPane";
-import { InvitePane } from "./InvitePane";
+import { ApplicationsDrawer } from "./ApplicationsDrawer";
+import { InviteDialog } from "./InviteDialog";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
 
@@ -204,7 +204,12 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
-          <MembersPane sessionId={sessionId} roomId={roomId} active={active === "members"} />
+          <MembersPane
+            sessionId={sessionId}
+            roomId={roomId}
+            active={active === "members"}
+            pendingCount={query.data.pendingCount}
+          />
         </section>
         <section hidden={active !== "settings"} aria-label="房间设置">
           <h2>房间设置</h2>
@@ -262,7 +267,17 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     </section>
   );
 }
-function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
+function MembersPane({
+  sessionId,
+  roomId,
+  active,
+  pendingCount
+}: {
+  sessionId: string;
+  roomId: string;
+  active: boolean;
+  pendingCount: number | null;
+}) {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["room-members", sessionId, roomId],
@@ -273,8 +288,9 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
   const [memberId, setMemberId] = useState<string | null>(null);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeError, setRemoveError] = useState("");
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [applicationsDrawerOpen, setApplicationsDrawerOpen] = useState(false);
   const listScroll = useRef(0);
-  const [reviewing, setReviewing] = useState(false);
   const selected = query.data?.members.find(member => member.id === memberId);
 
   const removeMutation = useMutation({
@@ -354,11 +370,57 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
         )}
       </section>
     );
+  const canReview = query.data.allowedActions.includes("reviewApplications");
+  const hasPending = pendingCount !== null && pendingCount > 0;
+
   return (
-    <>
-      <h2>房间成员</h2>
-      {query.data.allowedActions.includes("reviewApplications") && <button className="secondary-button" type="button" aria-expanded={reviewing} onClick={() => setReviewing(value => !value)}>审批加入申请</button>}
-      {active && reviewing && query.data.allowedActions.includes("reviewApplications") && <ApplicationsPane sessionId={sessionId} roomId={roomId} />}
+    <div className="members-pane-container">
+      <div className="members-pane-header">
+        <div className="members-pane-title-group">
+          <h2>房间成员</h2>
+          <span className="members-count-badge" aria-label={`共 ${query.data.members.length} 位成员`}>
+            {query.data.members.length} 人
+          </span>
+        </div>
+        {query.data.allowedActions.includes("readInvite") && (
+          <button
+            type="button"
+            className="invite-trigger-btn"
+            onClick={() => setInviteOpen(true)}
+            aria-label="邀请室友"
+          >
+            <UserPlus size={16} aria-hidden="true" />
+            <span>+ 邀请室友</span>
+          </button>
+        )}
+      </div>
+
+      {canReview && hasPending && (
+        <aside className="pending-review-banner" aria-label="待审批申请提醒">
+          <div className="pending-review-banner-left">
+            <div className="pending-review-banner-icon" aria-hidden="true">
+              <Bell size={18} />
+              <span className="pending-banner-pulse" />
+            </div>
+            <div className="pending-review-banner-info">
+              <span className="pending-review-banner-title">
+                有 {pendingCount} 位室友申请加入房间
+              </span>
+              <span className="pending-review-banner-sub">
+                审批通过后室友即可参与点歌
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="pending-review-banner-btn"
+            onClick={() => setApplicationsDrawerOpen(true)}
+          >
+            处理申请
+          </button>
+        </aside>
+      )}
+
       <ul className="member-list">
         {query.data.members.map(member => (
           <li key={member.id}>
@@ -371,16 +433,39 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
                 setMemberId(member.id);
               }}
             >
-              <span>
-                {member.nickname}
-                {member.isSelf && <span className="field-help">（我）</span>}
+              <div className="member-card-left">
+                <span className="member-avatar" aria-hidden="true">
+                  {member.nickname.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="member-nickname-group">
+                  <span className="member-nickname">{member.nickname}</span>
+                  {member.isSelf && <span className="member-self-tag">（我）</span>}
+                </span>
+              </div>
+              <span className={`status-pill role-${member.role}`}>
+                {roleLabels[member.role]}
               </span>
-              <span className="status-pill">{roleLabels[member.role]}</span>
             </button>
           </li>
         ))}
       </ul>
-      {active && query.data.allowedActions.includes("readInvite") && <InvitePane sessionId={sessionId} roomId={roomId} />}
-    </>
+
+      {active && (
+        <>
+          <InviteDialog
+            open={inviteOpen}
+            onOpenChange={setInviteOpen}
+            sessionId={sessionId}
+            roomId={roomId}
+          />
+          <ApplicationsDrawer
+            open={applicationsDrawerOpen}
+            onClose={() => setApplicationsDrawerOpen(false)}
+            sessionId={sessionId}
+            roomId={roomId}
+          />
+        </>
+      )}
+    </div>
   );
 }
