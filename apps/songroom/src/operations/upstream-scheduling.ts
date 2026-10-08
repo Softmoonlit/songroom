@@ -131,6 +131,16 @@ export class UpstreamScheduler {
     }
   }
 
+  resume(accountId: string): void {
+    this.database.transaction(tx => {
+      tx.update(upstreamAccount)
+        .set({ paused: false })
+        .where(eq(upstreamAccount.accountId, accountId))
+        .run();
+    });
+    this.kick();
+  }
+
   start(): void {
     if (this.#started && !this.#stopped) return;
     if (this.#pump) throw new Error("重新启动前必须等待 settle 完成，不能撤销在途执行权");

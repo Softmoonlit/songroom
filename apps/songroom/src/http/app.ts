@@ -27,6 +27,8 @@ import { EventStreamService } from "../events/event-stream.js";
 import { SongSearchService } from "../operations/song-search.js";
 import { registerSongSearchRoutes } from "./song-search.js";
 import { requireSession } from "./session.js";
+import { AbnormalOperationsService } from "../operations/abnormal-operations.js";
+import { registerAdminOperationRoutes } from "./admin-operations.js";
 
 export type RuntimeState = "starting" | "ready" | "draining" | "stopped";
 
@@ -38,6 +40,7 @@ export interface SongRoomApp {
   searchService: SongSearchService;
   playlists: PublicPlaylists;
   scheduler: UpstreamScheduler;
+  abnormalService: AbnormalOperationsService;
   getState: () => RuntimeState;
   listen: () => Promise<string>;
   drain: () => void;
@@ -77,6 +80,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const scheduler = new UpstreamScheduler(database, eventStream, dependencies.now);
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
+  const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, vault, eventStream, dependencies.now);
   binding.onRevoke = userId => playlists.onOwnerRevoked(userId);
   binding.onReauthorize = (userId, authId, accountId, generation) => playlists.onReauthorized(userId, authId, accountId, generation);
   let state: RuntimeState = "starting";
@@ -181,6 +185,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     registerInviteRoutes(fastify, auth, new Invites(database, eventStream, dependencies.now));
     registerPublicPlaylistRoutes(fastify, auth, playlists);
     registerSongSearchRoutes(fastify, auth, searchService);
+    registerAdminOperationRoutes(fastify, auth, config, abnormalService);
 
     fastify.get("/api/events", { sse: "only" }, async (request, reply) => {
       const origin = request.headers.origin;
@@ -254,5 +259,5 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     fastify.log.info({ state, address }, "application lifecycle");
     return address;
   };
-  return { fastify, database, auth, eventStream, searchService, playlists, scheduler, getState: () => state, listen, drain, close };
+  return { fastify, database, auth, eventStream, searchService, playlists, scheduler, abnormalService, getState: () => state, listen, drain, close };
 }

@@ -1017,7 +1017,7 @@ export class PublicPlaylists {
       if (condition !== "valid") {
         const roomExists = tx.select({ id: room.id }).from(room).where(eq(room.id, row.roomId)).get();
         if (!roomExists && detail.playlistId) {
-          lateCleanupId = this.#ensureCleanupInTx(tx, row.userId, row.accountId!, detail.playlistId, row.id);
+          lateCleanupId = this.ensureCleanupInTx(tx, row.userId, row.accountId!, detail.playlistId, row.id);
         }
         this.#conditionStatus(row, condition, true);
         return;
@@ -1946,7 +1946,7 @@ export class PublicPlaylists {
     };
   }
 
-  #ensureCleanupInTx(tx: any, userId: string, accountId: string, playlistId: string, creationOperationId?: string | null): string {
+  ensureCleanupInTx(tx: any, userId: string, accountId: string, playlistId: string, creationOperationId?: string | null): string {
     const existing = tx.select().from(publicPlaylistCleanup)
       .where(and(eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.playlistId, playlistId)))
       .get();
@@ -2049,7 +2049,7 @@ export class PublicPlaylists {
 
     let cleanupId: string | null = null;
     if (target) {
-      cleanupId = this.#ensureCleanupInTx(tx, ownerUserId, target.accountId, target.playlistId, target.creationOperationId);
+      cleanupId = this.ensureCleanupInTx(tx, ownerUserId, target.accountId, target.playlistId, target.creationOperationId);
 
       const otherRoomUsingPlaylist = tx.select({ roomId: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
         .where(and(eq(publicPlaylistBinding.playlistId, target.playlistId), ne(publicPlaylistBinding.roomId, roomId))).get();
@@ -2090,13 +2090,13 @@ export class PublicPlaylists {
 
   dispatchCleanup(cleanupId: string): void {
     const row = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
-    if (!row || row.status !== "ready" || row.hasSent) return;
+    if (!row || row.status !== "ready" || (row.hasSent && !row.retryAuthorized)) return;
 
     try {
       void this.scheduler.executeMemoryTask(row.accountId, async () => {
         // 调度唤醒时重新核验，防止并发重复
         const current = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
-        if (!current || current.status !== "ready" || current.hasSent) return;
+        if (!current || current.status !== "ready" || (current.hasSent && !current.retryAuthorized)) return;
 
         // 调度唤醒时重新核验授权有效性
         const currentAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.userId)).get();
@@ -2131,11 +2131,12 @@ export class PublicPlaylists {
           return;
         }
 
-        // 请求发出前持久记录发送意图，进入发送中后视为可能已发
+        // 请求发出前持久记录发送意图，进入发送中后视为可能已发；单次重试授权在此被立即持久消费
         const sendingVersion = current.version + 1;
         this.database.update(publicPlaylistCleanup).set({
           status: "sending",
           hasSent: true,
+          retryAuthorized: false,
           version: sendingVersion,
           updatedAt: this.now()
         }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();

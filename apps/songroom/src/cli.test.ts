@@ -86,5 +86,10 @@ describe("database CLI", () => {
     // non-TTY environment rejects safely
     await expect(runCli(["admin", "whoami"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
     await expect(runCli(["admin", "recover-account"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
+    await expect(runCli(["admin", "abnormal", "list"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
+    await expect(runCli(["admin", "abnormal", "show", "op-1"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
+    await expect(runCli(["admin", "abnormal", "resolve-write", "op-1"], cfg, { isTTY: false })).rejects.toThrow(/TTY/);
+    await expect(runCli(["admin", "abnormal", "show"], cfg, { isTTY: false })).rejects.toThrow(/用法/);
+    await expect(runCli(["admin", "abnormal", "unknown"], cfg, { isTTY: false })).rejects.toThrow(/用法/);
   });
 });

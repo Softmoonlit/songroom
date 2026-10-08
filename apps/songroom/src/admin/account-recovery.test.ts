@@ -18,7 +18,7 @@ import {
   validateRecoveryReason
 } from "./account-recovery.js";
 import { adminAuditLog, user } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -431,15 +431,16 @@ describe("账号恢复原生执行与审计记录", () => {
     // 9. 验证数据库最小审计记录
     const db = openDatabase(preRoot.dbPath);
     try {
-      const auditRows = db.select().from(adminAuditLog).where(eq(adminAuditLog.targetUserId, targetUserId)).all();
+      const auditRows = db.select().from(adminAuditLog).where(and(eq(adminAuditLog.targetType, "user"), eq(adminAuditLog.targetId, targetUserId))).all();
       expect(auditRows.length).toBe(1);
       const audit = auditRows[0]!;
       expect(audit.adminUserId).toBe(adminUserId);
-      expect(audit.targetUserId).toBe(targetUserId);
+      expect(audit.targetType).toBe("user");
+      expect(audit.targetId).toBe(targetUserId);
       expect(audit.action).toBe("recover_account");
       expect(audit.reason).toBe("核实室友电话及线下本人身份证件");
-      expect(audit.setPasswordResult).toBe("succeeded");
-      expect(audit.revokeSessionsResult).toBe("succeeded");
+      expect(audit.result).toBe("succeeded");
+      expect(audit.details).toContain("succeeded");
 
       // 验证审计记录绝不包含密码、Cookie 或邮箱
       const rawRow = JSON.stringify(audit);
@@ -488,10 +489,10 @@ describe("账号恢复原生执行与审计记录", () => {
     // 检查审计
     const db = openDatabase(dbPath);
     try {
-      const auditRows = db.select().from(adminAuditLog).where(eq(adminAuditLog.targetUserId, nonExistentUserId)).all();
+      const auditRows = db.select().from(adminAuditLog).where(and(eq(adminAuditLog.targetType, "user"), eq(adminAuditLog.targetId, nonExistentUserId))).all();
       expect(auditRows.length).toBe(1);
-      expect(auditRows[0]!.setPasswordResult).toContain("failed");
-      expect(auditRows[0]!.revokeSessionsResult).toBe("not_attempted");
+      expect(auditRows[0]!.result).toBe("failed");
+      expect(auditRows[0]!.details).toContain("failed");
     } finally {
       db.$client.close();
     }
@@ -551,10 +552,11 @@ describe("账号恢复原生执行与审计记录", () => {
     // 检查审计
     const db = openDatabase(dbPath);
     try {
-      const auditRows = db.select().from(adminAuditLog).where(eq(adminAuditLog.targetUserId, targetUserId)).all();
+      const auditRows = db.select().from(adminAuditLog).where(and(eq(adminAuditLog.targetType, "user"), eq(adminAuditLog.targetId, targetUserId))).all();
       expect(auditRows.length).toBe(1);
-      expect(auditRows[0]!.setPasswordResult).toBe("succeeded");
-      expect(auditRows[0]!.revokeSessionsResult).toContain("failed");
+      expect(auditRows[0]!.result).toBe("partially_completed");
+      expect(auditRows[0]!.details).toContain("succeeded");
+      expect(auditRows[0]!.details).toContain("failed");
     } finally {
       db.$client.close();
     }

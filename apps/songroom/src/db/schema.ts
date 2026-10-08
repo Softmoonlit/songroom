@@ -297,6 +297,7 @@ export const publicPlaylistCleanup = sqliteTable("public_playlist_cleanup", {
   playlistId: text("playlist_id").notNull(),
   creationOperationId: text("creation_operation_id"),
   hasSent: integer("has_sent", { mode: "boolean" }).notNull().default(false),
+  retryAuthorized: integer("retry_authorized", { mode: "boolean" }).notNull().default(false),
   checkFact: text("check_fact"),
   checkRound: integer("check_round").notNull().default(0),
   status: text("status", { enum: ["ready", "sending", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded"] }).notNull(),
@@ -311,21 +312,25 @@ export const publicPlaylistCleanup = sqliteTable("public_playlist_cleanup", {
   check("public_playlist_cleanup_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
   check("public_playlist_cleanup_version_valid", sql`${table.version} > 0`),
   check("public_playlist_cleanup_status_valid", sql`${table.status} IN ('ready', 'sending', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded')`),
-  check("public_playlist_cleanup_check_round_valid", sql`${table.checkRound} >= 0`)
+  check("public_playlist_cleanup_check_round_valid", sql`${table.checkRound} >= 0`),
+  check("public_playlist_cleanup_retry_authorized_valid", sql`${table.retryAuthorized} IN (0, 1)`)
 ]);
 
 export const adminAuditLog = sqliteTable("admin_audit_log", {
   id: text("id").primaryKey(),
   adminUserId: text("admin_user_id").notNull(),
-  targetUserId: text("target_user_id").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(),
   action: text("action").notNull(),
   reason: text("reason").notNull(),
-  setPasswordResult: text("set_password_result").notNull(),
-  revokeSessionsResult: text("revoke_sessions_result").notNull(),
+  previousStatus: text("previous_status"),
+  nextStatus: text("next_status"),
+  result: text("result").notNull(),
+  details: text("details"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
 }, (table) => [
   index("admin_audit_log_admin_user_index").on(table.adminUserId),
-  index("admin_audit_log_target_user_index").on(table.targetUserId),
+  index("admin_audit_log_target_index").on(table.targetType, table.targetId),
   check("admin_audit_log_reason_len", sql`length(${table.reason}) >= 1 AND length(${table.reason}) <= 500`)
 ]);
 

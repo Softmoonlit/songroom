@@ -134,6 +134,13 @@
       "when": 1791390000000,
       "tag": "0018_admin_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1791400000000,
+      "tag": "0019_abnormal_operation_admin",
+      "breakpoints": true
     }
   ]
 }

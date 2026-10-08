@@ -265,16 +265,25 @@ export async function runAccountRecovery(
     try {
       const database = openDatabase(config.dbPath);
       try {
+        const overallResult =
+          setPasswordResult === "succeeded" && revokeSessionsResult === "succeeded"
+            ? "succeeded"
+            : setPasswordResult === "succeeded"
+            ? "partially_completed"
+            : "failed";
         database
           .insert(adminAuditLog)
           .values({
             id: v7(),
             adminUserId,
-            targetUserId,
+            targetType: "user",
+            targetId: targetUserId,
             action: "recover_account",
             reason: validatedReason,
-            setPasswordResult,
-            revokeSessionsResult,
+            previousStatus: null,
+            nextStatus: null,
+            result: overallResult,
+            details: JSON.stringify({ setPasswordResult, revokeSessionsResult }),
             createdAt: new Date()
           })
           .run();

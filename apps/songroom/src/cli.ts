@@ -4,6 +4,13 @@ import { pathToFileURL } from "node:url";
 import { assertRuntime, loadConfig, type AppConfig } from "./config.js";
 import { checkDatabase, initializeDatabase, migrateDatabase, type DatabaseCheck } from "./db/database.js";
 import { AdminCliError, runAccountRecovery, runAdminWhoami, type AccountRecoveryOptions, type AdminWhoamiOptions } from "./admin/account-recovery.js";
+import {
+  runAdminAbnormalList,
+  runAdminAbnormalShow,
+  runAdminAbnormalAction,
+  type AbnormalActionType,
+  type AdminAbnormalCliOptions
+} from "./admin/abnormal-operations-cli.js";
 
 type DatabaseCommandResult = DatabaseCheck | {
   ok: true;
@@ -35,9 +42,9 @@ class CliError extends Error {
 export async function runCli(
   argv: readonly string[],
   config: AppConfig,
-  options?: AccountRecoveryOptions & AdminWhoamiOptions
+  options?: AccountRecoveryOptions & AdminWhoamiOptions & AdminAbnormalCliOptions
 ): Promise<unknown> {
-  const [group, action] = argv;
+  const [group, action, subAction, targetId] = argv;
   if (group === "db") {
     return runDatabaseCommand(argv, config);
   }
@@ -47,7 +54,32 @@ export async function runCli(
   if (group === "admin" && action === "recover-account") {
     return runAccountRecovery(config, options);
   }
-  throw new CliError("CLI_USAGE", "用法：db init | db migrate | db check | admin whoami | admin recover-account");
+  if (group === "admin" && action === "abnormal") {
+    if (subAction === "list") {
+      return runAdminAbnormalList(config, options);
+    }
+    if (subAction === "show") {
+      if (!targetId) {
+        throw new CliError("CLI_USAGE", "用法：admin abnormal show <id>");
+      }
+      return runAdminAbnormalShow(config, targetId, options);
+    }
+    const validActions: Record<string, AbnormalActionType> = {
+      "resolve-write": "resolve-write",
+      "resolve-create": "resolve-create",
+      "authorize-cleanup": "authorize-cleanup",
+      "verify-cleanup": "verify-cleanup",
+      "resume-risk": "resume-risk"
+    };
+    if (subAction && subAction in validActions) {
+      if (!targetId) {
+        throw new CliError("CLI_USAGE", `用法：admin abnormal ${subAction} <id>`);
+      }
+      return runAdminAbnormalAction(config, validActions[subAction]!, targetId, options);
+    }
+    throw new CliError("CLI_USAGE", "用法：admin abnormal list | show <id> | resolve-write <id> | resolve-create <id> | authorize-cleanup <id> | verify-cleanup <id> | resume-risk <accountId>");
+  }
+  throw new CliError("CLI_USAGE", "用法：db init | db migrate | db check | admin whoami | admin recover-account | admin abnormal <command>");
 }
 
 export async function runDatabaseCommand(argv: readonly string[], config: AppConfig): Promise<DatabaseCommandResult> {
