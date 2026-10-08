@@ -488,4 +488,51 @@ describe("09: 读取并刷新权威公共歌单快照", () => {
     expect(secondResult.snapshot?.version).toBe(2);
     expect(secondResult.snapshot?.trackCount).toBe(10_000);
   });
+
+  it("支持包含空专辑名（单曲/原声/特殊曲目）的网易云歌曲快照同步，不误报 PARSE_ERROR", async () => {
+    const f = fixture();
+    f.database.insert(publicPlaylistBinding).values({
+      roomId: f.roomId,
+      accountId: "cloud-owner",
+      playlistId: "cloud-playlist",
+      name: "songroom-宿舍-公共",
+      creationOperationId: v7(),
+      generation: 1
+    }).run();
+    f.database.insert(playlistSnapshot).values({
+      accountId: "cloud-owner",
+      playlistId: "cloud-playlist",
+      snapshotVersion: 0,
+      syncedAt: null,
+      lastErrorCode: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }).run();
+
+    const service = f.module();
+    service.start();
+
+    f.adapter.detail = async () => ({
+      ok: true,
+      data: {
+        playlist: { id: "cloud-playlist", name: "songroom-宿舍-公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
+        songIds: ["song-single"],
+        songs: [
+          { id: "song-single", name: "猪猪侠", artists: ["陈洁丽"], album: "" }
+        ]
+      }
+    });
+
+    f.advanceTime(1500);
+    const result = await service.refresh("owner", f.roomId);
+    expect(result.snapshot).not.toBeNull();
+    expect(result.snapshot?.trackCount).toBe(1);
+    expect(result.snapshot?.tracks[0]).toMatchObject({
+      songId: "song-single",
+      name: "猪猪侠",
+      artists: ["陈洁丽"],
+      album: ""
+    });
+    expect(result.lastRefreshError).toBeNull();
+  });
 });

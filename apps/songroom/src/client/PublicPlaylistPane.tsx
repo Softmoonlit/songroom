@@ -95,7 +95,7 @@ function TrackList({ tracks, active }: { tracks: PublicPlaylistTrack[]; active: 
               key={virtualRow.key}
               role="listitem"
               tabIndex={0}
-              aria-label={`${track.position + 1}. ${track.name}，歌手：${track.artists.join("、")}，专辑：${track.album}${track.requesters.length ? `，点歌人：${track.requesters.join("、")}` : ""}`}
+              aria-label={`${track.position + 1}. ${track.name}，歌手：${track.artists.join("、")}${track.album ? `，专辑：${track.album}` : ""}${track.requesters.length ? `，点歌人：${track.requesters.join("、")}` : ""}`}
               className="track-item"
               style={{
                 position: "absolute",
@@ -109,8 +109,8 @@ function TrackList({ tracks, active }: { tracks: PublicPlaylistTrack[]; active: 
               <span className="track-index" aria-hidden="true">{track.position + 1}</span>
               <div className="track-info">
                 <span className="track-name" title={track.name}>{track.name}</span>
-                <span className="track-artists-album" title={`${track.artists.join(" / ")} - ${track.album}`}>
-                  {track.artists.join(" / ")} · {track.album}
+                <span className="track-artists-album" title={`${track.artists.join(" / ")}${track.album ? ` - ${track.album}` : ""}`}>
+                  {track.artists.join(" / ")}{track.album ? ` · ${track.album}` : ""}
                 </span>
                 {track.requesters.length > 0 && (
                   <div className="track-requesters" aria-label={`点歌人：${track.requesters.join("、")}`}>
@@ -454,7 +454,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                       >
                         <div className="candidate-info">
                           <span className="candidate-name">{song.name}</span>
-                          <span className="candidate-meta">{song.artists.join(" / ")} · {song.album}</span>
+                          <span className="candidate-meta">{song.artists.join(" / ")}{song.album ? ` · ${song.album}` : ""}</span>
                         </div>
                         <button
                           type="button"
@@ -474,7 +474,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                     <div className="selected-song-info">
                       <span className="selected-tag">已选单曲</span>
                       <strong className="selected-song-name">{selectedCandidate.name}</strong>
-                      <span className="selected-song-meta">{selectedCandidate.artists.join(" / ")} · {selectedCandidate.album}</span>
+                      <span className="selected-song-meta">{selectedCandidate.artists.join(" / ")}{selectedCandidate.album ? ` · ${selectedCandidate.album}` : ""}</span>
                     </div>
                     <div className="selected-actions">
                       <button

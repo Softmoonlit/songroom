@@ -43,7 +43,7 @@ function upstreamId(value: unknown): string {
   throw Error("invalid upstream id");
 }
 function song(value: any) {
-  return { id: upstreamId(value.id), name: value.name, artists: (value.ar ?? value.artists).map((artist: any) => artist.name), album: (value.al ?? value.album).name };
+  return { id: upstreamId(value.id), name: value.name, artists: (value.ar ?? value.artists ?? []).map((artist: any) => artist.name).filter(Boolean), album: (value.al ?? value.album)?.name ?? "" };
 }
 function playlist(value: any) {
   return { id: upstreamId(value.id), name: value.name, creatorId: upstreamId(value.creator.userId), subscribed: value.subscribed === true, status: value.status ?? 0 };

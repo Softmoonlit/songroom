@@ -431,7 +431,7 @@ export class PublicPlaylists {
     }
     for (let i = 0; i < data.songIds.length; i++) {
       const song = data.songs[i];
-      if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || !song.album || song.album.length === 0) {
+      if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || typeof song.album !== "string") {
         this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR");
         return false;
       }
