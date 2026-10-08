@@ -5,6 +5,7 @@ describe("application-timeline", () => {
   it("处理 pending 状态（等待房主审批中）", () => {
     const timeline = getApplicationTimeline("pending", "阿强");
     expect(timeline.canReapply).toBe(false);
+    expect(timeline.badgeLabel).toBe("等待房主审批");
 
     // 第一步：提交申请
     expect(timeline.steps[0].step).toBe(1);
@@ -24,6 +25,7 @@ describe("application-timeline", () => {
   it("处理 approved 状态（获批通过）", () => {
     const timeline = getApplicationTimeline("approved", "阿强");
     expect(timeline.canReapply).toBe(false);
+    expect(timeline.badgeLabel).toBe("申请已获批");
 
     expect(timeline.steps[0].status).toBe("completed");
     expect(timeline.steps[1].status).toBe("completed");
@@ -36,6 +38,7 @@ describe("application-timeline", () => {
   it("处理 rejected 状态（已被拒绝，支持重新申请）", () => {
     const timeline = getApplicationTimeline("rejected", "阿强");
     expect(timeline.canReapply).toBe(true);
+    expect(timeline.badgeLabel).toBe("房主已拒绝申请");
 
     expect(timeline.steps[0].status).toBe("completed");
     expect(timeline.steps[1].status).toBe("failed");
@@ -46,6 +49,7 @@ describe("application-timeline", () => {
   it("处理 nickname_conflict 状态（昵称冲突，支持重新申请）", () => {
     const timeline = getApplicationTimeline("nickname_conflict", "阿强");
     expect(timeline.canReapply).toBe(true);
+    expect(timeline.badgeLabel).toBe("拟用昵称已被占用，申请已终结，请重新提交");
 
     expect(timeline.steps[1].status).toBe("failed");
     expect(timeline.steps[1].title).toContain("昵称已被占用");

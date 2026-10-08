@@ -54,6 +54,13 @@ test.describe("E2E 安全与无障碍矩阵 (Checklist Item 13)", () => {
       .disableRules(["color-contrast"])
       .analyze();
     expect(registerScan.violations).toEqual([]);
+
+    // 查验邀请函页
+    await page.goto("/join");
+    const joinScan = await new AxeBuilder({ page })
+      .disableRules(["color-contrast"])
+      .analyze();
+    expect(joinScan.violations).toEqual([]);
   });
 
   test("防重复提交 / 双击防御：提交操作中按钮立即禁用以防重入", async ({ page }) => {

@@ -20,8 +20,8 @@ describe("application-decision-messages", () => {
       expect(getFriendlyApprovalDisabledReason("NICKNAME_TAKEN")).toBe("这个房间昵称已被使用，请换一个昵称。");
       expect(getFriendlyApprovalDisabledReason("ALREADY_MEMBER")).toBe("申请人已是本房间成员");
       expect(getFriendlyApprovalDisabledReason("ROOM_MEMBER_LIMIT")).toBe("这个房间已有 10 名成员，暂时不能批准加入。");
-      expect(getFriendlyApprovalDisabledReason("JOINED_ROOM_LIMIT")).toBe("申请人加入的房间数已达上限");
-      expect(getFriendlyApprovalDisabledReason("INVITE_RESET")).toBe("邀请已重置，该申请已取消");
+      expect(getFriendlyApprovalDisabledReason("JOINED_ROOM_LIMIT")).toBe("最多可以归属 10 个房间。");
+      expect(getFriendlyApprovalDisabledReason("INVITE_RESET")).toBe("邀请已重置，这份申请已失效。");
       expect(getFriendlyApprovalDisabledReason(undefined)).toBe("");
     });
   });

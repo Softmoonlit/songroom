@@ -12,6 +12,7 @@ export interface TimelineStep {
 }
 
 export interface ApplicationTimelineView {
+  badgeLabel: string;
   steps: [TimelineStep, TimelineStep, TimelineStep];
   canReapply: boolean;
 }
@@ -29,10 +30,12 @@ export function getApplicationTimeline(
 
   let step2: TimelineStep;
   let step3: TimelineStep;
+  let badgeLabel: string;
   let canReapply = false;
 
   switch (status) {
     case "pending":
+      badgeLabel = "等待房主审批";
       step2 = {
         step: 2,
         title: "等待房主审批",
@@ -48,6 +51,7 @@ export function getApplicationTimeline(
       break;
 
     case "approved":
+      badgeLabel = "申请已获批";
       step2 = {
         step: 2,
         title: "房主已批准",
@@ -63,6 +67,7 @@ export function getApplicationTimeline(
       break;
 
     case "rejected":
+      badgeLabel = "房主已拒绝申请";
       step2 = {
         step: 2,
         title: "房主已拒绝申请",
@@ -79,6 +84,7 @@ export function getApplicationTimeline(
       break;
 
     case "withdrawn":
+      badgeLabel = "申请已撤回";
       step2 = {
         step: 2,
         title: "申请已撤回",
@@ -95,6 +101,7 @@ export function getApplicationTimeline(
       break;
 
     case "cancelled":
+      badgeLabel = "邀请已重置，申请已取消";
       step2 = {
         step: 2,
         title: "邀请已重置，申请已取消",
@@ -111,6 +118,7 @@ export function getApplicationTimeline(
       break;
 
     case "nickname_conflict":
+      badgeLabel = "拟用昵称已被占用，申请已终结，请重新提交";
       step2 = {
         step: 2,
         title: "拟用昵称已被占用",
@@ -128,6 +136,7 @@ export function getApplicationTimeline(
   }
 
   return {
+    badgeLabel,
     steps: [step1, step2, step3],
     canReapply
   };

@@ -1,5 +1,6 @@
 import type { approvalDisabledReason, joinApplicationStatus } from "../shared/invite-contracts.js";
 import type { z } from "zod";
+import { errorMessageForCode } from "./room-http.js";
 
 type JoinApplicationStatusType = z.infer<typeof joinApplicationStatus>;
 type ApprovalDisabledReasonType = z.infer<typeof approvalDisabledReason>;
@@ -26,16 +27,8 @@ export function getFriendlyApprovalDisabledReason(
   reason?: ApprovalDisabledReasonType
 ): string {
   if (!reason) return "";
-  switch (reason) {
-    case "NICKNAME_TAKEN":
-      return "这个房间昵称已被使用，请换一个昵称。";
-    case "ALREADY_MEMBER":
-      return "申请人已是本房间成员";
-    case "ROOM_MEMBER_LIMIT":
-      return "这个房间已有 10 名成员，暂时不能批准加入。";
-    case "JOINED_ROOM_LIMIT":
-      return "申请人加入的房间数已达上限";
-    case "INVITE_RESET":
-      return "邀请已重置，该申请已取消";
+  if (reason === "ALREADY_MEMBER") {
+    return "申请人已是本房间成员";
   }
+  return errorMessageForCode(reason);
 }
