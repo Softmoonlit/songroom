@@ -128,12 +128,12 @@ test("室友进入房间设置，点击退出房间显示二次确认并成功�
 
   // 二次确认对话框打开，检查文案及影响范围
   await expect(page.getByRole("heading", { name: "退出房间？" })).toBeVisible();
-  await expect(page.getByText("确定要退出房间“音乐交流间”吗？")).toBeVisible();
-  await expect(page.getByText("退出后立即撤销你在该房间的所有访问与操作权限")).toBeVisible();
-  await expect(page.getByText("释放你的昵称“室友小张”，供其他人使用")).toBeVisible();
-  await expect(page.getByText("清除你在当前公共歌单上的全部点歌人标签")).toBeVisible();
-  await expect(page.getByText("公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留")).toBeVisible();
-  // 严禁包含个人资源或个人歌单清理文案
+  await expect(page.getByText("确定要退出房间“音乐交流间”吗？退出后将立即撤销你在该房间的所有访问与操作权限，并清除你的点歌人标签。")).toBeVisible();
+  await expect(page.getByText("权限立即撤销")).toBeVisible();
+  await expect(page.getByText("清除点歌标签")).toBeVisible();
+  await expect(page.getByText("释放昵称“室友小张”")).toBeVisible();
+  // 废除排比后果清单与个人歌单清理文案
+  await expect(page.locator(".leave-consequences")).toHaveCount(0);
   await expect(page.getByText(/个人歌单|个人资源/)).toHaveCount(0);
 
   // 点击确认退出
@@ -225,12 +225,12 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
 
   // 二次确认对话框打开，检查文案及影响范围
   await expect(page.getByRole("heading", { name: "移除成员“室友小张”？" })).toBeVisible();
-  await expect(page.getByText("确定要将“室友小张”移出房间吗？")).toBeVisible();
-  await expect(page.getByText("立即撤销该成员在当前房间的所有访问与操作权限")).toBeVisible();
-  await expect(page.getByText("释放昵称“室友小张”，供新成员使用")).toBeVisible();
-  await expect(page.getByText("清除该成员在当前公共歌单上的全部点歌人标签")).toBeVisible();
-  await expect(page.getByText("公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留")).toBeVisible();
-  // 严禁包含个人资源或个人歌单清理文案
+  await expect(page.getByText("确定要将“室友小张”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在公共歌单上的点歌人标签。")).toBeVisible();
+  await expect(page.getByText("权限立即撤销")).toBeVisible();
+  await expect(page.getByText("清除点歌标签")).toBeVisible();
+  await expect(page.getByText("释放昵称“室友小张”")).toBeVisible();
+  // 废除排比后果清单与个人歌单清理文案
+  await expect(page.locator(".leave-consequences")).toHaveCount(0);
   await expect(page.getByText(/个人歌单|个人资源/)).toHaveCount(0);
 
   // 点击确认移除

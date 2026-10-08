@@ -1,4 +1,4 @@
-import * as AlertDialog from "@radix-ui/react-alert-dialog";
+import { DestructiveConfirmDialog } from "./DestructiveConfirmDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { v7 as uuidv7 } from "uuid";
@@ -92,24 +92,39 @@ export function InvitePane({ sessionId, roomId }: { sessionId: string; roomId: s
       <dl className="netease-identity"><div><dt>邀请码</dt><dd className="invite-code">{query.data.code}</dd></div></dl>
       <div className="invite-actions">
         {query.data.allowedActions.includes("copyInvite") && <button className="secondary-button" type="button" onClick={() => void copy()}>复制邀请链接</button>}
-        <AlertDialog.Root open={open} onOpenChange={changeOpen}>
-          {query.data.allowedActions.includes("resetInvite") && <AlertDialog.Trigger asChild><button className="secondary-button" type="button">重置邀请</button></AlertDialog.Trigger>}
-          <AlertDialog.Portal>
-            <AlertDialog.Overlay className="invite-dialog-overlay" />
-            <AlertDialog.Content className="invite-dialog-content" onEscapeKeyDown={event => { if (mutation.isPending) event.preventDefault(); }}>
-              <AlertDialog.Title>重置房间邀请？</AlertDialog.Title>
-              <AlertDialog.Description>
-                {confirmation ? `旧邀请码和链接将立即失效，并取消 ${confirmation.pendingCount} 份待处理申请。当前成员不受影响，此操作不能撤销。` : "正在读取最新申请情况，请稍候再确认。"}
-              </AlertDialog.Description>
-              {dialogMessage && <p className="form-message" role="alert">{dialogMessage}</p>}
-              {!confirmation && !query.isFetching && <button className="secondary-button" type="button" onClick={() => void loadConfirmation()}>重新读取影响范围</button>}
-              <div className="invite-dialog-actions">
-                <AlertDialog.Cancel asChild><button className="secondary-button" type="button" disabled={mutation.isPending}>保留当前邀请</button></AlertDialog.Cancel>
-                <AlertDialog.Action asChild><button className="danger-button" type="button" disabled={!confirmation?.allowedActions.includes("resetInvite") || query.isFetching || mutation.isPending} onClick={event => { event.preventDefault(); reset(); }}>{mutation.isPending ? "重置中…" : "确认重置邀请"}</button></AlertDialog.Action>
-              </div>
-            </AlertDialog.Content>
-          </AlertDialog.Portal>
-        </AlertDialog.Root>
+        {query.data.allowedActions.includes("resetInvite") && (
+          <DestructiveConfirmDialog
+            trigger={<button className="secondary-button" type="button">重置邀请</button>}
+            title="重置房间邀请？"
+            descriptionText={
+              confirmation
+                ? `旧邀请码和链接将立即失效，并取消 ${confirmation.pendingCount} 份待处理申请。当前成员不受影响。`
+                : "正在读取最新申请情况，请稍候再确认。"
+            }
+            badges={[
+              { label: "不可撤销", variant: "danger" },
+              { label: "旧码立即失效", variant: "danger" },
+              ...(confirmation && confirmation.pendingCount > 0
+                ? [{ label: `取消 ${confirmation.pendingCount} 份待处理申请`, variant: "warning" as const }]
+                : [])
+            ]}
+            cancelText="保留当前邀请"
+            confirmText="确认重置邀请"
+            pendingText="重置中…"
+            open={open}
+            onOpenChange={changeOpen}
+            onConfirm={reset}
+            isPending={mutation.isPending}
+            confirmDisabled={!confirmation?.allowedActions.includes("resetInvite") || query.isFetching}
+            error={dialogMessage}
+          >
+            {!confirmation && !query.isFetching && (
+              <button className="secondary-button" type="button" onClick={() => void loadConfirmation()}>
+                重新读取影响范围
+              </button>
+            )}
+          </DestructiveConfirmDialog>
+        )}
       </div>
       {copyFeedback && <p className={copyFeedback.failed ? "form-message" : "netease-status"} role={copyFeedback.failed ? "alert" : "status"}>{copyFeedback.text}</p>}
       {resetFeedback && <p role="status" className="netease-status">{resetFeedback}</p>}

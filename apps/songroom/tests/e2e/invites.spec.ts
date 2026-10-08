@@ -195,7 +195,7 @@ test("320px 重置邀请对话框覆盖导航并捕获键盘，版本冲突留�
   // The overlay must be the top element even above the fixed mobile navigation.
   expect(await page.getByRole("button", { name: "公共歌单", exact: true, includeHidden: true }).evaluate(element => {
     const rect = element.getBoundingClientRect();
-    return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.classList.contains("invite-dialog-overlay");
+    return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.classList.contains("dialog-overlay");
   })).toBe(true);
   await dialog.getByRole("button", { name: "确认重置邀请" }).click();
   await expect(dialog).toBeVisible();

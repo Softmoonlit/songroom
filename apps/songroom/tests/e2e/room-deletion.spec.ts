@@ -103,7 +103,7 @@ test("室友进入房间设置，仅显示退出房间，不显示删除房间�
   await expect(page.getByRole("button", { name: "删除房间" })).toHaveCount(0);
 });
 
-test("房主进入房间设置，点击删除房间弹窗展示最新影响范围、聚合版本与专用公共歌单清理说明", async ({ page }) => {
+test("房主进入房间设置，点击删除房间弹窗展示高信噪比核心风险、关键危险标签与专用公共歌单清理说明", async ({ page }) => {
   await setupMocks(page, "owner", { hasPublicPlaylist: true });
 
   await page.route(`**/api/rooms/${roomId}/deletion`, route =>
@@ -133,20 +133,19 @@ test("房主进入房间设置，点击删除房间弹窗展示最新影响范�
 
   // 检查弹窗标题与描述
   await expect(page.getByRole("heading", { name: "删除房间？" })).toBeVisible();
-  await expect(page.getByText("确定要永久删除房间“测试音乐间”吗？此操作不可撤销。")).toBeVisible();
+  await expect(page.getByText("确定要永久删除房间“测试音乐间”吗？此操作不可撤销，所有成员将立即失去访问权限。")).toBeVisible();
 
-  // 检查影响范围信息
-  await expect(page.getByText("当前成员：2 人")).toBeVisible();
-  await expect(page.getByText("待处理申请：1 份")).toBeVisible();
-  await expect(page.getByText("专用歌单“songroom-测试音乐间-公共”（ID: pl-cloud-1），将启动网易云删除清理")).toBeVisible();
-  await expect(page.getByText("聚合版本：v3")).toBeVisible();
+  // 检查关键危险标签与影响说明
+  await expect(page.getByText("不可撤销", { exact: true })).toBeVisible();
+  await expect(page.getByText("立即生效", { exact: true })).toBeVisible();
+  await expect(page.getByText("云端歌单清理", { exact: true })).toBeVisible();
+  await expect(page.getByText("专用公共歌单“songroom-测试音乐间-公共”将启动网易云删除清理。")).toBeVisible();
 
-  // 检查操作后果说明
-  await expect(page.getByText("本地立即永久删除房间，所有设备与成员马上失去访问")).toBeVisible();
-  await expect(page.getByText("彻底清除全部成员关系、昵称、邀请码及待审批申请")).toBeVisible();
-  await expect(page.getByText("彻底清除全部点歌人标签及公共歌单绑定引用")).toBeVisible();
-  await expect(page.getByText("仅为该房间创建的专用公共歌单启动云端删除，不影响其他房间与账号")).toBeVisible();
-  await expect(page.getByText("房间不提供恢复入口，所有数据不可撤销")).toBeVisible();
+  // 废除统计行、调试聚合版本号与长篇排比列表
+  await expect(page.getByText(/当前成员/)).toHaveCount(0);
+  await expect(page.getByText(/待处理申请/)).toHaveCount(0);
+  await expect(page.getByText(/聚合版本/)).toHaveCount(0);
+  await expect(page.locator(".leave-consequences")).toHaveCount(0);
 });
 
 test("房主提交删除发生版本冲突时，展示错误提示并重新核对最新版本影响范围", async ({ page }) => {
@@ -211,18 +210,11 @@ test("房主提交删除发生版本冲突时，展示错误提示并重新核�
   await page.getByRole("button", { name: "房间设置" }).click();
   await page.getByRole("button", { name: "删除房间" }).click();
 
-  await expect(page.getByText("当前成员：2 人")).toBeVisible();
-  await expect(page.getByText("聚合版本：v1")).toBeVisible();
-
   // 第一次提交，发生 409
   await page.getByRole("button", { name: "确认永久删除" }).click();
 
   // 检查冲突错误提示
   await expect(page.getByText("房间状态或成员信息已变化，请核对最新影响范围后再试。")).toBeVisible();
-
-  // 检查自动重新拉取后刷新了成员数和聚合版本
-  await expect(page.getByText("当前成员：3 人")).toBeVisible();
-  await expect(page.getByText("聚合版本：v2")).toBeVisible();
 
   // 第二次提交，成功
   await page.getByRole("button", { name: "确认永久删除" }).click();

@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, Music2, Settings, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
-import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { v7 } from "uuid";
 import { roomLeaveResult, roomMembersView, roomShellView, roomDeletionView, roomDeleteResult } from "../shared/room-contracts";
 import { errorMessage, queryOptions, request, RoomRequestError } from "./room-http";
@@ -13,20 +12,7 @@ import { IdentityForm } from "./IdentityForm";
 import { ApplicationsPane } from "./ApplicationsPane";
 import { InvitePane } from "./InvitePane";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
-
-interface DestructiveConfirmDialogProps {
-  triggerText: string;
-  title: string;
-  descriptionText: string;
-  consequences: string[];
-  confirmText: string;
-  pendingText: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
-  isPending: boolean;
-  error?: string;
-}
+import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
 
 function DeleteRoomDialog({
   sessionId,
@@ -78,121 +64,41 @@ function DeleteRoomDialog({
 
   const deletion = deletionQuery.data;
 
-  return (
-    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
-      <AlertDialog.Trigger asChild>
-        <button className="danger-button" type="button">删除房间</button>
-      </AlertDialog.Trigger>
-      <AlertDialog.Portal>
-        <AlertDialog.Overlay className="invite-dialog-overlay" />
-        <AlertDialog.Content className="invite-dialog-content">
-          <AlertDialog.Title>删除房间？</AlertDialog.Title>
-          <AlertDialog.Description asChild>
-            <div>
-              <p>确定要永久删除房间“{roomName}”吗？此操作不可撤销。</p>
-              {deletionQuery.isPending ? (
-                <p role="status">正在读取最新影响范围…</p>
-              ) : deletionQuery.isError ? (
-                <p className="form-message" role="alert">读取影响范围失败，请稍后重试。</p>
-              ) : deletion ? (
-                <>
-                  <div className="deletion-impact-summary">
-                    <p><strong>当前成员：</strong>{deletion.memberCount} 人</p>
-                    <p><strong>待处理申请：</strong>{deletion.pendingApplicationCount} 份</p>
-                    <p>
-                      <strong>公共歌单：</strong>
-                      {deletion.publicPlaylist
-                        ? deletion.publicPlaylist.id
-                          ? `专用歌单“${deletion.publicPlaylist.name}”（ID: ${deletion.publicPlaylist.id}），将启动网易云删除清理`
-                          : `在途创建的公共歌单“${deletion.publicPlaylist.name}”，将停止创建并视情况启动云端清理`
-                        : "无专用公共歌单，无需云端清理"}
-                    </p>
-                    <p className="version-tag">聚合版本：v{deletion.version}</p>
-                  </div>
-                  <ul className="leave-consequences">
-                    <li>本地立即永久删除房间，所有设备与成员马上失去访问</li>
-                    <li>彻底清除全部成员关系、昵称、邀请码及待审批申请</li>
-                    <li>彻底清除全部点歌人标签及公共歌单绑定引用</li>
-                    {deletion.publicPlaylist && (
-                      <li>仅为该房间创建的专用公共歌单启动云端删除，不影响其他房间与账号</li>
-                    )}
-                    <li>房间不提供恢复入口，所有数据不可撤销</li>
-                  </ul>
-                </>
-              ) : null}
-            </div>
-          </AlertDialog.Description>
-          {deleteError && <p className="form-message" role="alert">{deleteError}</p>}
-          <div className="invite-dialog-actions">
-            <AlertDialog.Cancel asChild>
-              <button className="secondary-button" type="button" disabled={deleteMutation.isPending}>
-                取消
-              </button>
-            </AlertDialog.Cancel>
-            <button
-              className="danger-button"
-              type="button"
-              disabled={deleteMutation.isPending || !deletion}
-              onClick={() => deleteMutation.mutate()}
-            >
-              {deleteMutation.isPending ? "正在删除…" : "确认永久删除"}
-            </button>
-          </div>
-        </AlertDialog.Content>
-      </AlertDialog.Portal>
-    </AlertDialog.Root>
-  );
-}
+  const badges: DestructiveBadge[] = [
+    { label: "不可撤销", variant: "danger" },
+    { label: "立即生效", variant: "danger" },
+    ...(deletion?.publicPlaylist ? [{ label: "云端歌单清理", variant: "danger" as const }] : [])
+  ];
 
-function DestructiveConfirmDialog({
-  triggerText,
-  title,
-  descriptionText,
-  consequences,
-  confirmText,
-  pendingText,
-  open,
-  onOpenChange,
-  onConfirm,
-  isPending,
-  error
-}: DestructiveConfirmDialogProps) {
   return (
-    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
-      <AlertDialog.Trigger asChild>
-        <button className="danger-button" type="button">{triggerText}</button>
-      </AlertDialog.Trigger>
-      <AlertDialog.Portal>
-        <AlertDialog.Overlay className="invite-dialog-overlay" />
-        <AlertDialog.Content className="invite-dialog-content">
-          <AlertDialog.Title>{title}</AlertDialog.Title>
-          <AlertDialog.Description asChild>
-            <div>
-              <p>{descriptionText}</p>
-              <ul className="leave-consequences">
-                {consequences.map((c, i) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
-            </div>
-          </AlertDialog.Description>
-          {error && <p className="form-message" role="alert">{error}</p>}
-          <div className="invite-dialog-actions">
-            <AlertDialog.Cancel asChild>
-              <button className="secondary-button" type="button" disabled={isPending}>取消</button>
-            </AlertDialog.Cancel>
-            <button
-              className="danger-button"
-              type="button"
-              disabled={isPending}
-              onClick={onConfirm}
-            >
-              {isPending ? pendingText : confirmText}
-            </button>
-          </div>
-        </AlertDialog.Content>
-      </AlertDialog.Portal>
-    </AlertDialog.Root>
+    <DestructiveConfirmDialog
+      triggerText="删除房间"
+      title="删除房间？"
+      descriptionText={`确定要永久删除房间“${roomName}”吗？此操作不可撤销，所有成员将立即失去访问权限。`}
+      badges={badges}
+      confirmText="确认永久删除"
+      pendingText="正在删除…"
+      cancelText="取消"
+      open={open}
+      onOpenChange={next => {
+        onOpenChange(next);
+        if (next) setDeleteError("");
+      }}
+      onConfirm={() => deleteMutation.mutate()}
+      isPending={deleteMutation.isPending}
+      confirmDisabled={!deletion}
+      error={deleteError}
+    >
+      {deletionQuery.isPending ? (
+        <p role="status">正在读取最新影响范围…</p>
+      ) : deletionQuery.isError ? (
+        <p className="form-message" role="alert">读取影响范围失败，请稍后重试。</p>
+      ) : deletion?.publicPlaylist ? (
+        <p className="destructive-dialog-note">
+          专用公共歌单“{deletion.publicPlaylist.name}”将启动网易云删除清理。
+        </p>
+      ) : null}
+    </DestructiveConfirmDialog>
   );
 }
 
@@ -323,15 +229,15 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
               <DestructiveConfirmDialog
                 triggerText="退出房间"
                 title="退出房间？"
-                descriptionText={`确定要退出房间“${room.name}”吗？`}
-                consequences={[
-                  "退出后立即撤销你在该房间的所有访问与操作权限",
-                  `释放你的昵称“${room.nickname}”，供其他人使用`,
-                  "清除你在当前公共歌单上的全部点歌人标签",
-                  "公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留"
+                descriptionText={`确定要退出房间“${room.name}”吗？退出后将立即撤销你在该房间的所有访问与操作权限，并清除你的点歌人标签。`}
+                badges={[
+                  { label: "权限立即撤销", variant: "danger" },
+                  { label: "清除点歌标签", variant: "danger" },
+                  { label: `释放昵称“${room.nickname}”`, variant: "neutral" }
                 ]}
                 confirmText="确认退出"
                 pendingText="正在退出…"
+                cancelText="取消"
                 open={leaveOpen}
                 onOpenChange={open => { setLeaveOpen(open); if (open) setLeaveError(""); }}
                 onConfirm={() => leaveMutation.mutate()}
@@ -429,15 +335,15 @@ function MembersPane({ sessionId, roomId, active }: { sessionId: string; roomId:
             <DestructiveConfirmDialog
               triggerText="移除成员"
               title={`移除成员“${selected.nickname}”？`}
-              descriptionText={`确定要将“${selected.nickname}”移出房间吗？`}
-              consequences={[
-                "立即撤销该成员在当前房间的所有访问与操作权限",
-                `释放昵称“${selected.nickname}”，供新成员使用`,
-                "清除该成员在当前公共歌单上的全部点歌人标签",
-                "公共歌单中的已有歌曲及其他成员的点歌人标签仍将保留"
+              descriptionText={`确定要将“${selected.nickname}”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在公共歌单上的点歌人标签。`}
+              badges={[
+                { label: "权限立即撤销", variant: "danger" },
+                { label: "清除点歌标签", variant: "danger" },
+                { label: `释放昵称“${selected.nickname}”`, variant: "neutral" }
               ]}
               confirmText="确认移除"
               pendingText="正在移除…"
+              cancelText="取消"
               open={removeOpen}
               onOpenChange={open => { setRemoveOpen(open); if (open) setRemoveError(""); }}
               onConfirm={() => removeMutation.mutate()}
