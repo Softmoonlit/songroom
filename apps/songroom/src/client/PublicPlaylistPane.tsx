@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Info, Music2, RotateCw, Search, X } from "lucide-react";
+import { Check, Info, Music2, Plus, RotateCw } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
-import { z } from "zod";
 import {
   publicPlaylistView,
   songRequestOperationView,
@@ -11,14 +10,13 @@ import {
   type PublicPlaylistCreateCommand,
   type PublicPlaylistTrack,
   type PublicPlaylistView
-} from "../shared/public-playlist-contracts";
-import {
-  searchInitiatedResponse,
-  searchView,
-  type SongCandidate
-} from "../shared/song-search-contracts";
-import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http";
-import { QueryError } from "./RoomQueryError";
+} from "../shared/public-playlist-contracts.js";
+import type { SongCandidate } from "../shared/song-search-contracts.js";
+import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http.js";
+import { QueryError } from "./RoomQueryError.js";
+import { SongRequestDrawer } from "./SongRequestDrawer.js";
+import { Toast, type ToastData } from "./Toast.js";
+import { getFriendlySongRequestErrorMessage } from "./song-request-messages.js";
 
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
   queued: "已排队，等待创建公共歌单。",
@@ -54,7 +52,15 @@ const disabledMessages = {
   OPERATION_PENDING: "已有未完成的创建操作，不能再次创建。"
 };
 
-function TrackList({ tracks, active }: { tracks: PublicPlaylistTrack[]; active: boolean }) {
+function TrackList({
+  tracks,
+  active,
+  highlightedSongId
+}: {
+  tracks: PublicPlaylistTrack[];
+  active: boolean;
+  highlightedSongId: string | null;
+}) {
   const parentRef = useRef<HTMLDivElement>(null);
   const savedScrollTop = useRef(0);
   const virtualizer = useVirtualizer({
@@ -70,63 +76,84 @@ function TrackList({ tracks, active }: { tracks: PublicPlaylistTrack[]; active: 
     }
   }, [active]);
 
+  // 当新歌入单时，平滑滚动至该歌曲并展示高亮动效
+  useEffect(() => {
+    if (!highlightedSongId) return;
+    const index = tracks.findIndex(t => t.songId === highlightedSongId);
+    if (index !== -1) {
+      virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
+    }
+  }, [highlightedSongId, tracks, virtualizer]);
+
   return (
-    <div
-      ref={parentRef}
-      onScroll={e => {
-        savedScrollTop.current = e.currentTarget.scrollTop;
-      }}
-      className="playlist-tracks-container"
-      role="list"
-      aria-label="歌曲列表"
-      tabIndex={0}
-    >
+    <div className="playlist-tracks-wrapper">
+      {/* 歌单列表表头：为未来本地过滤搜索预留清晰的空间边界 */}
+      <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
+        <span className="tracks-header-col col-index" aria-hidden="true">#</span>
+        <span className="tracks-header-col col-title" aria-hidden="true">歌曲与歌手</span>
+        <div className="tracks-header-right-group">
+          <span className="tracks-header-col col-requester" aria-hidden="true">点歌人</span>
+          <div className="playlist-filter-slot" aria-hidden="true" />
+        </div>
+      </div>
       <div
-        style={{
-          height: `${virtualizer.getTotalSize()}px`,
-          width: "100%",
-          position: "relative"
+        ref={parentRef}
+        onScroll={e => {
+          savedScrollTop.current = e.currentTarget.scrollTop;
         }}
+        className="playlist-tracks-container"
+        role="list"
+        aria-label="歌曲列表"
+        tabIndex={0}
       >
-        {virtualizer.getVirtualItems().map(virtualRow => {
-          const track = tracks[virtualRow.index];
-          return (
-            <div
-              key={virtualRow.key}
-              role="listitem"
-              tabIndex={0}
-              aria-label={`${track.position + 1}. ${track.name}，歌手：${track.artists.join("、")}${track.album ? `，专辑：${track.album}` : ""}${track.requesters.length ? `，点歌人：${track.requesters.join("、")}` : ""}`}
-              className="track-item"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: `${virtualRow.size}px`,
-                transform: `translateY(${virtualRow.start}px)`
-              }}
-            >
-              <span className="track-index" aria-hidden="true">{track.position + 1}</span>
-              <div className="track-info">
-                <span className="track-name" title={track.name}>{track.name}</span>
-                <span className="track-artists-album" title={`${track.artists.join(" / ")}${track.album ? ` · ${track.album}` : ""}`}>
-                  <span className="track-artists">{track.artists.join(" / ")}</span>
-                  {track.album && <span className="track-album"> · {track.album}</span>}
-                </span>
-              </div>
-              {track.requesters.length > 0 && (
-                <div className="track-requesters-side" aria-label={`点歌人：${track.requesters.join("、")}`}>
-                  {track.requesters.map(requester => (
-                    <span key={requester} className="requester-capsule" title={`点歌人：${requester}`}>
-                      <span className="requester-label">点歌人：</span>
-                      <span className="requester-name">{requester}</span>
-                    </span>
-                  ))}
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative"
+          }}
+        >
+          {virtualizer.getVirtualItems().map(virtualRow => {
+            const track = tracks[virtualRow.index];
+            const isHighlighted = track.songId === highlightedSongId;
+            return (
+              <div
+                key={virtualRow.key}
+                role="listitem"
+                tabIndex={0}
+                aria-label={`${track.position + 1}. ${track.name}，歌手：${track.artists.join("、")}${track.album ? `，专辑：${track.album}` : ""}${track.requesters.length ? `，点歌人：${track.requesters.join("、")}` : ""}`}
+                className={`track-item ${isHighlighted ? "track-item-highlighted" : ""}`}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`
+                }}
+              >
+                <span className="track-index" aria-hidden="true">{track.position + 1}</span>
+                <div className="track-info">
+                  <span className="track-name" title={track.name}>{track.name}</span>
+                  <span className="track-artists-album" title={`${track.artists.join(" / ")}${track.album ? ` · ${track.album}` : ""}`}>
+                    <span className="track-artists">{track.artists.join(" / ")}</span>
+                    {track.album && <span className="track-album"> · {track.album}</span>}
+                  </span>
                 </div>
-              )}
-            </div>
-          );
-        })}
+                {track.requesters.length > 0 && (
+                  <div className="track-requesters-side" aria-label={`点歌人：${track.requesters.join("、")}`}>
+                    {track.requesters.map(requester => (
+                      <span key={requester} className="requester-capsule" title={`点歌人：${requester}`}>
+                        <span className="requester-label">点歌人：</span>
+                        <span className="requester-name">{requester}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -138,9 +165,11 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const query = useQuery({ queryKey, queryFn: ({ signal }) => request(`/${roomId}/public-playlist`, publicPlaylistView, signal), enabled: active, ...queryOptions });
   const [command, setCommand] = useState<PublicPlaylistCreateCommand | null>(null);
   const [message, setMessage] = useState("");
+  const [refreshError, setRefreshError] = useState("");
   const controller = useRef<AbortController | null>(null);
   const refreshController = useRef<AbortController | null>(null);
-  const [refreshError, setRefreshError] = useState("");
+
+  // 歌单元数据信息浮层状态
   const [showMetaPopover, setShowMetaPopover] = useState(false);
   const metaPopoverRef = useRef<HTMLDivElement>(null);
 
@@ -164,11 +193,10 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     };
   }, [showMetaPopover]);
 
-  // 搜索与点歌状态
-  const [searchQueryText, setSearchQueryText] = useState("");
-  const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
-  const [selectedCandidate, setSelectedCandidate] = useState<SongCandidate | null>(null);
-  const [requestStatusMessage, setRequestStatusMessage] = useState("");
+  // 点歌抽屉与正反馈交互状态
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [toast, setToast] = useState<ToastData | null>(null);
+  const [highlightedSongId, setHighlightedSongId] = useState<string | null>(null);
   const [requestErrorMessage, setRequestErrorMessage] = useState("");
   const [isRequesting, setIsRequesting] = useState(false);
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
@@ -218,16 +246,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     }
   });
 
-  // 由 SSE 失效通知驱动重查，附带低频兜底
-  const searchQuery = useQuery({
-    queryKey: ["song-search", activeSearchId],
-    queryFn: ({ signal }) => request(`/${roomId}/search/${activeSearchId}`, searchView, signal),
-    enabled: Boolean(activeSearchId && active),
-    refetchInterval: q => (q.state.data?.status === "searching" ? 10000 : false),
-    ...queryOptions
-  });
-
-  // 由 SSE 失效通知驱动重查，附带低频兜底
+  // 异步点歌操作轮询与监听（由 SSE 失效通知驱动重查，附带低频兜底）
   const operationQuery = useQuery({
     queryKey: ["song-request-operation", activeOperationId],
     queryFn: ({ signal }) => request(`/${roomId}/song-requests/${activeOperationId}`, songRequestOperationView, signal),
@@ -241,87 +260,55 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     const op = operationQuery.data;
     switch (op.status) {
       case "succeeded":
-        setRequestStatusMessage(`《${op.name}》点歌成功！已同步至网易云并记录你的标签。`);
         setIsRequesting(false);
+        setIsDrawerOpen(false);
         setActiveOperationId(null);
-        setSelectedCandidate(null);
+        setHighlightedSongId(op.songId);
+        setToast({
+          id: uuidv7(),
+          message: `《${op.name}》点歌成功！已加入公共歌单并记录你的标签。`,
+          type: "success"
+        });
         void client.invalidateQueries({ queryKey });
         break;
       case "awaitingConfirmation":
-        if (op.songConfirmed && !op.tagConfirmed) {
-          setRequestStatusMessage(`《${op.name}》网易云已确认，但点歌人标签待补记。`);
-        } else {
-          setRequestStatusMessage(`《${op.name}》已发送至网易云，正在等待云端确认，请稍后刷新查看。`);
-        }
         setIsRequesting(false);
-        setSelectedCandidate(null);
+        setIsDrawerOpen(false);
+        setActiveOperationId(null);
+        setToast({
+          id: uuidv7(),
+          message: op.songConfirmed && !op.tagConfirmed
+            ? `《${op.name}》网易云已确认，但点歌人标签待补记。`
+            : `《${op.name}》已发送至网易云，正在等待云端确认，请稍后刷新查看。`,
+          type: "info"
+        });
         void client.invalidateQueries({ queryKey });
         break;
       case "waitingAuthorization":
-        setRequestStatusMessage("房主网易云授权失效，正在等待房主恢复授权...");
-        setRequestErrorMessage("");
         setIsRequesting(false);
+        setRequestErrorMessage("房主的网易云授权需要重新确认，正在等待房主恢复授权…");
         break;
       case "needsAdministrator":
-        setRequestErrorMessage("点歌操作异常，需要管理员处理。");
         setIsRequesting(false);
         setActiveOperationId(null);
+        setRequestErrorMessage("点歌操作需要管理员协助处理，请联系房主或管理员。");
         break;
       case "failed":
       case "stopped":
-        setRequestErrorMessage(op.errorCode ? errorMessageForCode(op.errorCode) : "点歌未能完成");
         setIsRequesting(false);
         setActiveOperationId(null);
+        setRequestErrorMessage(getFriendlySongRequestErrorMessage(op.errorCode));
         break;
       case "queued":
       case "processing":
         break;
     }
-  }, [operationQuery.data]);
-
-  const searchMutation = useMutation({
-    mutationFn: async (queryText: string) => {
-      setSelectedCandidate(null);
-      setRequestStatusMessage("");
-      setRequestErrorMessage("");
-      return request(`/${roomId}/search`, searchInitiatedResponse, undefined, { query: queryText });
-    },
-    onSuccess: data => {
-      setActiveSearchId(data.searchId);
-    },
-    onError: failure => {
-      setRequestErrorMessage(errorMessage(failure));
-    }
-  });
-
-  const cancelSearchMutation = useMutation({
-    mutationFn: async (searchId: string) => {
-      return request(`/${roomId}/search/${searchId}`, z.strictObject({ ok: z.literal(true) }), undefined, undefined, "DELETE");
-    }
-  });
-
-  function handleSearchSubmit(e: FormEvent) {
-    e.preventDefault();
-    const q = searchQueryText.trim();
-    if (!q) return;
-    searchMutation.mutate(q);
-  }
-
-  function handleCancelSearch() {
-    if (activeSearchId) {
-      cancelSearchMutation.mutate(activeSearchId);
-    }
-    setActiveSearchId(null);
-    setSelectedCandidate(null);
-    setSearchQueryText("");
-    setRequestErrorMessage("");
-  }
+  }, [operationQuery.data, client, queryKey]);
 
   const songRequestMutation = useMutation({
     mutationFn: async (candidate: SongCandidate) => {
       setIsRequesting(true);
       setRequestErrorMessage("");
-      setRequestStatusMessage("正在提交点歌…");
       const key = uuidv7();
       return request(`/${roomId}/song-requests`, songRequestResponse, undefined, {
         idempotencyKey: key,
@@ -333,24 +320,29 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     },
     onSuccess: res => {
       if (res.operation.status === "succeeded") {
-        setRequestStatusMessage(`《${res.operation.name}》点歌成功！已添加你的点歌标签。`);
         setIsRequesting(false);
-        setSelectedCandidate(null);
+        setIsDrawerOpen(false);
+        setHighlightedSongId(res.operation.songId);
+        setToast({
+          id: uuidv7(),
+          message: `《${res.operation.name}》点歌成功！已加入公共歌单并记录你的标签。`,
+          type: "success"
+        });
         void client.invalidateQueries({ queryKey });
       } else {
         setActiveOperationId(res.operation.id);
-        setRequestStatusMessage("正在排队并同步网易云歌单…");
       }
     },
     onError: failure => {
       setIsRequesting(false);
-      setRequestErrorMessage(errorMessage(failure));
+      const code = failure instanceof RoomRequestError ? failure.code : null;
+      setRequestErrorMessage(getFriendlySongRequestErrorMessage(code));
     }
   });
 
-  function handleConfirmSongRequest() {
-    if (!selectedCandidate || isRequesting) return;
-    songRequestMutation.mutate(selectedCandidate);
+  function handleConfirmSongRequest(candidate: SongCandidate) {
+    if (isRequesting) return;
+    songRequestMutation.mutate(candidate);
   }
 
   // 进入页面触发一次独立显式刷新
@@ -374,7 +366,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const view = query.data;
 
   const formatTime = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
-  const candidates = searchQuery.data?.songs ?? [];
 
   const handleCreatePlaylist = () => {
     if (mutation.isPending || view.disabledReason) return;
@@ -465,6 +456,25 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
 
           <div className="playlist-header-right">
+            {/* 显眼的右上角「+ 点歌」主操作入口 */}
+            {view.allowedActions.includes("requestSong") && (
+              <button
+                className="primary-button open-request-drawer-btn"
+                type="button"
+                disabled={view.disabledReason === "ACCOUNT_PAUSED"}
+                aria-label="+ 点歌"
+                aria-haspopup="dialog"
+                aria-expanded={isDrawerOpen}
+                onClick={() => {
+                  setRequestErrorMessage("");
+                  setIsDrawerOpen(true);
+                }}
+              >
+                <Plus size={15} aria-hidden="true" />
+                <span>点歌</span>
+              </button>
+            )}
+
             <div className="playlist-meta-popover-anchor" ref={metaPopoverRef}>
               <button
                 type="button"
@@ -516,125 +526,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           <p className="field-help">{disabledMessages[view.disabledReason]}</p>
         )}
 
-        {/* 吸顶直接搜索工具栏 */}
-        {view.allowedActions.includes("requestSong") && (
-          <div className="sticky-search-toolbar" role="search" aria-label="直接单曲搜索">
-            <form className="search-input-form" onSubmit={handleSearchSubmit}>
-              <div className="search-input-wrapper">
-                <Search size={16} className="search-icon" aria-hidden="true" />
-                <input
-                  type="search"
-                  className="search-input"
-                  placeholder="输入歌名或歌手直接点歌…"
-                  value={searchQueryText}
-                  onChange={e => setSearchQueryText(e.target.value)}
-                  disabled={searchMutation.isPending || isRequesting}
-                  aria-label="搜索单曲关键词"
-                />
-              </div>
-              <button
-                type="submit"
-                className="primary-button search-submit-button"
-                disabled={!searchQueryText.trim() || searchMutation.isPending || isRequesting}
-              >
-                {searchMutation.isPending ? "搜索中…" : "搜索"}
-              </button>
-              {activeSearchId && (
-                <button
-                  type="button"
-                  className="secondary-button search-cancel-button"
-                  onClick={handleCancelSearch}
-                  disabled={isRequesting}
-                  aria-label="取消搜索"
-                >
-                  取消
-                </button>
-              )}
-            </form>
-
-            {/* 搜索候选状态展示 */}
-            {activeSearchId && (
-              <div className="search-results-panel">
-                {searchQuery.isLoading || searchQuery.data?.status === "searching" ? (
-                  <p className="search-progress-text" role="status">正在搜索网易云单曲…</p>
-                ) : searchQuery.data?.status === "failed" ? (
-                  <p className="form-message search-error" role="alert">
-                    {searchQuery.data.errorCode ? errorMessageForCode(searchQuery.data.errorCode) : "搜索失败，请稍后重试"}
-                  </p>
-                ) : candidates.length === 0 ? (
-                  <p className="search-empty-text">未找到相关单曲，请尝试其他关键词。</p>
-                ) : !selectedCandidate ? (
-                  <ul className="candidate-list" role="listbox" aria-label="搜索候选列表">
-                    {candidates.map(song => (
-                      <li
-                        key={song.id}
-                        role="option"
-                        aria-selected={false}
-                        tabIndex={0}
-                        className="candidate-item"
-                        onClick={() => setSelectedCandidate(song)}
-                        onKeyDown={(e: KeyboardEvent<HTMLLIElement>) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            setSelectedCandidate(song);
-                          }
-                        }}
-                      >
-                        <div className="candidate-info">
-                          <span className="candidate-name">{song.name}</span>
-                          <span className="candidate-meta">{song.artists.join(" / ")}{song.album ? ` · ${song.album}` : ""}</span>
-                        </div>
-                        <button
-                          type="button"
-                          className="secondary-button candidate-select-btn"
-                          onClick={e => {
-                            e.stopPropagation();
-                            setSelectedCandidate(song);
-                          }}
-                        >
-                          选择
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="selected-song-panel" role="region" aria-label="已选单曲">
-                    <div className="selected-song-info">
-                      <span className="selected-tag">已选单曲</span>
-                      <strong className="selected-song-name">{selectedCandidate.name}</strong>
-                      <span className="selected-song-meta">{selectedCandidate.artists.join(" / ")}{selectedCandidate.album ? ` · ${selectedCandidate.album}` : ""}</span>
-                    </div>
-                    <div className="selected-actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setSelectedCandidate(null)}
-                        disabled={isRequesting}
-                      >
-                        <X size={15} aria-hidden="true" />
-                        取消选择
-                      </button>
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={handleConfirmSongRequest}
-                        disabled={isRequesting}
-                      >
-                        <Check size={15} aria-hidden="true" />
-                        {isRequesting ? "点歌中…" : "确认点歌"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 点歌状态和错误提示 */}
-            {requestStatusMessage && <p className="form-message song-request-status" role="status">{requestStatusMessage}</p>}
-            {requestErrorMessage && <p className="form-message song-request-error" role="alert">{requestErrorMessage}</p>}
-          </div>
-        )}
-
         {(!view.snapshot || view.snapshot.syncedAt === null) ? (
           <div className="initial-sync-card">
             <p>正在进行首次同步，请稍候…</p>
@@ -649,15 +540,49 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
             </div>
             <h4 className="empty-playlist-title">歌单暂无歌曲</h4>
             <p className="empty-playlist-guidance">
-              房主和室友可直接在上方搜索单曲点歌，为你和室友添上第一首背景音乐。
+              点击右上角「+ 点歌」或下方按钮，为你和室友添上第一首背景音乐。
             </p>
+            {view.allowedActions.includes("requestSong") && (
+              <button
+                className="primary-button empty-playlist-cta-btn"
+                type="button"
+                disabled={view.disabledReason === "ACCOUNT_PAUSED"}
+                aria-label="+ 点歌"
+                onClick={() => {
+                  setRequestErrorMessage("");
+                  setIsDrawerOpen(true);
+                }}
+              >
+                <Plus size={15} aria-hidden="true" />
+                <span>点一首歌</span>
+              </button>
+            )}
           </div>
         ) : (
-          <TrackList tracks={view.snapshot.tracks} active={active} />
+          <TrackList
+            tracks={view.snapshot.tracks}
+            active={active}
+            highlightedSongId={highlightedSongId}
+          />
         )}
 
         {message && <p className="form-message" role="alert">{message}</p>}
       </div>
     )}
+
+    {/* 网易云全网点歌专属抽屉面板 */}
+    <SongRequestDrawer
+      isOpen={isDrawerOpen}
+      onClose={() => setIsDrawerOpen(false)}
+      roomId={roomId}
+      active={active}
+      isRequesting={isRequesting}
+      onConfirmSongRequest={handleConfirmSongRequest}
+      requestErrorMessage={requestErrorMessage}
+      clearRequestErrorMessage={() => setRequestErrorMessage("")}
+    />
+
+    {/* 轻量 Toast 正反馈提示 */}
+    <Toast toast={toast} onDismiss={() => setToast(null)} />
   </>;
 }

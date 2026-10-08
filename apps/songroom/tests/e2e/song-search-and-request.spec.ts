@@ -42,8 +42,8 @@ const basePlaylist = {
   name: "songroom-测试宿舍-公共"
 };
 
-test.describe("直接搜索与公共点歌前端交互", () => {
-  test("提供吸顶直接搜索工具栏，渐进展示候选，支持键盘选择与确认点歌，并在 320px-1440px 无溢出", async ({ page }) => {
+test.describe("独立点歌面板抽屉与交互正反馈", () => {
+  test("点击「+ 点歌」呼出专用抽屉，搜索选择单曲，提交微加载，成功弹出 Toast 并自动收起抽屉高亮新歌，并在 320px-1440px 无溢出", async ({ page }) => {
     await setupRoomPage(page);
 
     const initialView: PublicPlaylistView = {
@@ -136,45 +136,56 @@ test.describe("直接搜索与公共点歌前端交互", () => {
       await page.setViewportSize({ width, height: 800 });
       await page.goto(`/rooms/${roomId}`);
 
-      // 验证已有点歌人标签展示
+      // 验证已有点歌人标签展示与列表表头清晰边界
       await expect(page.getByText("点歌人：房主")).toBeVisible();
+      await expect(page.getByRole("region", { name: "歌曲列表表头" })).toBeVisible();
 
-      // 吸顶直接搜索工具栏可见
-      const searchToolbar = page.getByRole("search", { name: "直接单曲搜索" });
-      await expect(searchToolbar).toBeVisible();
+      // 验证主页面上不再常驻易混淆的直接搜索栏
+      await expect(page.locator(".sticky-search-toolbar")).toHaveCount(0);
+
+      // 右上角醒目的「+ 点歌」主操作按钮可见
+      const openDrawerButton = page.getByRole("button", { name: "+ 点歌" });
+      await expect(openDrawerButton).toBeVisible();
+
+      // 点击打开专用点歌抽屉
+      await openDrawerButton.click();
+      const drawer = page.getByRole("dialog", { name: "网易云点歌" });
+      await expect(drawer).toBeVisible();
 
       // 输入搜索关键词并提交
-      const searchInput = page.getByPlaceholder("输入歌名或歌手直接点歌…");
+      const searchInput = drawer.getByPlaceholder("输入歌名或歌手直接点歌…");
       await searchInput.fill("周杰伦");
-      await page.getByRole("button", { name: "搜索" }).click();
+      await drawer.getByRole("button", { name: "搜索" }).click();
 
       // 候选歌曲出现
-      await expect(page.getByText("七里香").first()).toBeVisible();
-      await expect(page.getByText("夜曲")).toBeVisible();
+      await expect(drawer.getByText("七里香").first()).toBeVisible();
+      await expect(drawer.getByText("夜曲")).toBeVisible();
 
       // 键盘导航选择单曲
-      const candidateItem = page.getByRole("option", { name: /七里香/ });
+      const candidateItem = drawer.getByRole("option", { name: /七里香/ });
       await candidateItem.focus();
       await page.keyboard.press("Enter");
 
       // 选歌卡片出现，展示确认点歌与取消选择
-      await expect(page.getByRole("region", { name: "已选单曲" })).toBeVisible();
-      const confirmButton = page.getByRole("button", { name: "确认点歌" });
+      await expect(drawer.getByRole("region", { name: "已选单曲" })).toBeVisible();
+      const confirmButton = drawer.getByRole("button", { name: "确认点歌" });
       await expect(confirmButton).toBeVisible();
 
       // 确认点歌
       await confirmButton.click();
 
-      // 成功反馈与新标签
+      // 成功反馈 Toast 弹出、抽屉自动收起，并在公共歌单中平滑高亮新入单歌曲
       await expect(page.getByText("点歌成功！")).toBeVisible();
+      await expect(drawer).not.toBeVisible();
       await expect(page.getByText("点歌人：室友小明")).toBeVisible();
+      await expect(page.locator(".track-item-highlighted")).toBeVisible();
 
       // 验证 320px-1440px 无横向滚动溢出
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
   });
 
-  test("搜索可取消并不影响云端", async ({ page }) => {
+  test("抽屉内搜索可取消并不影响云端", async ({ page }) => {
     await setupRoomPage(page);
 
     const initialView: PublicPlaylistView = {
@@ -209,17 +220,76 @@ test.describe("直接搜索与公共点歌前端交互", () => {
     });
 
     await page.goto(`/rooms/${roomId}`);
-    const searchInput = page.getByPlaceholder("输入歌名或歌手直接点歌…");
-    await searchInput.fill("待取消");
-    await page.getByRole("button", { name: "搜索" }).click();
 
-    await expect(page.getByText("待取消的歌")).toBeVisible();
+    // 空歌单状态下点击右上角或卡片中「+ 点歌」
+    await page.getByRole("button", { name: "+ 点歌" }).first().click();
+    const drawer = page.getByRole("dialog", { name: "网易云点歌" });
+    await expect(drawer).toBeVisible();
+
+    const searchInput = drawer.getByPlaceholder("输入歌名或歌手直接点歌…");
+    await searchInput.fill("待取消");
+    await drawer.getByRole("button", { name: "搜索" }).click();
+
+    await expect(drawer.getByText("待取消的歌")).toBeVisible();
 
     // 点击取消搜索
-    await page.getByRole("button", { name: "取消搜索" }).click();
+    await drawer.getByRole("button", { name: "取消搜索" }).click();
 
     // 候选列表消失，并调用了 DELETE
-    await expect(page.getByText("待取消的歌")).not.toBeVisible();
+    await expect(drawer.getByText("待取消的歌")).not.toBeVisible();
     expect(deleteCalled).toBe(true);
+
+    // 按 Esc 键可关闭抽屉
+    await page.keyboard.press("Escape");
+    await expect(drawer).not.toBeVisible();
+  });
+
+  test("遇到排队或限流风控时提供人性化温和提示而非系统错误代码", async ({ page }) => {
+    await setupRoomPage(page);
+
+    const initialView: PublicPlaylistView = {
+      playlist: basePlaylist,
+      snapshot: {
+        version: 1,
+        syncedAt: Date.now(),
+        trackCount: 1,
+        tracks: [{ position: 0, songId: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美", requesters: [] }]
+      },
+      lastRefreshError: null,
+      operation: null,
+      allowedActions: ["refreshPublicPlaylist", "requestSong"],
+      disabledReason: null,
+      version: 1
+    };
+
+    await page.route(playlistEndpoint, route => route.fulfill({ json: initialView }));
+
+    // 模拟搜索因队列满返回 UPSTREAM_QUEUE_FULL 业务码
+    const searchId = v7();
+    await page.route(searchEndpoint, route => route.fulfill({ status: 202, json: { searchId } }));
+    await page.route(`${searchEndpoint}/${searchId}`, route => {
+      return route.fulfill({
+        status: 200,
+        json: {
+          searchId,
+          status: "failed",
+          songs: [],
+          errorCode: "UPSTREAM_QUEUE_FULL"
+        }
+      });
+    });
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "+ 点歌" }).click();
+    const drawer = page.getByRole("dialog", { name: "网易云点歌" });
+    await expect(drawer).toBeVisible();
+
+    const searchInput = drawer.getByPlaceholder("输入歌名或歌手直接点歌…");
+    await searchInput.fill("任意歌曲");
+    await drawer.getByRole("button", { name: "搜索" }).click();
+
+    // 验证出现温和人性化提示，而不是生硬的 UPSTREAM_QUEUE_FULL
+    await expect(drawer.getByText("当前点歌的小伙伴较多，通道正在有序排队中，请稍候片刻再试。")).toBeVisible();
+    await expect(drawer.getByText("UPSTREAM_QUEUE_FULL")).toHaveCount(0);
   });
 });
