@@ -1,6 +1,6 @@
-import { cp, mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { cp, mkdir, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertVendorIntegrity } from "../dist/netease/integrity.js";
 
@@ -14,6 +14,7 @@ await cp(source, destination, {
   recursive: true,
   filter: path => path !== join(source, "node_modules")
 });
-// Keep dependency resolution rooted at the frozen workspace installation.
-await symlink(await realpath(join(source, "node_modules")), join(destination, "node_modules"), "dir");
+// Keep dependency resolution rooted at the frozen workspace installation via relative symlink.
+const relativeSourceNodeModules = relative(destination, join(source, "node_modules"));
+await symlink(relativeSourceNodeModules, join(destination, "node_modules"), "dir");
 await assertVendorIntegrity(destination);

@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -181,6 +182,14 @@ async function main(): Promise<void> {
 }
 
 const entryPoint = process.argv[1];
-if (entryPoint && import.meta.url === pathToFileURL(path.resolve(entryPoint)).href) {
-  main();
+if (entryPoint) {
+  let resolvedHref: string;
+  try {
+    resolvedHref = pathToFileURL(fs.realpathSync(entryPoint)).href;
+  } catch {
+    resolvedHref = pathToFileURL(path.resolve(entryPoint)).href;
+  }
+  if (import.meta.url === resolvedHref || import.meta.url === pathToFileURL(path.resolve(entryPoint)).href) {
+    main();
+  }
 }
