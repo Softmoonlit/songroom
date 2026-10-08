@@ -2124,11 +2124,6 @@ h1 {
   font-weight: 600;
 }
 
-.playlist-filter-slot {
-  display: none;
-  /* 为未来歌单内本地过滤预留清晰空间边界 */
-}
-
 .playlist-tracks-container {
   height: 540px;
   overflow-y: auto;
@@ -2487,6 +2482,12 @@ h1 {
   background: #fef2f2;
   border: 1px solid #fecaca;
   color: #b91c1c;
+}
+
+.drawer-feedback-banner.drawer-info {
+  background: var(--primary-light);
+  border: 1px solid var(--primary-border);
+  color: var(--primary);
 }
 
 .drawer-searching-state {

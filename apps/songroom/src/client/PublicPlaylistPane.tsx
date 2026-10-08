@@ -16,7 +16,7 @@ import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestEr
 import { QueryError } from "./RoomQueryError.js";
 import { SongRequestDrawer } from "./SongRequestDrawer.js";
 import { Toast, type ToastData } from "./Toast.js";
-import { getFriendlySongRequestErrorMessage } from "./song-request-messages.js";
+import { getFriendlySongRequestErrorMessage, getFriendlyOperationStatusMessage } from "./song-request-messages.js";
 
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
   queued: "已排队，等待创建公共歌单。",
@@ -93,7 +93,6 @@ function TrackList({
         <span className="tracks-header-col col-title" aria-hidden="true">歌曲与歌手</span>
         <div className="tracks-header-right-group">
           <span className="tracks-header-col col-requester" aria-hidden="true">点歌人</span>
-          <div className="playlist-filter-slot" aria-hidden="true" />
         </div>
       </div>
       <div
@@ -198,8 +197,29 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const [toast, setToast] = useState<ToastData | null>(null);
   const [highlightedSongId, setHighlightedSongId] = useState<string | null>(null);
   const [requestErrorMessage, setRequestErrorMessage] = useState("");
+  const [operationStatusMessage, setOperationStatusMessage] = useState("");
   const [isRequesting, setIsRequesting] = useState(false);
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
+
+  const openSongRequestDrawer = () => {
+    setRequestErrorMessage("");
+    setOperationStatusMessage("");
+    setIsDrawerOpen(true);
+  };
+
+  const handleSongRequestSucceeded = (songId: string, name: string) => {
+    setIsRequesting(false);
+    setIsDrawerOpen(false);
+    setActiveOperationId(null);
+    setOperationStatusMessage("");
+    setHighlightedSongId(songId);
+    setToast({
+      id: uuidv7(),
+      message: `《${name}》点歌成功！已加入公共歌单并记录你的标签。`,
+      type: "success"
+    });
+    void client.invalidateQueries({ queryKey });
+  };
 
   useEffect(() => () => {
     controller.current?.abort();
@@ -260,21 +280,12 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     const op = operationQuery.data;
     switch (op.status) {
       case "succeeded":
-        setIsRequesting(false);
-        setIsDrawerOpen(false);
-        setActiveOperationId(null);
-        setHighlightedSongId(op.songId);
-        setToast({
-          id: uuidv7(),
-          message: `《${op.name}》点歌成功！已加入公共歌单并记录你的标签。`,
-          type: "success"
-        });
-        void client.invalidateQueries({ queryKey });
+        handleSongRequestSucceeded(op.songId, op.name);
         break;
       case "awaitingConfirmation":
         setIsRequesting(false);
         setIsDrawerOpen(false);
-        setActiveOperationId(null);
+        setOperationStatusMessage("");
         setToast({
           id: uuidv7(),
           message: op.songConfirmed && !op.tagConfirmed
@@ -283,32 +294,46 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           type: "info"
         });
         void client.invalidateQueries({ queryKey });
+        // 不清除 activeOperationId，保留轮询直到到达 succeeded
         break;
       case "waitingAuthorization":
         setIsRequesting(false);
+        setOperationStatusMessage("");
         setRequestErrorMessage("房主的网易云授权需要重新确认，正在等待房主恢复授权…");
         break;
       case "needsAdministrator":
         setIsRequesting(false);
         setActiveOperationId(null);
+        setOperationStatusMessage("");
         setRequestErrorMessage("点歌操作需要管理员协助处理，请联系房主或管理员。");
         break;
       case "failed":
       case "stopped":
         setIsRequesting(false);
         setActiveOperationId(null);
+        setOperationStatusMessage("");
         setRequestErrorMessage(getFriendlySongRequestErrorMessage(op.errorCode));
         break;
       case "queued":
       case "processing":
+        setOperationStatusMessage(getFriendlyOperationStatusMessage(op.status, op.name));
         break;
     }
   }, [operationQuery.data, client, queryKey]);
+
+  useEffect(() => {
+    if (operationQuery.isError) {
+      setIsRequesting(false);
+      setOperationStatusMessage("");
+      setRequestErrorMessage(getFriendlySongRequestErrorMessage("NETWORK_ERROR"));
+    }
+  }, [operationQuery.isError]);
 
   const songRequestMutation = useMutation({
     mutationFn: async (candidate: SongCandidate) => {
       setIsRequesting(true);
       setRequestErrorMessage("");
+      setOperationStatusMessage("");
       const key = uuidv7();
       return request(`/${roomId}/song-requests`, songRequestResponse, undefined, {
         idempotencyKey: key,
@@ -320,21 +345,15 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     },
     onSuccess: res => {
       if (res.operation.status === "succeeded") {
-        setIsRequesting(false);
-        setIsDrawerOpen(false);
-        setHighlightedSongId(res.operation.songId);
-        setToast({
-          id: uuidv7(),
-          message: `《${res.operation.name}》点歌成功！已加入公共歌单并记录你的标签。`,
-          type: "success"
-        });
-        void client.invalidateQueries({ queryKey });
+        handleSongRequestSucceeded(res.operation.songId, res.operation.name);
       } else {
         setActiveOperationId(res.operation.id);
+        setOperationStatusMessage(getFriendlyOperationStatusMessage(res.operation.status, res.operation.name));
       }
     },
     onError: failure => {
       setIsRequesting(false);
+      setOperationStatusMessage("");
       const code = failure instanceof RoomRequestError ? failure.code : null;
       setRequestErrorMessage(getFriendlySongRequestErrorMessage(code));
     }
@@ -465,10 +484,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                 aria-label="+ 点歌"
                 aria-haspopup="dialog"
                 aria-expanded={isDrawerOpen}
-                onClick={() => {
-                  setRequestErrorMessage("");
-                  setIsDrawerOpen(true);
-                }}
+                onClick={openSongRequestDrawer}
               >
                 <Plus size={15} aria-hidden="true" />
                 <span>点歌</span>
@@ -548,10 +564,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                 type="button"
                 disabled={view.disabledReason === "ACCOUNT_PAUSED"}
                 aria-label="+ 点歌"
-                onClick={() => {
-                  setRequestErrorMessage("");
-                  setIsDrawerOpen(true);
-                }}
+                onClick={openSongRequestDrawer}
               >
                 <Plus size={15} aria-hidden="true" />
                 <span>点一首歌</span>
@@ -577,6 +590,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       roomId={roomId}
       active={active}
       isRequesting={isRequesting}
+      operationStatusMessage={operationStatusMessage}
       onConfirmSongRequest={handleConfirmSongRequest}
       requestErrorMessage={requestErrorMessage}
       clearRequestErrorMessage={() => setRequestErrorMessage("")}

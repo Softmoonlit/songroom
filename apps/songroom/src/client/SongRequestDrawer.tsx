@@ -18,6 +18,7 @@ export interface SongRequestDrawerProps {
   isRequesting: boolean;
   onConfirmSongRequest: (candidate: SongCandidate) => void;
   requestErrorMessage?: string;
+  operationStatusMessage?: string;
   clearRequestErrorMessage?: () => void;
 }
 
@@ -27,6 +28,7 @@ export function SongRequestDrawer({
   roomId,
   active,
   isRequesting,
+  operationStatusMessage,
   onConfirmSongRequest,
   requestErrorMessage,
   clearRequestErrorMessage
@@ -37,13 +39,10 @@ export function SongRequestDrawer({
   const [searchLocalError, setSearchLocalError] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 打开抽屉时自动聚焦输入框
+  // 打开抽屉时聚焦输入框
   useEffect(() => {
     if (isOpen) {
-      const timer = setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 50);
-      return () => clearTimeout(timer);
+      searchInputRef.current?.focus();
     } else {
       setSelectedCandidate(null);
       setSearchLocalError("");
@@ -187,6 +186,14 @@ export function SongRequestDrawer({
 
         {/* 抽屉内容主体 */}
         <div className="drawer-content-body">
+          {/* 排队与同步中温和进度提示 */}
+          {isRequesting && operationStatusMessage && (
+            <div className="drawer-feedback-banner drawer-info" role="status">
+              <RotateCw size={16} className="spin-icon banner-icon" aria-hidden="true" />
+              <span>{operationStatusMessage}</span>
+            </div>
+          )}
+
           {/* 温和情感化错误提示 */}
           {displayError && (
             <div className="drawer-feedback-banner drawer-error" role="alert">
@@ -203,11 +210,17 @@ export function SongRequestDrawer({
             </div>
           )}
 
-          {/* 搜索失败 */}
+          {/* 搜索失败与网络错误 */}
           {searchQuery.data?.status === "failed" && (
             <div className="drawer-feedback-banner drawer-error" role="alert">
               <AlertCircle size={16} className="banner-icon" aria-hidden="true" />
               <span>{getFriendlySongRequestErrorMessage(searchQuery.data.errorCode)}</span>
+            </div>
+          )}
+          {searchQuery.isError && (
+            <div className="drawer-feedback-banner drawer-error" role="alert">
+              <AlertCircle size={16} className="banner-icon" aria-hidden="true" />
+              <span>{getFriendlySongRequestErrorMessage("NETWORK_ERROR")}</span>
             </div>
           )}
 
