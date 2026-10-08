@@ -1,6 +1,6 @@
 # 前端 UI 与交互体验全面重构规范 (UI/UX Redesign)
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
