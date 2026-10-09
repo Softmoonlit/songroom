@@ -140,21 +140,21 @@ export const joinApplication = sqliteTable("join_application", {
 // 封闭业务操作信封；原始归属不用级联外键，可能已发的创建证据不能随实体删除。
 export const operation = sqliteTable("operation", {
   id: text("id").primaryKey(),
-  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong"] }).notNull(),
+  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong", "playNext"] }).notNull(),
   userId: text("user_id").notNull(),
   roomId: text("room_id").notNull(),
   accountId: text("account_id"),
   authorizationId: text("authorization_id"),
   generation: integer("generation"),
   status: text("status", { enum: ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"] }).notNull(),
-  errorCode: text("error_code", { enum: ["ACCOUNT_PAUSED", ...adapterErrorCodeSchema.options] }),
+  errorCode: text("error_code", { enum: ["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP", ...adapterErrorCodeSchema.options] }),
   lastGranted: integer("last_granted").notNull().default(0),
   version: integer("version").notNull().default(1),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
   check("operation_version_valid", sql`${table.version} > 0`),
-  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong')`),
+  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong', 'playNext')`),
   check("operation_status_valid", sql`${table.status} IN ('queued', 'processing', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed', 'stopped')`),
   check("operation_recovery_scope_valid", sql`(${table.status} IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NULL AND ${table.authorizationId} IS NULL AND ${table.generation} IS NULL) OR (${table.status} NOT IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NOT NULL AND ${table.authorizationId} IS NOT NULL AND ${table.generation} IS NOT NULL AND ${table.generation} > 0)`),
   uniqueIndex("operation_pending_public_room_unique").on(table.roomId).where(sql`${table.kind} = 'createPublicPlaylist' AND ${table.status} NOT IN ('succeeded', 'failed', 'stopped')`),
@@ -222,6 +222,7 @@ export const playlistSnapshot = sqliteTable("playlist_snapshot", {
   accountId: text("account_id").notNull(),
   playlistId: text("playlist_id").notNull(),
   snapshotVersion: integer("snapshot_version").notNull().default(0),
+  lastReadStartedAt: integer("last_read_started_at").notNull().default(0),
   syncedAt: integer("synced_at"),
   lastErrorCode: text("last_error_code"),
   createdAt: integer("created_at").notNull(),
@@ -276,6 +277,26 @@ export const publicSongRequest = sqliteTable("public_song_request", {
   check("public_song_request_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
   check("public_song_request_binding_generation_valid", sql`${table.bindingGeneration} > 0`),
   check("public_song_request_check_round_valid", sql`${table.checkRound} >= 0 AND ${table.checkRound} <= 3`)
+]);
+
+export const publicPlayNext = sqliteTable("public_play_next", {
+  operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
+  songId: text("song_id").notNull(),
+  anchorSongId: text("anchor_song_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  bindingGeneration: integer("binding_generation").notNull(),
+  memberId: text("member_id"),
+  originalSongIds: text("original_song_ids"),
+  targetSongIds: text("target_song_ids"),
+  step: text("step", { enum: ["ready", "identityVerified", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"] }).notNull().default("ready"),
+  checkRound: integer("check_round").notNull().default(0),
+  nextCheckAt: integer("next_check_at")
+}, table => [
+  index("public_play_next_target_index").on(table.playlistId),
+  check("public_play_next_step_valid", sql`${table.step} IN ('ready', 'identityVerified', 'playbackVerified', 'verified', 'sending', 'confirming', 'unknown', 'succeeded', 'rejected', 'stopped')`),
+  check("public_play_next_generation_valid", sql`${table.bindingGeneration} > 0`),
+  check("public_play_next_song_valid", sql`length(${table.songId}) > 0 AND length(${table.anchorSongId}) > 0 AND length(${table.playlistId}) > 0`),
+  check("public_play_next_round_valid", sql`${table.checkRound} BETWEEN 0 AND 3`)
 ]);
 
 export const requesterTag = sqliteTable("requester_tag", {
@@ -336,7 +357,7 @@ export const adminAuditLog = sqliteTable("admin_audit_log", {
 ]);
 
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, requesterTag, publicPlaylistCleanup, adminAuditLog };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, requesterTag, publicPlaylistCleanup, adminAuditLog };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

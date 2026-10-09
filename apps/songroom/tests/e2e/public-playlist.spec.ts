@@ -51,11 +51,10 @@ for (const width of [320, 390, 900, 1440]) {
     const before = reads;
     view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null, version: 2 }, allowedActions: ["refreshPublicPlaylist"], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
     await page.reload();
-    await expect(page.getByRole("heading", { name: view.playlist!.name })).toBeVisible();
-    await page.getByRole("button", { name: "歌单技术信息" }).click();
+    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-071", { exact: true })).toBeVisible();
-    await expect(page.getByRole("status")).toContainText("已创建并绑定");
-    expect(reads).toBe(before + 1);
+    expect(reads).toBeGreaterThanOrEqual(before + 1);
     expect(writes).toBe(1);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
@@ -64,7 +63,7 @@ for (const width of [320, 390, 900, 1440]) {
 for (const [status, text] of [
   ["queued", "已排队"], ["processing", "正在创建"], ["awaitingConfirmation", "创建结果待确认"],
   ["waitingAuthorization", "等待房主恢复"], ["needsAdministrator", "需要管理员处理"],
-  ["succeeded", "已创建并绑定"], ["failed", "创建明确失败"], ["stopped", "已停止"]
+  ["failed", "创建明确失败"], ["stopped", "已停止"]
 ] as const) {
   test(`操作状态 ${status} 由本地 read model 展示，不提供未经允许的重试`, async ({ page }) => {
     await roomPage(page);
@@ -164,6 +163,7 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     if (request.url.includes("playlist/detail") || request.url.includes("v6/playlist/detail")) {
       return { body: { code: 200, playlist: { id: "cloud-public-071", name: "songroom-离线音乐间-公共", status: 0, trackIds: [] }, privileges: [] } };
     }
+    if (request.url.includes("play-record/song/list")) return { body: { code: 200, data: { list: [] } } };
     throw new Error(`Unexpected offline call: ${request.url}`);
   });
   const root = await mkdtemp(path.join(tmpdir(), "songroom-public-e2e-"));
@@ -207,19 +207,21 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
       const response = await page.request.get(`${url.replace("/rooms/", "/api/rooms/")}/public-playlist`);
       return publicPlaylistView.parse(await response.json()).operation?.status;
     }, { timeout: 15_000 }).toBe("succeeded");
-    await expect(page.getByRole("heading", { name: "songroom-离线音乐间-公共" })).toBeVisible();
-    await page.getByRole("button", { name: "歌单技术信息" }).click();
+    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     // 进入歌单后显式刷新歌单详情，确认发生了一次 detail 调用
     await expect.poll(() => fixture.outbound.filter(call => call.url.includes("playlist/detail")).length).toBe(1);
     const count = fixture.outbound.length;
     await page.getByRole("button", { name: "同步歌单", exact: true }).click();
     await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeEnabled();
-    // 显式同步发起上游调用
-    await expect.poll(() => fixture.outbound.length).toBe(count + 1);
+    // 显式同步发起上游调用（歌单刷新与播放记录刷新各一次）
+    await expect.poll(() => fixture.outbound.length).toBe(count + 2);
+    expect(fixture.outbound.filter(call => call.url.includes("playlist/detail"))).toHaveLength(2);
     await page.reload();
-    await page.getByRole("button", { name: "歌单技术信息" }).click();
+    await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
     await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);

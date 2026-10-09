@@ -4,6 +4,8 @@ import path from "node:path";
 import { createServer } from "node:net";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
+import { and, eq } from "drizzle-orm";
+import type { SearchView, SongCandidate } from "../shared/song-search-contracts.js";
 import { initializeDatabase } from "../db/database.js";
 import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
@@ -60,113 +62,213 @@ function request(app: SongRoomApp, url: string, cookie?: string, body?: unknown,
   return app.fastify.inject({
     method: method as any,
     url,
-    headers: { origin: origins.get(app)!, "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+    headers: { origin: origins.get(app)!, ...(body === undefined ? {} : { "content-type": "application/json" }), ...(cookie ? { cookie } : {}) },
     ...(body === undefined ? {} : { payload: JSON.stringify(body) })
   });
 }
 
-it("非成员或未认证用户不能搜索公共歌单目标", async () => {
-  const { app, outsider, roomId } = await fixture();
+type SearchInput = Extract<AdapterInput, { operation: "search" }>;
+function songs(start: number, length = 20): SongCandidate[] {
+  return Array.from({ length }, (_, index) => ({ id: `s-${start + index}`, name: `歌曲${start + index}`, artists: ["歌手"], album: "专辑" }));
+}
 
-  // 未登录
-  const unauth = await request(app, `/api/rooms/${roomId}/search`, undefined, { query: "晴天" });
-  expect(unauth.statusCode).toBe(401);
-
-  // 房间外用户
-  const forbidden = await request(app, `/api/rooms/${roomId}/search`, outsider.cookie, { query: "晴天" });
-  expect(forbidden.statusCode).toBe(404);
-  expect(forbidden.json().error.code).toBe("ROOM_UNAVAILABLE");
-});
-
-it("房间成员可直接搜索网易云单曲，返回短命 searchId 并通过 SSE 接收失效更新", async () => {
-  const { app, adapter, member, roomId, baseUrl } = await fixture();
-
-  // 覆盖 adapter search 实现
-  const origCall = adapter.call.bind(adapter);
+function scriptSearch(adapter: ScriptedNeteaseAdapter, handler: (input: SearchInput) => AdapterResult<"search"> | Promise<AdapterResult<"search">>) {
+  const original = adapter.call.bind(adapter);
   adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
-    if (input.operation === "search") {
-      return {
-        ok: true,
-        data: {
-          songs: [
-            { id: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
-            { id: "s-2", name: "晴天 (Live)", artists: ["周杰伦"], album: "无与伦比演唱会" }
-          ]
-        }
-      } as any;
-    }
-    return origCall(input);
+    if (input.operation !== "search") return original(input);
+    adapter.inputs.push(input);
+    return await handler(input) as AdapterResult<I["operation"]>;
   };
+}
 
-  // 建立 SSE 连接
-  const sseRes = await fetch(`${baseUrl}/api/events`, { headers: { cookie: member.cookie, accept: "text/event-stream" } });
-  const sseReader = sseRes.body!.getReader();
-  const decoder = new TextDecoder();
-  await sseReader.read(); // connected 初始事件
+async function startSearch(app: SongRoomApp, roomId: string, cookie: string, query = "歌曲") {
+  const response = await request(app, `/api/rooms/${roomId}/search`, cookie, { query });
+  expect(response.statusCode).toBe(202);
+  return response.json().searchId as string;
+}
 
-  // 室友提交搜索
-  const searchRes = await request(app, `/api/rooms/${roomId}/search`, member.cookie, { query: "晴天" });
-  expect(searchRes.statusCode).toBe(202);
-  const searchId = searchRes.json().searchId as string;
-  expect(searchId).toBeDefined();
+async function completedSearch(app: SongRoomApp, roomId: string, cookie: string, searchId: string, status = "completed"): Promise<SearchView> {
+  let view: SearchView;
+  await expect.poll(async () => {
+    const response = await request(app, `/api/rooms/${roomId}/search/${searchId}`, cookie, undefined, "GET");
+    expect(response.statusCode).toBe(200);
+    view = response.json();
+    return view.status;
+  }, { timeout: 5000 }).toBe(status);
+  return view!;
+}
 
-  // 读取 SSE 失效事件
-  let sseData = "";
-  while (true) {
-    const { value, done } = await sseReader.read();
-    if (done) break;
-    sseData += decoder.decode(value);
-    if (sseData.includes(searchId)) break;
+it("非成员或未认证用户不能搜索；搜索及分页结果仅属于发起成员", async () => {
+  const { app, adapter, owner, member, outsider, roomId } = await fixture();
+  scriptSearch(adapter, () => ({ ok: true, data: { songs: songs(0), songCount: 40 } }));
+  expect((await request(app, `/api/rooms/${roomId}/search`, undefined, { query: "晴天" })).statusCode).toBe(401);
+  expect((await request(app, `/api/rooms/${roomId}/search`, outsider.cookie, { query: "晴天" })).statusCode).toBe(404);
+  const searchId = await startSearch(app, roomId, member.cookie);
+  await completedSearch(app, roomId, member.cookie, searchId);
+  for (const cookie of [undefined, outsider.cookie, owner.cookie]) {
+    for (const [suffix, method] of [["", "GET"], ["/more", "POST"]]) {
+      const response = await request(app, `/api/rooms/${roomId}/search/${searchId}${suffix}`, cookie, undefined, method);
+      expect(response.statusCode).toBe(cookie ? 404 : 401);
+    }
   }
-  expect(sseData).toContain("event: invalidation");
-  expect(sseData).toContain(searchId);
-
-  // 重新获取搜索结果
-  const resultRes = await request(app, `/api/rooms/${roomId}/search/${searchId}`, member.cookie, undefined, "GET");
-  expect(resultRes.statusCode).toBe(200);
-  const result = resultRes.json();
-  expect(result.status).toBe("completed");
-  expect(result.songs).toHaveLength(2);
-  expect(result.songs[0]).toEqual({
-    id: "s-1",
-    name: "晴天",
-    artists: ["周杰伦"],
-    album: "叶惠美"
-  });
-
-  await sseReader.cancel();
+  expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(1);
 });
 
-it("发起新搜索时自动取消旧搜索并丢弃晚到候选", async () => {
+it("首次20首通过SSE失效通知读回；分页按相关性去重追加且不自动预取，整页重复时停止", async () => {
+  const { app, adapter, member, roomId, baseUrl } = await fixture();
+  scriptSearch(adapter, input => ({ ok: true, data: { songs: input.offset === 0 ? songs(0) : songs(18), songCount: 200 + input.offset } }));
+  const sseRes = await fetch(`${baseUrl}/api/events`, { headers: { cookie: member.cookie, accept: "text/event-stream" } });
+  const reader = sseRes.body!.getReader();
+  cleanups.push(async () => { await reader.cancel(); });
+  await reader.read();
+  const searchId = await startSearch(app, roomId, member.cookie);
+  let event = "";
+  const decoder = new TextDecoder();
+  while (!event.includes(searchId)) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    event += decoder.decode(value);
+  }
+  expect(event).toContain("event: invalidation");
+  expect(event).toContain(searchId);
+  const first = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(first.songs).toEqual(songs(0));
+  expect(first.hasMore).toBe(true);
+  expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(1);
+
+  expect((await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie)).statusCode).toBe(202);
+  const second = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(second.songs).toEqual(songs(0, 38));
+  expect(second.hasMore).toBe(true);
+  expect((await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie)).statusCode).toBe(202);
+  const last = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(last.songs).toEqual(second.songs);
+  expect(last.hasMore).toBe(false);
+  const exhausted = await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie);
+  expect(exhausted.statusCode).toBe(409);
+  expect(exhausted.json().error.code).toBe("SEARCH_EXHAUSTED");
+  expect(adapter.inputs.filter(input => input.operation === "search").map(input => [input.cookie, input.limit, input.offset])).toEqual([
+    ["MUSIC_U=test", 20, 0], ["MUSIC_U=test", 20, 20], ["MUSIC_U=test", 20, 40]
+  ]);
+});
+
+it.each([0, 3])("total声称仍有更多时，长度为%i的短页也终止加载", async length => {
   const { app, adapter, member, roomId } = await fixture();
+  scriptSearch(adapter, () => ({ ok: true, data: { songs: songs(0, length), songCount: 9999 } }));
+  const searchId = await startSearch(app, roomId, member.cookie);
+  const view = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(view.songs).toHaveLength(length);
+  expect(view.hasMore).toBe(false);
+});
 
-  let slowResolve: (() => void) | undefined;
-  const origCall = adapter.call.bind(adapter);
-  adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
-    if (input.operation === "search" && (input as any).query === "慢速搜索") {
-      await new Promise<void>(resolve => { slowResolve = resolve; });
-      return {
-        ok: true,
-        data: { songs: [{ id: "s-slow", name: "慢歌", artists: ["歌手"], album: "专辑" }] }
-      } as any;
+it("加载更多重复点击只执行一页；失败保留前页，明确重试后才以同offset再次读取", async () => {
+  const { app, adapter, member, roomId } = await fixture();
+  let release!: () => void;
+  cleanups.push(async () => { release?.(); });
+  let attempts = 0;
+  scriptSearch(adapter, async input => {
+    if (input.offset === 0) return { ok: true, data: { songs: songs(0), songCount: 40 } };
+    if (++attempts === 1) {
+      await new Promise<void>(resolve => { release = resolve; });
+      return { ok: false, error: { code: "NETWORK_ERROR", outcome: "failed" } };
     }
-    return origCall(input);
-  };
+    return { ok: true, data: { songs: songs(20), songCount: 40 } };
+  });
+  const searchId = await startSearch(app, roomId, member.cookie);
+  await completedSearch(app, roomId, member.cookie, searchId);
+  const url = `/api/rooms/${roomId}/search/${searchId}/more`;
+  await request(app, url, member.cookie);
+  await expect.poll(() => attempts, { timeout: 3000 }).toBe(1);
+  expect((await request(app, url, member.cookie)).statusCode).toBe(202);
+  const loading = await request(app, `/api/rooms/${roomId}/search/${searchId}`, member.cookie, undefined, "GET");
+  expect(loading.json().songs).toEqual(songs(0));
+  release();
+  const failed = await completedSearch(app, roomId, member.cookie, searchId, "failed");
+  expect(failed.songs).toEqual(songs(0));
+  expect(failed.hasMore).toBe(true);
+  expect(failed.errorCode).toBe("NETWORK_ERROR");
+  expect(attempts).toBe(1);
+  await request(app, url, member.cookie);
+  const retried = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(retried.songs).toEqual(songs(0, 40));
+  expect(retried.hasMore).toBe(false);
+  expect(adapter.inputs.filter(input => input.operation === "search").map(input => input.offset)).toEqual([0, 20, 20]);
+});
 
-  // 发起第一轮搜索
-  const first = await request(app, `/api/rooms/${roomId}/search`, member.cookie, { query: "慢速搜索" });
-  expect(first.statusCode).toBe(202);
-  const firstSearchId = first.json().searchId;
+it("新关键词取消已完成旧轮及正在执行的旧分页，晚到结果不能继续分页或污染新轮", async () => {
+  const { app, adapter, member, roomId } = await fixture();
+  let release!: () => void;
+  cleanups.push(async () => { release?.(); });
+  let entered = false;
+  scriptSearch(adapter, async input => {
+    if (input.query === "旧关键词" && input.offset === 20) {
+      entered = true;
+      await new Promise<void>(resolve => { release = resolve; });
+    }
+    return { ok: true, data: { songs: songs(input.query === "旧关键词" ? input.offset : 100), songCount: 60 } };
+  });
+  const firstId = await startSearch(app, roomId, member.cookie, "旧关键词");
+  await completedSearch(app, roomId, member.cookie, firstId);
+  await request(app, `/api/rooms/${roomId}/search/${firstId}/more`, member.cookie);
+  await expect.poll(() => entered, { timeout: 3000 }).toBe(true);
+  const secondId = await startSearch(app, roomId, member.cookie, "新关键词");
+  release();
+  const second = await completedSearch(app, roomId, member.cookie, secondId);
+  expect(second.songs).toEqual(songs(100));
+  for (const [suffix, method] of [["", "GET"], ["/more", "POST"]]) {
+    expect((await request(app, `/api/rooms/${roomId}/search/${firstId}${suffix}`, member.cookie, undefined, method)).statusCode).toBe(404);
+  }
+  const thirdId = await startSearch(app, roomId, member.cookie, "又一轮");
+  expect(thirdId).not.toBe(secondId);
+  expect((await request(app, `/api/rooms/${roomId}/search/${secondId}/more`, member.cookie)).statusCode).toBe(404);
+});
 
-  // 主动发起第二轮新搜索（修改关键词）
-  const second = await request(app, `/api/rooms/${roomId}/search`, member.cookie, { query: "新搜索" });
-  expect(second.statusCode).toBe(202);
-  const secondSearchId = second.json().searchId;
+it.each(["membership", "authorization", "binding"] as const)("分页受理时重新检查%s", async change => {
+  const { app, adapter, member, owner, roomId } = await fixture();
+  scriptSearch(adapter, () => ({ ok: true, data: { songs: songs(0), songCount: 40 } }));
+  const searchId = await startSearch(app, roomId, member.cookie);
+  await completedSearch(app, roomId, member.cookie, searchId);
+  if (change === "membership") app.database.delete(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, member.userId))).run();
+  if (change === "authorization") app.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.userId, owner.userId)).run();
+  if (change === "binding") app.database.update(publicPlaylistBinding).set({ generation: 2 }).where(eq(publicPlaylistBinding.roomId, roomId)).run();
+  const response = await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie);
+  expect(response.statusCode).toBe(change === "membership" ? 404 : 409);
+  expect(response.json().error.code).toBe(change === "membership" ? "ROOM_UNAVAILABLE" : change === "authorization" ? "NETEASE_AUTH_REQUIRED" : "PUBLIC_PLAYLIST_CHANGED");
+  expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(1);
+});
 
-  // 放行第一轮搜索
-  slowResolve?.();
+it.each(["membership", "authorization", "binding"] as const)("已排队的搜索执行前重新检查%s，不使用排队前凭据发送", async change => {
+  const { app, adapter, member, owner, roomId } = await fixture();
+  scriptSearch(adapter, () => ({ ok: true, data: { songs: songs(0), songCount: 40 } }));
+  let release!: () => void;
+  cleanups.push(async () => { release?.(); });
+  let started!: () => void;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const blocked = app.scheduler.executeMemoryTask("test", async () => {
+    started();
+    await new Promise<void>(resolve => { release = resolve; });
+  });
+  await entered;
+  await startSearch(app, roomId, member.cookie);
+  if (change === "membership") app.database.delete(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, member.userId))).run();
+  if (change === "authorization") app.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.userId, owner.userId)).run();
+  if (change === "binding") app.database.update(publicPlaylistBinding).set({ generation: 2 }).where(eq(publicPlaylistBinding.roomId, roomId)).run();
+  release();
+  await blocked;
+  await app.scheduler.settle();
+  expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(0);
+});
 
-  // 查询第一轮搜索，结果没有被提交为 completed
-  const firstResult = await request(app, `/api/rooms/${roomId}/search/${firstSearchId}`, member.cookie, undefined, "GET");
-  expect(firstResult.json().status).not.toBe("completed");
+it("上游返回前授权失效时不发布候选，恢复同一授权后能读到明确失败状态", async () => {
+  const { app, adapter, member, owner, roomId } = await fixture();
+  scriptSearch(adapter, () => {
+    app.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.userId, owner.userId)).run();
+    return { ok: true, data: { songs: songs(0), songCount: 40 } };
+  });
+  const searchId = await startSearch(app, roomId, member.cookie);
+  await app.scheduler.settle();
+  app.database.update(neteaseAuthorization).set({ status: "active" }).where(eq(neteaseAuthorization.userId, owner.userId)).run();
+  const failed = await completedSearch(app, roomId, member.cookie, searchId, "failed");
+  expect(failed.errorCode).toBe("NETEASE_AUTH_REQUIRED");
+  expect(failed.songs).toEqual([]);
 });

@@ -53,7 +53,7 @@ export function getCleanupPresentation(item: { status: PublicPlaylistCleanupStat
   return cleanupStatusPresentation[item.status];
 }
 
-export function RoomsPage({ sessionId, accountName }: { sessionId: string; accountName: string }) {
+export function RoomsPage({ sessionId }: { sessionId: string; accountName: string }) {
   const query = useQuery({
     queryKey: ["rooms", sessionId],
     queryFn: ({ signal }) => request("", roomListView, signal),
@@ -64,12 +64,7 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
     <section className="rooms-page" aria-labelledby="rooms-heading">
       <div className="rooms-header">
         <div className="page-heading">
-          <p className="eyebrow">
-            <Music2 size={16} aria-hidden="true" />
-            我的房间
-          </p>
-          <h1 id="rooms-heading">{accountName} 的房间</h1>
-          <p>选择你创建或已加入的房间，和室友一起点歌。</p>
+          <h1 id="rooms-heading">我的房间</h1>
         </div>
         {query.isSuccess && (query.data.allowedActions.includes("openCreateRoom") || query.data.allowedActions.includes("openJoin")) && (
           <div className="rooms-toolbar" role="toolbar" aria-label="房间操作">
@@ -103,16 +98,12 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
                   <span className={`role-badge role-${room.role}`}>
                     {roleLabels[room.role]}
                   </span>
-                  <span className="room-card-nickname">我的昵称：{room.nickname}</span>
+                  <span className="room-card-nickname" aria-label={`我的昵称：${room.nickname}`}>{room.nickname}</span>
                   {room.authorizationStatus === "waitingAuthorization" ? (
                     <span className="status-badge warning" role="status">
                       授权失效
                     </span>
-                  ) : (
-                    <span className="status-badge success">
-                      正常运行
-                    </span>
-                  )}
+                  ) : null}
                 </div>
                 {room.authorizationStatus === "waitingAuthorization" && (
                   <p className="room-auth-warning" role="status">
@@ -148,7 +139,7 @@ export function RoomsPage({ sessionId, accountName }: { sessionId: string; accou
                 <h3>创建新房间</h3>
               </div>
               <p className="onboarding-desc">
-                创建专属宿舍点歌台，绑定音乐账号后即可自动同步公共歌单并邀请室友。
+                绑定网易云账号后，创建房间并邀请室友。
               </p>
               {query.data.allowedActions.includes("openCreateRoom") && (
                 <div className="onboarding-action-group">
@@ -202,7 +193,6 @@ function PendingApplications({ sessionId }: { sessionId: string }) {
   return (
     <section className="pending-applications" aria-labelledby="pending-applications-heading">
       <h2 id="pending-applications-heading">待处理加入申请</h2>
-      <p>等待房主批准后才能进入房间。</p>
       {query.isPending ? (
         <p role="status">正在读取加入申请…</p>
       ) : query.isError ? (
@@ -242,7 +232,6 @@ export function PublicPlaylistCleanups({ sessionId }: { sessionId: string }) {
   return (
     <section className="public-playlist-cleanups" aria-labelledby="cleanups-heading">
       <div className="cleanups-heading-wrap">
-        <p className="eyebrow">高级设置</p>
         <h2 id="cleanups-heading">公共歌单清理</h2>
       </div>
       <p>已删除房间专用公共歌单的网易云清理进度（与已删除房间分离，房间不可恢复）。</p>

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, X, Check, RotateCw, Music2, AlertCircle } from "lucide-react";
 import { z } from "zod";
 import {
@@ -38,6 +38,18 @@ export function SongRequestDrawer({
   const [selectedCandidate, setSelectedCandidate] = useState<SongCandidate | null>(null);
   const [searchLocalError, setSearchLocalError] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchGeneration = useRef(0);
+  const currentRoomId = useRef(roomId);
+  currentRoomId.current = roomId;
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    searchGeneration.current += 1;
+    setActiveSearchId(null);
+    setSelectedCandidate(null);
+    setSearchQueryText("");
+    setSearchLocalError("");
+  }, [roomId]);
 
   // 打开抽屉时聚焦输入框
   useEffect(() => {
@@ -73,20 +85,41 @@ export function SongRequestDrawer({
   });
 
   const searchMutation = useMutation({
-    mutationFn: async (queryText: string) => {
-      setSelectedCandidate(null);
-      setSearchLocalError("");
-      clearRequestErrorMessage?.();
-      return request(`/${roomId}/search`, searchInitiatedResponse, undefined, { query: queryText });
-    },
-    onSuccess: data => {
+    mutationFn: ({ queryText, targetRoomId }: { queryText: string; targetRoomId: string; generation: number }) =>
+      request(`/${targetRoomId}/search`, searchInitiatedResponse, undefined, { query: queryText }),
+    onSuccess: (data, variables) => {
+      if (variables.generation !== searchGeneration.current || variables.targetRoomId !== currentRoomId.current) return;
       setActiveSearchId(data.searchId);
     },
-    onError: failure => {
-      const code = failure && typeof failure === "object" && "code" in failure && typeof failure.code === "string"
-        ? failure.code
-        : null;
-      setSearchLocalError(getFriendlySongRequestErrorMessage(code));
+    onError: (failure, variables) => {
+      if (variables.generation !== searchGeneration.current || variables.targetRoomId !== currentRoomId.current) return;
+      showSearchError(failure);
+    }
+  });
+
+  function showSearchError(failure: unknown) {
+    const code = failure && typeof failure === "object" && "code" in failure && typeof failure.code === "string"
+      ? failure.code
+      : null;
+    setSearchLocalError(getFriendlySongRequestErrorMessage(code));
+  }
+
+  const moreMutation = useMutation({
+    mutationFn: async (variables: { searchId: string; targetRoomId: string; generation: number }) => {
+      const queryKey = ["song-search", variables.searchId];
+      await queryClient.cancelQueries({ queryKey });
+      queryClient.setQueryData(queryKey, (previous: z.infer<typeof searchView> | undefined) =>
+        previous ? { ...previous, status: "searching", errorCode: null } : previous);
+      return request(`/${variables.targetRoomId}/search/${variables.searchId}/more`, searchInitiatedResponse, undefined, undefined, "POST");
+    },
+    onSuccess: (_data, variables) => {
+      if (variables.generation !== searchGeneration.current || variables.targetRoomId !== currentRoomId.current) return;
+      void queryClient.invalidateQueries({ queryKey: ["song-search", variables.searchId] });
+    },
+    onError: (failure, variables) => {
+      if (variables.generation !== searchGeneration.current || variables.targetRoomId !== currentRoomId.current) return;
+      showSearchError(failure);
+      void queryClient.invalidateQueries({ queryKey: ["song-search", variables.searchId] });
     }
   });
 
@@ -100,10 +133,24 @@ export function SongRequestDrawer({
     e.preventDefault();
     const q = searchQueryText.trim();
     if (!q) return;
-    searchMutation.mutate(q);
+    const generation = ++searchGeneration.current;
+    setActiveSearchId(null);
+    setSelectedCandidate(null);
+    setSearchLocalError("");
+    clearRequestErrorMessage?.();
+    moreMutation.reset();
+    searchMutation.mutate({ queryText: q, targetRoomId: roomId, generation });
+  }
+
+  function handleLoadMore() {
+    if (!activeSearchId || moreMutation.isPending || searchQuery.data?.status === "searching") return;
+    setSearchLocalError("");
+    moreMutation.mutate({ searchId: activeSearchId, targetRoomId: roomId, generation: searchGeneration.current });
   }
 
   function handleCancelSearch() {
+    searchGeneration.current += 1;
+    moreMutation.reset();
     if (activeSearchId) {
       cancelSearchMutation.mutate(activeSearchId);
     }
@@ -170,7 +217,7 @@ export function SongRequestDrawer({
             >
               {searchMutation.isPending ? "搜索中…" : "搜索"}
             </button>
-            {activeSearchId && (
+            {(activeSearchId || searchMutation.isPending) && (
               <button
                 type="button"
                 className="secondary-button drawer-search-cancel-btn"
@@ -203,7 +250,7 @@ export function SongRequestDrawer({
           )}
 
           {/* 搜索进行中 */}
-          {(searchMutation.isPending || searchQuery.isLoading || searchQuery.data?.status === "searching") && (
+          {(searchMutation.isPending || searchQuery.isLoading || searchQuery.data?.status === "searching") && candidates.length === 0 && (
             <div className="drawer-searching-state" role="status">
               <RotateCw size={18} className="spin-icon" aria-hidden="true" />
               <span>正在搜索网易云单曲…</span>
@@ -232,9 +279,9 @@ export function SongRequestDrawer({
           )}
 
           {/* 搜索结果候选列表 */}
-          {activeSearchId && searchQuery.data?.status === "completed" && candidates.length > 0 && !selectedCandidate && (
+          {activeSearchId && candidates.length > 0 && !selectedCandidate && (
             <div className="drawer-candidates-container">
-              <p className="drawer-candidates-count">找到 {candidates.length} 首候选歌曲</p>
+              <p className="drawer-candidates-count">已加载 {candidates.length} 首候选歌曲</p>
               <ul className="candidate-list" role="listbox" aria-label="搜索候选列表">
                 {candidates.map(song => (
                   <li
@@ -271,6 +318,25 @@ export function SongRequestDrawer({
                 ))}
               </ul>
             </div>
+          )}
+
+          {/* 每次只在明确点击后请求一页，失败保留已加载结果。 */}
+          {activeSearchId && searchQuery.data?.hasMore && !selectedCandidate && (candidates.length > 0 || searchQuery.data.status === "failed") && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleLoadMore}
+              disabled={moreMutation.isPending || searchQuery.data.status === "searching" || isRequesting}
+            >
+              {moreMutation.isPending || searchQuery.data.status === "searching"
+                ? "加载中…"
+                : searchQuery.data.status === "failed" || moreMutation.isError
+                  ? candidates.length > 0 ? "重试加载更多" : "重试搜索"
+                  : "加载更多"}
+            </button>
+          )}
+          {activeSearchId && searchQuery.data?.status === "completed" && !searchQuery.data.hasMore && candidates.length > 0 && !selectedCandidate && (
+            <p role="status">没有更多结果了。</p>
           )}
 
           {/* 已选单曲卡片与确认点歌 */}

@@ -1,6 +1,10 @@
 import type { z } from "zod";
 
 export const errorMessages: Record<string, string> = {
+  PLAYBACK_CONFLICT: "播放指示已变化，请核对后重新操作。",
+  PLAYLIST_CONFLICT: "歌单内容或顺序已变化，请核对后重新操作。",
+  PLAY_NEXT_NOOP: "歌曲已在目标位置，无需再次安排。",
+  CONCURRENT_OPERATION_LIMIT_EXCEEDED: "你在此房间已有未完成的写入操作，请等待结果确认。",
   UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
   ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员明确恢复。",
   TARGET_BLOCKED: "当前歌单目标有待确认的写入操作，请稍后刷新查看。",

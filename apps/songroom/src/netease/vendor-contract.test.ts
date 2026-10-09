@@ -6,7 +6,8 @@ const writes: AdapterInput[] = [
   { operation: "playlistCreate", cookie: "MUSIC_U=explicit-secret", name: "offline" },
   { operation: "playlistDelete", cookie: "MUSIC_U=explicit-secret", playlistId: "300" },
   { operation: "trackAdd", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songId: "400" },
-  { operation: "trackRemove", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songId: "400" }
+  { operation: "trackRemove", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songId: "400" },
+  { operation: "trackOrder", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songIds: ["400", "500"] }
 ];
 
 describe("audited vendor through production adapter", () => {
@@ -89,8 +90,57 @@ describe("audited vendor through production adapter", () => {
     const fixture = await offlineAdapter(request => request.url.includes("playlist/detail") ? { body: { code: 200, playlist: { id: "list", name: "name", creator: { userId: "owner" }, status: 0, trackCount: 2, trackIds: [{ id: "first" }], tracks: [] } } } : { body: { code: 200, result: { songCount: 4 } } });
     try {
       expect(await fixture.call({ operation: "playlistDetail", cookie: "explicit", playlistId: "list" })).toEqual({ ok: false, error: { code: "PARSE_ERROR", outcome: "failed", httpStatus: 200, businessCode: 200 } });
-      expect(await fixture.call({ operation: "search", cookie: "explicit", query: "search" })).toEqual({ ok: false, error: { code: "PARSE_ERROR", outcome: "failed", httpStatus: 200, businessCode: 200 } });
+      expect(await fixture.call({ operation: "search", cookie: "explicit", query: "search", limit: 20, offset: 0 })).toEqual({ ok: false, error: { code: "PARSE_ERROR", outcome: "failed", httpStatus: 200, businessCode: 200 } });
     } finally { await fixture.close(); }
+  });
+  it("passes bounded search pagination through real encryption and preserves the total", async () => {
+    const songs = Array.from({ length: 20 }, (_, index) => ({ id: index + 41, name: `歌曲 ${index + 41}`, ar: [{ name: "歌手" }], al: { name: "专辑" } }));
+    const fixture = await offlineAdapter(() => ({ body: { code: 200, result: { songs, songCount: 60 } } }));
+    try {
+      const result = await fixture.call({ operation: "search", cookie: "explicit", query: "歌手", limit: 20, offset: 40 });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw Error(result.error.code);
+      expect(result.data.songs).toHaveLength(20);
+      expect(result.data.songs[0].id).toBe("41");
+      expect(result.data.songCount).toBe(60);
+      expect(fixture.outbound[0].payload).toMatchObject({ s: "歌手", limit: 20, offset: 40, type: 1 });
+      expect(fixture.outbound).toHaveLength(1);
+    } finally { await fixture.close(); }
+  });
+  it("sends the exact desired order once, with opaque IDs serialized as strings", async () => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200 } }));
+    try {
+      expect(await fixture.call({ operation: "trackOrder", cookie: "explicit", playlistId: "playlist", songIds: ["000anchor", "opaque:next", "18446744073709551616"] })).toMatchObject({ ok: true, data: { acknowledged: true } });
+      expect(fixture.outbound).toHaveLength(1);
+      expect(fixture.outbound[0].payload).toMatchObject({ pid: "playlist", trackIds: '["000anchor","opaque:next","18446744073709551616"]', op: "update" });
+    } finally { await fixture.close(); }
+  });
+  it("uses only the first recent record and requests only one song", async () => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200, data: { list: [
+      { resourceType: "SONG", resourceId: "000first", data: { id: "000first" } },
+      { resourceType: "SONG", resourceId: "older", data: { id: "older" } }
+    ] } } }));
+    try {
+      expect(await fixture.call({ operation: "recentSong", cookie: "explicit" })).toMatchObject({ ok: true, data: { songId: "000first" } });
+      expect(fixture.outbound).toHaveLength(1);
+      expect(fixture.outbound[0].url).toContain("/weapi/play-record/song/list");
+      expect(fixture.outbound[0].payload).toMatchObject({ limit: 1 });
+    } finally { await fixture.close(); }
+  });
+  it("returns no recent song for an empty list", async () => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200, data: { list: [] } } }));
+    try { expect(await fixture.call({ operation: "recentSong", cookie: "explicit" })).toMatchObject({ ok: true, data: { songId: null } }); }
+    finally { await fixture.close(); }
+  });
+  it.each([
+    { list: null },
+    { list: [{ resourceType: "ALBUM", resourceId: "other", data: { id: "other" } }] },
+    { list: [{ resourceType: "SONG", resourceId: "first", data: { id: "different" } }] },
+    { list: [{ resourceType: "SONG", resourceId: "first" }] }
+  ])("rejects malformed recent records without inventing an active song: %j", async data => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200, data } }));
+    try { expect(await fixture.call({ operation: "recentSong", cookie: "explicit" })).toEqual({ ok: false, error: { code: "PARSE_ERROR", outcome: "failed", httpStatus: 200, businessCode: 200 } }); }
+    finally { await fixture.close(); }
   });
   it("distinguishes empty identity from malformed JSON and ordinary business errors", async () => {
     const fixture = await offlineAdapter(() => ({ body: { code: 200, account: null, profile: null } }));

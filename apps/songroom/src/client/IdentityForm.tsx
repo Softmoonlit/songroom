@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { v7 as uuidv7 } from "uuid";
 import { roomName, roomNickname, roomShellView } from "../shared/room-contracts";
+import { Toast, type ToastData } from "./Toast";
 import { errorMessage, errorMessageForCode, request, RoomRequestError } from "./room-http";
 
 const identityFields = {
@@ -28,7 +29,7 @@ export function IdentityForm({ sessionId, roomId, field, current, disabledReason
   const client = useQueryClient();
   const [input, setInput] = useState(current);
   const [message, setMessage] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [toast, setToast] = useState<ToastData | null>(null);
   const [command, setCommand] = useState<{ idempotencyKey: string; value: string } | null>(null);
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
@@ -48,12 +49,11 @@ export function IdentityForm({ sessionId, roomId, field, current, disabledReason
       void client.invalidateQueries({ queryKey: ["room-applications", sessionId, roomId] });
       setCommand(null);
       setInput(view.room[field]);
-      setSaved(true);
-      setMessage(config.saved);
+      setToast({ id: uuidv7(), message: config.saved });
+      setMessage("");
     },
     onError: failure => {
       if (controller.current?.signal.aborted) return;
-      setSaved(false);
       setMessage(errorMessage(failure));
       if (failure instanceof RoomRequestError) {
         setCommand(null);
@@ -66,7 +66,6 @@ export function IdentityForm({ sessionId, roomId, field, current, disabledReason
     event.preventDefault();
     if (mutation.isPending || disabledReason) return;
     const parsed = config.schema.safeParse(input);
-    setSaved(false);
     if (!parsed.success) { setMessage(parsed.error.issues[0]?.message ?? "请检查输入。"); return; }
     const next = command?.value === parsed.data ? command : { idempotencyKey: uuidv7(), value: parsed.data };
     setCommand(next);
@@ -85,6 +84,7 @@ export function IdentityForm({ sessionId, roomId, field, current, disabledReason
     </label>
     {disabledReason && <p className="field-help">{errorMessageForCode(disabledReason)}</p>}
     <button className="primary-button" type="submit" disabled={mutation.isPending || !!disabledReason}>{mutation.isPending ? "保存中…" : config.button}</button>
-    {message && <p className={saved ? "netease-status" : "form-message"} role={saved ? "status" : "alert"}>{message}</p>}
+    {message && <p className="form-message" role="alert">{message}</p>}
+    <Toast toast={toast} onDismiss={() => setToast(null)} />
   </form>;
 }

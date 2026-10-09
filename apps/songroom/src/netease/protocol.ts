@@ -10,7 +10,9 @@ export const adapterInputSchema = z.discriminatedUnion("operation", [
   z.strictObject({ deviceId, operation: z.literal("qrCreate"), key }),
   z.strictObject({ deviceId, operation: z.literal("qrCheck"), key }),
   z.strictObject({ deviceId, operation: z.literal("identity"), cookie, expectedAccountId: id.optional() }),
-  z.strictObject({ deviceId, operation: z.literal("search"), cookie, query: z.string().min(1).max(400) }),
+  z.strictObject({ deviceId, operation: z.literal("search"), cookie, query: z.string().min(1).max(400), limit: z.number().int().min(1).max(20), offset: z.number().int().nonnegative() }),
+  z.strictObject({ deviceId, operation: z.literal("recentSong"), cookie }),
+  z.strictObject({ deviceId, operation: z.literal("trackOrder"), cookie, playlistId: id, songIds: z.array(id).min(2).refine(ids => new Set(ids).size === ids.length) }),
   z.strictObject({ deviceId, operation: z.literal("userPlaylists"), cookie, accountId: id, offset: z.number().int().nonnegative(), limit: z.number().int().min(1).max(1000) }),
   z.strictObject({ deviceId, operation: z.literal("playlistDetail"), cookie, playlistId: id }),
   z.strictObject({ deviceId, operation: z.literal("songDetail"), cookie, songIds: z.array(id).min(1).max(1000) }),
@@ -46,7 +48,9 @@ export const outputSchemas = {
     z.strictObject({ status: z.literal("authorized"), cookie })
   ]),
   identity: z.strictObject({ accountId: id, name: z.string() }),
-  search: z.strictObject({ songs: z.array(songSchema).max(5) }),
+  search: z.strictObject({ songs: z.array(songSchema).max(20), songCount: z.number().int().nonnegative() }),
+  recentSong: z.strictObject({ songId: id.nullable() }),
+  trackOrder: z.strictObject({ acknowledged: z.literal(true) }),
   userPlaylists: z.strictObject({ playlists: z.array(playlistSchema), more: z.boolean() }),
   playlistDetail: z.strictObject({ playlist: playlistSchema, songIds: z.array(id), songs: z.array(songSchema) }),
   songDetail: z.strictObject({ songs: z.array(songSchema) }),
@@ -79,5 +83,5 @@ export const workerInputSchema = z.strictObject({
 });
 export type WorkerInput = z.infer<typeof workerInputSchema>;
 export function isWrite(operation: Operation): boolean {
-  return ["playlistCreate", "playlistDelete", "trackAdd", "trackRemove"].includes(operation);
+  return ["playlistCreate", "playlistDelete", "trackAdd", "trackRemove", "trackOrder"].includes(operation);
 }

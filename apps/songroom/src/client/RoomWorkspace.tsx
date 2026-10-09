@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, Bell, Music2, Settings, UserPlus, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { v7 } from "uuid";
+import { publicPlaylistView } from "../shared/public-playlist-contracts";
 import { roomLeaveResult, roomMembersView, roomShellView, roomDeletionView, roomDeleteResult } from "../shared/room-contracts";
 import { errorMessage, queryOptions, request, RoomRequestError } from "./room-http";
 import { QueryError } from "./RoomQueryError";
@@ -166,10 +167,10 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           <ArrowLeft size={16} aria-hidden="true" />
           返回房间列表
         </Link>
-        <h1 className="room-title">{room.name}</h1>
+        <p className="room-title">房间 · {room.name}</p>
         <div className="room-identity-meta">
-          <p className="room-meta-pill">当前角色：{roleLabels[room.role]}</p>
-          <p className="room-meta-pill">当前昵称：{room.nickname}</p>
+          <span className="room-meta-pill">{roleLabels[room.role]}</span>
+          <span className="room-meta-pill">{room.nickname}</span>
         </div>
         <nav className="room-navigation" aria-label="房间导航">
           <button
@@ -214,14 +215,12 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         </section>
         <section hidden={active !== "settings"} aria-label="房间设置" className="room-settings-pane">
           <div className="room-settings-header">
-            <h2>房间设置</h2>
-            <p className="room-settings-subtitle">管理房间基础属性、关联播放源与成员权限。</p>
+            <h1>房间设置</h1>
           </div>
 
           <div className="room-settings-section">
             <div className="room-settings-section-header">
-              <h3>基本信息</h3>
-              <p>修改房间公开名称与你在该房间内显示的昵称。</p>
+              <h2>基本信息</h2>
             </div>
             <div className="room-settings-cards">
               {query.data.allowedActions.includes("renameRoom") && (
@@ -235,8 +234,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
 
           <div className="room-settings-section">
             <div className="room-settings-section-header">
-              <h3>关联平台账号</h3>
-              <p>本房间的公共歌单与播放同步依赖房主授权的音乐平台。</p>
+              <h2>关联平台账号</h2>
             </div>
             <div className="settings-card platform-linked-card">
               <div className="platform-linked-header">
@@ -250,17 +248,18 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                 <span className="platform-badge active">主播放源</span>
               </div>
               <p className="platform-linked-desc">
-                房间的歌曲搜索、公共点歌与歌单快照均以此账号作为权威来源。如需管理或重新授权平台，请前往
+                管理或重新授权：
                 <Link className="text-link inline-link" to="/account">账号设置</Link>。
               </p>
             </div>
           </div>
 
+          <PlaylistDetails sessionId={sessionId} roomId={roomId} active={active === "settings"} />
+
           {(query.data.allowedActions.includes("leaveRoom") || query.data.allowedActions.includes("deleteRoom")) && (
             <div className="room-settings-section danger-zone-section">
               <div className="room-settings-section-header">
-                <h3>{room.role === "owner" ? "解散房间" : "退出房间"}</h3>
-                <p>{room.role === "owner" ? "永久解散并删除此房间，所有成员将立即失去访问权限。" : "退出此房间，立即撤销访问权限并释放昵称。"}</p>
+                <h2>{room.role === "owner" ? "解散房间" : "退出房间"}</h2>
               </div>
               <div className="danger-zone-card">
                 {query.data.allowedActions.includes("leaveRoom") && (
@@ -383,13 +382,10 @@ function MembersPane({
           </button>
           <span>{selected.nickname}</span>
         </nav>
-        <h2>{selected.nickname}</h2>
+        <h1>{selected.nickname}</h1>
         {selected.isSelf && selected.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={selected.nickname} disabledReason={selected.disabledReasons.renameNickname} />}
         <dl className="netease-identity">
-          <div>
-            <dt>昵称</dt>
-            <dd>{selected.nickname}</dd>
-          </div>
+
           <div>
             <dt>角色</dt>
             <dd>{roleLabels[selected.role]}</dd>
@@ -426,7 +422,7 @@ function MembersPane({
     <div className="members-pane-container">
       <div className="members-pane-header">
         <div className="members-pane-title-group">
-          <h2>房间成员</h2>
+          <h1>房间成员</h1>
           <span className="members-count-badge" aria-label={`共 ${query.data.members.length} 位成员`}>
             {query.data.members.length} 人
           </span>
@@ -467,9 +463,7 @@ function MembersPane({
               <span className="pending-review-banner-title">
                 有 {pendingCount} 位室友申请加入房间
               </span>
-              <span className="pending-review-banner-sub">
-                审批通过后室友即可参与点歌
-              </span>
+
             </div>
           </div>
           <button
@@ -530,4 +524,22 @@ function MembersPane({
       )}
     </div>
   );
+}
+
+function PlaylistDetails({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
+  const query = useQuery({
+    queryKey: ["room-public-playlist", sessionId, roomId],
+    queryFn: ({ signal }) => request(`/${roomId}/public-playlist`, publicPlaylistView, signal),
+    enabled: active,
+    ...queryOptions
+  });
+  if (!query.data?.playlist) return null;
+  return <div className="room-settings-section">
+    <div className="room-settings-section-header"><h2>公共歌单详情</h2></div>
+    <dl className="settings-card netease-identity">
+      <div><dt>网易云歌单名称</dt><dd>{query.data.playlist.name}</dd></div>
+      <div><dt>网易云歌单 ID</dt><dd>{query.data.playlist.id}</dd></div>
+      {query.data.snapshot?.syncedAt && <div><dt>快照时间</dt><dd>{new Date(query.data.snapshot.syncedAt).toLocaleString("zh-CN", { hour12: false })}</dd></div>}
+    </dl>
+  </div>;
 }

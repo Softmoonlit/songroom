@@ -324,15 +324,8 @@ function Landing({ session, onAuthenticated }: {
   return (
     <section className="home-page" aria-labelledby="welcome-heading">
       <div className="hero-copy">
-        <p className="eyebrow">
-          <Music2 size={16} aria-hidden="true" />
-          SongRoom
-        </p>
         <h1 id="welcome-heading">SongRoom 点歌台</h1>
         <p className="hero-subtitle">和室友一起点歌</p>
-        <p className="hero-description">
-          专为宿舍打造的共享音乐点歌台。一个账号，与室友同步公共歌单、实时协作点歌，在熟悉的设备之间随时畅听。
-        </p>
       </div>
       <div className="auth-card">
         <AuthPage mode="sign-in" compact onAuthenticated={onAuthenticated} />
@@ -390,12 +383,8 @@ function AuthPage({ mode, onAuthenticated, compact = false }: {
         </Link>
       )}
       <div className="auth-heading">
-        <p className="eyebrow">
-          <UserRound size={16} aria-hidden="true" />
-          点歌台账号
-        </p>
-        <h1 id="auth-heading">{signingUp ? "创建点歌台账号" : "登录点歌台"}</h1>
-        <p>{returningToJoin ? "认证后继续填写房间加入申请。" : signingUp ? "注册后会自动登录并进入你的房间列表。" : "使用注册时的邮箱和密码继续。"}</p>
+        {compact ? <h2 id="auth-heading">登录</h2> : <h1 id="auth-heading">{signingUp ? "创建点歌台账号" : "登录点歌台"}</h1>}
+        {returningToJoin && <p>认证后继续填写房间加入申请。</p>}
       </div>
       <form className="auth-form" onSubmit={submit} noValidate>
         {signingUp && (
@@ -548,11 +537,7 @@ function AccountPage({ session }: { session?: SessionData | null }) {
         返回房间列表
       </Link>
       <div className="page-heading">
-        <p className="eyebrow">
-          <UserRound size={16} aria-hidden="true" />
-          账号设置
-        </p>
-        <h1 id="account-heading">管理你的点歌台账号</h1>
+        <h1 id="account-heading">账号设置</h1>
       </div>
       <div className="settings-grid">
         <form className="settings-card" onSubmit={updateName}>

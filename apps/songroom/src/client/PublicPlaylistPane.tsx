@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Info, Music2, Plus, RotateCw } from "lucide-react";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
+import { LocateFixed, Music2, Plus, RotateCw } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   publicPlaylistView,
@@ -15,6 +15,7 @@ import type { SongCandidate } from "../shared/song-search-contracts.js";
 import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http.js";
 import { QueryError } from "./RoomQueryError.js";
 import { SongRequestDrawer } from "./SongRequestDrawer.js";
+import { usePublicPlayback } from "./usePublicPlayback.js";
 import { Toast, type ToastData } from "./Toast.js";
 import { getFriendlySongRequestErrorMessage, getFriendlyOperationStatusMessage } from "./song-request-messages.js";
 
@@ -71,110 +72,71 @@ const disabledMessages = {
   OPERATION_PENDING: "已有未完成的创建操作，不能再次创建。"
 };
 
-function TrackList({
-  tracks,
-  active,
-  highlightedSongId
-}: {
-  tracks: PublicPlaylistTrack[];
-  active: boolean;
-  highlightedSongId: string | null;
+function TrackList({ tracks, active, highlight, onHighlightEnd, playback }: {
+  tracks: PublicPlaylistTrack[]; active: boolean;
+  highlight: { songId: string; id: string } | null;
+  onHighlightEnd: () => void;
+  playback: ReturnType<typeof usePublicPlayback>;
 }) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const savedScrollTop = useRef(0);
-  const virtualizer = useVirtualizer({
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const virtualizer = useWindowVirtualizer({
     count: tracks.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 64,
-    overscan: 10
+    estimateSize: () => window.innerWidth <= 768 ? 104 : 76,
+    getItemKey: index => tracks[index].songId,
+    overscan: 10,
+    scrollMargin,
+    enabled: active
   });
-
   useLayoutEffect(() => {
-    if (active && parentRef.current && savedScrollTop.current > 0) {
-      parentRef.current.scrollTop = savedScrollTop.current;
-    }
+    if (!active || !listRef.current) return;
+    const measure = () => setScrollMargin(listRef.current!.getBoundingClientRect().top + window.scrollY);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(document.body);
+    window.addEventListener("resize", measure);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
   }, [active]);
-
-  // 当新歌入单时，平滑滚动至该歌曲并展示高亮动效
   useEffect(() => {
-    if (!highlightedSongId) return;
-    const index = tracks.findIndex(t => t.songId === highlightedSongId);
-    if (index !== -1) {
-      virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
-    }
-  }, [highlightedSongId, tracks, virtualizer]);
-
-  return (
-    <div className="playlist-tracks-wrapper">
-      {/* 歌单列表表头：为未来本地过滤搜索预留清晰的空间边界 */}
-      <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
-        <span className="tracks-header-col col-index" aria-hidden="true">#</span>
-        <span className="tracks-header-col col-title" aria-hidden="true">歌曲与歌手</span>
-        <div className="tracks-header-right-group">
-          <span className="tracks-header-col col-requester" aria-hidden="true">点歌人</span>
-        </div>
-      </div>
-      <div
-        ref={parentRef}
-        onScroll={e => {
-          savedScrollTop.current = e.currentTarget.scrollTop;
-        }}
-        className="playlist-tracks-container"
-        role="list"
-        aria-label="歌曲列表"
-        tabIndex={0}
-      >
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: "100%",
-            position: "relative"
-          }}
-        >
-          {virtualizer.getVirtualItems().map(virtualRow => {
-            const track = tracks[virtualRow.index];
-            const isHighlighted = track.songId === highlightedSongId;
-            return (
-              <div
-                key={virtualRow.key}
-                role="listitem"
-                tabIndex={0}
-                aria-label={`${track.position + 1}. ${track.name}，歌手：${track.artists.join("、")}${track.album ? `，专辑：${track.album}` : ""}${track.requesters.length ? `，点歌人：${track.requesters.join("、")}` : ""}`}
-                className={`track-item ${isHighlighted ? "track-item-highlighted" : ""}`}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`
-                }}
-              >
-                <span className="track-index" aria-hidden="true">{track.position + 1}</span>
-                <div className="track-info">
-                  <span className="track-name" title={track.name}>{track.name}</span>
-                  <span className="track-artists-album" title={`${track.artists.join(" / ")}${track.album ? ` · ${track.album}` : ""}`}>
-                    <span className="track-artists">{track.artists.join(" / ")}</span>
-                    {track.album && <span className="track-album"> · {track.album}</span>}
-                  </span>
-                </div>
-                {track.requesters.length > 0 && (
-                  <div className="track-requesters-side" aria-label={`点歌人：${track.requesters.join("、")}`}>
-                    {track.requesters.map(requester => (
-                      <span key={requester} className="requester-capsule" title={`点歌人：${requester}`}>
-                        <span className="requester-label">点歌人：</span>
-                        <span className="requester-name">{requester}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+    if (!active || !highlight) return;
+    const index = tracks.findIndex(track => track.songId === highlight.songId);
+    if (index >= 0) virtualizer.scrollToIndex(index, { align: "center", behavior: "auto" });
+  }, [highlight?.id, active, tracks, scrollMargin]);
+  return <div className="playlist-tracks-wrapper">
+    <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
+      <span className="tracks-header-col col-index">#</span>
+      <span className="tracks-header-col col-title">歌曲与歌手</span>
+      <span className="tracks-header-col col-requester">点歌人</span>
+      <span className="tracks-header-col col-next">播放安排</span>
     </div>
-  );
+    <div ref={listRef} className="playlist-tracks-container" role="list" aria-label="歌曲列表"
+      style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      {virtualizer.getVirtualItems().map(row => {
+        const track = tracks[row.index];
+        const playing = track.songId === playback.anchorSongId;
+        return <div key={row.key} ref={virtualizer.measureElement} data-index={row.index}
+          data-song-id={track.songId} role="listitem" tabIndex={0}
+          aria-label={`${track.position + 1}. ${track.name}，歌手：${track.artists.join("、")}${track.album ? `，专辑：${track.album}` : ""}${track.requesters.length ? `，点歌人：${track.requesters.join("、")}` : ""}${playing ? "，播放指示" : ""}`}
+          className={`track-item ${track.songId === highlight?.songId ? "track-item-highlighted" : ""}`}
+          onAnimationEnd={event => { if (event.animationName === "trackHighlight") onHighlightEnd(); }}
+          style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${row.start - scrollMargin}px)` }}>
+          <span className="track-index" aria-hidden="true">{playing ? <span className="playback-indicator"><i /><i /><i /></span> : track.position + 1}</span>
+          <div className="track-info">
+            <span className="track-name" title={track.name}>{track.name}</span>
+            <span className="track-artists-album" title={`${track.artists.join(" / ")} · ${track.album}`}>
+              {track.artists.join(" / ")}{track.album && <span className="track-album"> · {track.album}</span>}
+            </span>
+          </div>
+          <div className="track-requesters-side" aria-label={track.requesters.length ? `点歌人：${track.requesters.join("、")}` : undefined}>
+            {track.requesters.map(requester => <span key={requester} className="requester-capsule" title={`点歌人：${requester}`} aria-label={`点歌人：${requester}`}>{requester}</span>)}
+          </div>
+          <button type="button" className="secondary-button play-next-button"
+            disabled={playback.nextBlocked || !playback.anchorSongId || playing || row.index === playback.anchorIndex + 1}
+            aria-label={`下一首播放：${track.name}`} onClick={() => playback.playNext(track.songId)}>下一首播放</button>
+        </div>;
+      })}
+    </div>
+  </div>;
 }
 
 export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
@@ -187,38 +149,17 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const controller = useRef<AbortController | null>(null);
   const refreshController = useRef<AbortController | null>(null);
 
-  // 歌单元数据信息浮层状态
-  const [showMetaPopover, setShowMetaPopover] = useState(false);
-  const metaPopoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!showMetaPopover) return;
-    function handleClickOutside(event: MouseEvent) {
-      if (metaPopoverRef.current && !metaPopoverRef.current.contains(event.target as Node)) {
-        setShowMetaPopover(false);
-      }
-    }
-    function handleKeyDown(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") {
-        setShowMetaPopover(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [showMetaPopover]);
-
   // 点歌抽屉与正反馈交互状态
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
-  const [highlightedSongId, setHighlightedSongId] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<{ songId: string; id: string } | null>(null);
   const [requestErrorMessage, setRequestErrorMessage] = useState("");
   const [operationStatusMessage, setOperationStatusMessage] = useState("");
   const [isRequesting, setIsRequesting] = useState(false);
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
+
+  const playback = usePublicPlayback({ sessionId, roomId, active, view: query.data,
+    pendingWrite: isRequesting || Boolean(activeOperationId), notify: setToast });
 
   const openSongRequestDrawer = () => {
     setRequestErrorMessage("");
@@ -231,7 +172,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     setIsDrawerOpen(false);
     setActiveOperationId(null);
     setOperationStatusMessage("");
-    setHighlightedSongId(songId);
+    setHighlight({ songId, id: uuidv7() });
     setToast({
       id: uuidv7(),
       message: `《${name}》点歌成功！已加入公共歌单并记录你的标签。`,
@@ -278,6 +219,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       if (refreshController.current?.signal.aborted) return;
       client.setQueryData(queryKey, updatedView);
       setRefreshError("");
+      if (!updatedView.lastRefreshError) setToast({ id: uuidv7(), message: "歌单已同步", type: "success" });
     },
     onError: failure => {
       if (refreshController.current?.signal.aborted) return;
@@ -398,8 +340,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     }
   }, [active, query.data?.playlist?.id, query.data?.allowedActions]);
 
-  if (query.isPending) return <><h2>公共歌单</h2><p role="status">正在读取公共歌单状态…</p></>;
-  if (query.isError) return <><h2>公共歌单</h2><QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} /></>;
+  if (query.isPending) return <><h1>公共歌单</h1><p role="status">正在读取公共歌单状态…</p></>;
+  if (query.isError) return <><h1>公共歌单</h1><QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} /></>;
   if (!query.data) return null;
   const view = query.data;
 
@@ -414,7 +356,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   };
 
   return <>
-    <h2>公共歌单</h2>
+    <h1>公共歌单</h1>
     {!view.playlist ? (
       view.invalidatedTarget ? (
         <div className="playlist-empty-state-card invalidated" role="region" aria-label="公共歌单失效状态">
@@ -426,7 +368,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
             原公共歌单「{view.invalidatedTarget.name}」（ID: {view.invalidatedTarget.playlistId}）已从网易云删除。最后核查状态：已确认失效（{formatTime(view.invalidatedTarget.checkedAt)}）。
           </p>
           {view.disabledReason === "OWNER_ONLY" && <p className="field-help" role="status">已确认失效，等待房主重新创建公共歌单。</p>}
-          {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
+          {view.operation && view.operation.status !== "succeeded" && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
           {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
           {view.disabledReason && view.disabledReason !== "OWNER_ONLY" && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
           {view.allowedActions.includes("createPublicPlaylist") && (
@@ -448,7 +390,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
           <h3>尚未创建公共歌单</h3>
           <p className="empty-state-desc">创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
-          {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
+          {view.operation && view.operation.status !== "succeeded" && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
           {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
           {view.disabledReason && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
           {view.allowedActions.includes("createPublicPlaylist") && (
@@ -469,7 +411,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         <header className="playlist-header">
           <div className="playlist-header-left">
             <div className="playlist-title-row">
-              <h3 className="playlist-name">{view.playlist.name}</h3>
               {view.snapshot && (
                 <span className="playlist-track-badge" aria-label={`共 ${view.snapshot.trackCount} 首歌曲`}>
                   {view.snapshot.trackCount} 首歌曲
@@ -485,11 +426,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                 </span>
               ) : refreshError ? (
                 <span className="sync-micro-status status-error" role="alert">{refreshError}</span>
-              ) : view.snapshot?.syncedAt ? (
-                <span className="sync-micro-status status-synced" role="status">
-                  <Check size={13} aria-hidden="true" /> 歌单已同步
-                </span>
               ) : null}
+              {playback.playbackFailed && <span className="sync-micro-status status-error" role="status">播放指示读取失败</span>}
             </div>
           </div>
 
@@ -499,7 +437,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               <button
                 className="primary-button open-request-drawer-btn"
                 type="button"
-                disabled={view.disabledReason === "ACCOUNT_PAUSED"}
+                disabled={view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
                 aria-label="+ 点歌"
                 aria-haspopup="dialog"
                 aria-expanded={isDrawerOpen}
@@ -510,41 +448,20 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               </button>
             )}
 
-            <div className="playlist-meta-popover-anchor" ref={metaPopoverRef}>
-              <button
-                type="button"
-                className="playlist-info-btn"
-                aria-label="歌单技术信息"
-                title="查看歌单技术信息"
-                aria-expanded={showMetaPopover}
-                onClick={() => setShowMetaPopover(v => !v)}
-              >
-                <Info size={15} aria-hidden="true" />
-              </button>
-              {showMetaPopover && (
-                <div className="playlist-meta-popover" role="dialog" aria-label="歌单技术信息">
-                  <div className="meta-popover-item">
-                    <span className="meta-popover-label">网易云歌单 ID</span>
-                    <span className="meta-popover-value font-mono">{view.playlist.id}</span>
-                  </div>
-                  {view.snapshot?.syncedAt && (
-                    <div className="meta-popover-item">
-                      <span className="meta-popover-label">快照时间</span>
-                      <span className="meta-popover-value font-mono">{formatTime(view.snapshot.syncedAt)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <button type="button" className="secondary-button locate-playback-button"
+              disabled={!playback.anchorSongId} onClick={() => playback.anchorSongId && setHighlight({ songId: playback.anchorSongId, id: uuidv7() })}>
+              <LocateFixed size={14} aria-hidden="true" />定位到正在播放
+            </button>
 
             {view.allowedActions.includes("refreshPublicPlaylist") && (
               <button
                 className="secondary-button sync-playlist-button"
                 type="button"
-                disabled={refreshMutation.isPending || view.disabledReason === "ACCOUNT_PAUSED"}
+                disabled={refreshMutation.isPending || playback.playbackRefreshing || view.disabledReason === "ACCOUNT_PAUSED"}
                 onClick={() => {
                   setRefreshError("");
                   refreshMutation.mutate();
+                  playback.refreshPlayback();
                 }}
                 aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
               >
@@ -555,11 +472,14 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
         </header>
 
-        {view.operation && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
+        {view.operation && view.operation.status !== "succeeded" && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
         {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
         {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && (
           <p className="field-help">{disabledMessages[view.disabledReason]}</p>
         )}
+
+        {playback.nextMessage && <p role="status" className="field-help">{playback.nextMessage}</p>}
+        {playback.unresolved && <button type="button" className="secondary-button" disabled={playback.checking} onClick={playback.checkNext}>查询下一首播放结果</button>}
 
         {(!view.snapshot || view.snapshot.syncedAt === null) ? (
           <div className="initial-sync-card">
@@ -581,7 +501,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               <button
                 className="primary-button empty-playlist-cta-btn"
                 type="button"
-                disabled={view.disabledReason === "ACCOUNT_PAUSED"}
+                disabled={view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
                 aria-label="+ 点歌"
                 onClick={openSongRequestDrawer}
               >
@@ -594,7 +514,9 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           <TrackList
             tracks={view.snapshot.tracks}
             active={active}
-            highlightedSongId={highlightedSongId}
+            highlight={highlight}
+            onHighlightEnd={() => setHighlight(null)}
+            playback={playback}
           />
         )}
 

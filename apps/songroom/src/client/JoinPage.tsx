@@ -67,9 +67,7 @@ export function JoinPage({ sessionId }: { sessionId: string }) {
               <Mail size={24} />
             </div>
             <h1 id="join-heading" className="invitation-title">房间加入邀请函</h1>
-            <p className="invitation-subtitle">
-              受邀室友提交申请后，经房主审批即可加入房间协作点歌
-            </p>
+            <p className="invitation-subtitle">加入申请需房主批准。</p>
           </div>
 
           {!validCode ? (

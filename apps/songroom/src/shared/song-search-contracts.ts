@@ -25,10 +25,16 @@ export type SearchInitiatedResponse = z.infer<typeof searchInitiatedResponse>;
 export const searchStatus = z.enum(["searching", "completed", "failed"]);
 export type SearchStatus = z.infer<typeof searchStatus>;
 
+export const searchErrorCode = z.union([
+  adapterErrorCodeSchema,
+  z.enum(["ACCOUNT_PAUSED", "UPSTREAM_QUEUE_FULL", "APP_DRAINING", "ROOM_UNAVAILABLE", "NETEASE_AUTH_REQUIRED", "AUTHORIZATION_CHANGED", "PUBLIC_PLAYLIST_NOT_FOUND", "PUBLIC_PLAYLIST_CHANGED"])
+]);
+
 export const searchView = z.strictObject({
   searchId: uuidv7,
   status: searchStatus,
   songs: z.array(songCandidate),
-  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("UPSTREAM_QUEUE_FULL")]).nullable()
+  hasMore: z.boolean(),
+  errorCode: searchErrorCode.nullable()
 });
 export type SearchView = z.infer<typeof searchView>;

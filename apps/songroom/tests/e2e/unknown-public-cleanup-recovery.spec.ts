@@ -163,7 +163,7 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
     await setupMocks(page, mockCleanups);
     await page.goto("/account");
 
-    await expect(page.getByRole("heading", { name: "管理你的点歌台账号" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "账号设置", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "网易云账号" })).toBeVisible();
 
     // 账号设置中也展示公共歌单清理摘要

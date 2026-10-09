@@ -71,7 +71,7 @@ test.describe("Ticket 06: 未登录首页系统级降噪与现代 Hero 呈现", 
     // 1. 验证干净大气的现代 Hero 呈现
     await expect(page.getByRole("heading", { name: "SongRoom 点歌台" })).toBeVisible();
     await expect(page.getByText("和室友一起点歌")).toBeVisible();
-    await expect(page.getByText("专为宿舍打造的共享音乐点歌台")).toBeVisible();
+    await expect(page.getByText("专为宿舍打造的共享音乐点歌台")).toHaveCount(0);
 
     // 2. 彻底移除旧版技术性/临时文本
     await expect(page.getByText("功能正在交付")).toHaveCount(0);
@@ -166,7 +166,7 @@ test.describe("Ticket 06: 房间列表整合工具栏与双轨 Onboarding 指引
     await expect(roommateCard).toBeVisible();
     await expect(roommateCard.locator(".role-badge.role-roommate")).toHaveText("室友");
     await expect(roommateCard.locator(".room-card-nickname")).toContainText("阿强");
-    await expect(roommateCard.locator(".status-badge.success")).toHaveText("正常运行");
+    await expect(roommateCard.locator(".status-badge.success")).toHaveCount(0);
     await expect(roommateCard.locator(".status-badge.warning")).toHaveCount(0);
     await expect(roommateCard.getByRole("link", { name: "进入房间：隔壁宿舍" })).toBeVisible();
   });
@@ -201,7 +201,7 @@ test.describe("Ticket 06: 房间列表整合工具栏与双轨 Onboarding 指引
 
     // 2. 前往账号设置：在高级设置中展示公共歌单清理
     await page.goto("/account");
-    await expect(page.getByRole("heading", { name: "管理你的点歌台账号" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "账号设置", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
     await expect(page.getByText("网易云歌单 ID：pl-clean-test")).toBeVisible();
     await expect(page.getByText("等待重新授权")).toBeVisible();

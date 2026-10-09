@@ -89,6 +89,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
             { id: "s-2", name: "七里香", artists: ["周杰伦"], album: "七里香" },
             { id: "s-3", name: "夜曲", artists: ["周杰伦"], album: "十一月的萧邦" }
           ],
+          hasMore: false,
           errorCode: null
         }
       });
@@ -137,7 +138,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
       await page.goto(`/rooms/${roomId}`);
 
       // 验证已有点歌人标签展示与列表表头清晰边界
-      await expect(page.getByText("点歌人：房主")).toBeVisible();
+      await expect(page.locator(".requester-capsule").filter({ hasText: "房主" })).toBeVisible();
       await expect(page.getByRole("region", { name: "歌曲列表表头" })).toBeVisible();
 
       // 验证主页面上不再常驻易混淆的直接搜索栏
@@ -177,7 +178,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
       // 成功反馈 Toast 弹出、抽屉自动收起，并在公共歌单中平滑高亮新入单歌曲
       await expect(page.getByText("点歌成功！")).toBeVisible();
       await expect(drawer).not.toBeVisible();
-      await expect(page.getByText("点歌人：室友小明")).toBeVisible();
+      await expect(page.locator(".track-item-highlighted .requester-capsule")).toHaveText("室友小明");
       await expect(page.locator(".track-item-highlighted")).toBeVisible();
 
       // 验证 320px-1440px 无横向滚动溢出
@@ -214,6 +215,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
           searchId,
           status: "completed",
           songs: [{ id: "s-cancel", name: "待取消的歌", artists: ["歌手"], album: "专辑" }],
+          hasMore: false,
           errorCode: null
         }
       });
@@ -274,6 +276,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
           searchId,
           status: "failed",
           songs: [],
+          hasMore: true,
           errorCode: "UPSTREAM_QUEUE_FULL"
         }
       });
@@ -292,4 +295,139 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
     await expect(drawer.getByText("当前点歌的小伙伴较多，通道正在有序排队中，请稍候片刻再试。")).toBeVisible();
     await expect(drawer.getByText("UPSTREAM_QUEUE_FULL")).toHaveCount(0);
   });
+});
+
+function candidates(start: number, length = 20) {
+  return Array.from({ length }, (_, index) => ({ id: `page-${start + index}`, name: `分页歌曲${start + index}`, artists: ["分页歌手"], album: "分页专辑" }));
+}
+
+async function setupSearchDrawer(page: import("@playwright/test").Page) {
+  await setupRoomPage(page);
+  await page.route(playlistEndpoint, route => route.fulfill({ json: {
+    playlist: basePlaylist,
+    snapshot: { version: 1, syncedAt: Date.now(), trackCount: 0, tracks: [] },
+    lastRefreshError: null, operation: null,
+    allowedActions: ["refreshPublicPlaylist", "requestSong"], disabledReason: null, version: 1
+  } }));
+  await page.goto(`/rooms/${roomId}`);
+  await page.getByRole("button", { name: "+ 点歌" }).first().click();
+  return page.getByRole("dialog", { name: "网易云点歌" });
+}
+
+test("搜索首次20首且不预取；分页失败保留列表和位置，重试去重追加并停止加载", async ({ page }) => {
+  const searchId = v7();
+  const first = candidates(0);
+  let view = { searchId, status: "completed", songs: first, hasMore: true, errorCode: null as string | null };
+  let moreCalls = 0;
+  let releaseMore!: () => void;
+  let moreEntered = false;
+  await page.route(searchEndpoint, route => route.fulfill({ status: 202, json: { searchId } }));
+  await page.route(`${searchEndpoint}/${searchId}`, route => route.fulfill({ json: view }));
+  await page.route(`${searchEndpoint}/${searchId}/more`, async route => {
+    moreCalls += 1;
+    if (moreCalls === 1) {
+      moreEntered = true;
+      await new Promise<void>(resolve => { releaseMore = resolve; });
+      view = { ...view, status: "failed", errorCode: "MODULE_ERROR" };
+    } else {
+      // 上游跨页重复歌曲；服务端读模型已经按ID去重。
+      view = { ...view, status: "completed", songs: candidates(0, 38), hasMore: false, errorCode: null };
+    }
+    await route.fulfill({ status: 202, json: { searchId } });
+  });
+
+  const drawer = await setupSearchDrawer(page);
+  await drawer.getByRole("searchbox").fill("分页歌手");
+  await drawer.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(drawer.getByRole("option")).toHaveCount(20);
+  await expect(drawer.getByText("已加载 20 首候选歌曲")).toBeVisible();
+  expect(moreCalls).toBe(0);
+  const list = drawer.getByRole("listbox", { name: "搜索候选列表" });
+  await list.evaluate(element => { element.scrollTop = 260; });
+  const position = await list.evaluate(element => element.scrollTop);
+  await drawer.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect.poll(() => moreEntered).toBe(true);
+  await expect(drawer.getByRole("button", { name: "加载中…", exact: true })).toBeDisabled();
+  await expect(drawer.getByRole("option")).toHaveCount(20);
+  expect(await list.evaluate(element => element.scrollTop)).toBe(position);
+  releaseMore();
+  await expect(drawer.getByRole("button", { name: "重试加载更多" })).toBeVisible();
+  await expect(drawer.getByRole("option")).toHaveCount(20);
+  expect(await list.evaluate(element => element.scrollTop)).toBe(position);
+  expect(moreCalls).toBe(1);
+  await drawer.getByRole("button", { name: "重试加载更多" }).click();
+  await expect(drawer.getByRole("option")).toHaveCount(38);
+  await expect(drawer.getByText("已加载 38 首候选歌曲")).toBeVisible();
+  await expect(drawer.getByRole("option", { name: /分页歌曲18 / })).toHaveCount(1);
+  await expect(drawer.getByText("没有更多结果了。")).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "加载更多", exact: true })).toHaveCount(0);
+  expect(moreCalls).toBe(2);
+});
+
+test("新关键词提交立即清空候选和选择，旧分页晚到失败不会覆盖新轮结果", async ({ page }) => {
+  const oldId = v7();
+  const newId = v7();
+  let releaseOldPage!: () => void;
+  let oldPageStarted = false;
+  let releaseNewSearch!: () => void;
+  let newSearchStarted = false;
+  let oldQueryReads = 0;
+  await page.route(searchEndpoint, async route => {
+    const query = route.request().postDataJSON().query;
+    if (query === "新关键词") {
+      newSearchStarted = true;
+      await new Promise<void>(resolve => { releaseNewSearch = resolve; });
+    }
+    await route.fulfill({ status: 202, json: { searchId: query === "新关键词" ? newId : oldId } });
+  });
+  await page.route(`${searchEndpoint}/${oldId}`, route => {
+    oldQueryReads += 1;
+    return route.fulfill({ json: { searchId: oldId, status: "completed", songs: candidates(0), hasMore: true, errorCode: null } });
+  });
+  await page.route(`${searchEndpoint}/${newId}`, route => route.fulfill({ json: {
+    searchId: newId, status: "completed", songs: [{ id: "new-song", name: "新轮独有歌曲", artists: ["新歌手"], album: "" }], hasMore: false, errorCode: null
+  } }));
+  await page.route(`${searchEndpoint}/${oldId}/more`, async route => {
+    oldPageStarted = true;
+    await new Promise<void>(resolve => { releaseOldPage = resolve; });
+    await route.fulfill({ status: 409, json: { error: { code: "ACCOUNT_PAUSED" } } });
+  });
+  const drawer = await setupSearchDrawer(page);
+  const input = drawer.getByRole("searchbox");
+  const submit = drawer.getByRole("button", { name: "搜索", exact: true });
+  await input.fill("旧关键词");
+  await submit.click();
+  await expect(drawer.getByRole("option")).toHaveCount(20);
+  await drawer.getByRole("option").first().click();
+  await expect(drawer.getByRole("region", { name: "已选单曲" })).toBeVisible();
+  // 提交另一个关键词时，无论选中单曲还是旧候选均立即清空。
+  await input.fill("新关键词");
+  await submit.click();
+  await expect.poll(() => newSearchStarted).toBe(true);
+  await expect(drawer.getByRole("region", { name: "已选单曲" })).toHaveCount(0);
+  await expect(drawer.getByRole("option")).toHaveCount(0);
+  releaseNewSearch();
+  await expect(drawer.getByText("新轮独有歌曲")).toBeVisible();
+
+  // 再发起旧轮分页后立刻切换新轮，验证旧分页的晚到失败隔离。
+  await input.fill("旧关键词");
+  await submit.click();
+  await expect(drawer.getByRole("option")).toHaveCount(20);
+  await drawer.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect.poll(() => oldPageStarted).toBe(true);
+  await input.fill("新关键词");
+  newSearchStarted = false;
+  await submit.click();
+  await expect.poll(() => newSearchStarted).toBe(true);
+  await expect(drawer.getByRole("option")).toHaveCount(0);
+  releaseNewSearch();
+  await expect(drawer.getByText("新轮独有歌曲")).toBeVisible();
+  const readsBeforeOldReply = oldQueryReads;
+  const oldReply = page.waitForResponse(response => response.url().endsWith(`/search/${oldId}/more`));
+  releaseOldPage();
+  await oldReply;
+  await drawer.getByRole("option").click();
+  await expect(drawer.getByRole("region", { name: "已选单曲" })).toContainText("新轮独有歌曲");
+  await expect(drawer.getByRole("alert")).toHaveCount(0);
+  expect(oldQueryReads).toBe(readsBeforeOldReply);
 });

@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { z } from "zod";
 
 // Review anchor for the full audited source manifest; changing it requires reacceptance.
-export const VENDOR_MANIFEST_SHA256 = "538ca5b851f2c93628f922bb52f4715fdd4b480c0c6394cd3bd28a76c609c283";
+export const VENDOR_MANIFEST_SHA256 = "ded9bb7eff8d23a68e972680cb91f586a0eb219812bc9c76f2db2e84527085f4";
 const manifestSchema = z.strictObject({
   version: z.literal("4.40.1"),
   commit: z.literal("a8c781fd64faab17fedfd46e0615a2609307f163"),

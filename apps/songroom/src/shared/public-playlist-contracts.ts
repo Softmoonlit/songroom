@@ -23,7 +23,7 @@ export type PublicPlaylistSnapshot = z.infer<typeof publicPlaylistSnapshot>;
 
 export const publicPlaylistOperation = z.strictObject({
   id: uuidv7,
-  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED")]).nullable(),
+  errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP"])]).nullable(),
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
   step: z.enum(["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
   playlistId: z.string().nullable().optional(),
@@ -85,3 +85,33 @@ export const songRequestResponse = z.strictObject({
   operation: songRequestOperationView
 });
 export type SongRequestResponse = z.infer<typeof songRequestResponse>;
+
+export const playNextErrorCode = z.union([adapterErrorCodeSchema, z.enum([
+  "ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP"
+])]);
+export const playbackView = z.strictObject({
+  songId: z.string().min(1).nullable(),
+  checkedAt: z.number().int().positive().nullable(),
+  errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "UPSTREAM_QUEUE_FULL"])]).nullable()
+});
+export type PlaybackView = z.infer<typeof playbackView>;
+export const playNextCommand = z.strictObject({
+  idempotencyKey: uuidv7,
+  songId: z.string().min(1),
+  anchorSongId: z.string().min(1),
+  snapshotVersion: z.number().int().nonnegative()
+});
+export type PlayNextCommand = z.infer<typeof playNextCommand>;
+export const playNextOperationView = z.strictObject({
+  id: uuidv7,
+  roomId: uuidv7,
+  songId: z.string().min(1),
+  anchorSongId: z.string().min(1),
+  status: publicPlaylistOperation.shape.status,
+  step: z.enum(["ready", "identityVerified", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"]),
+  errorCode: playNextErrorCode.nullable(),
+  version: z.number().int().positive()
+});
+export type PlayNextOperationView = z.infer<typeof playNextOperationView>;
+export const playNextResponse = z.strictObject({ replay: z.boolean(), operation: playNextOperationView });
+export type PlayNextResponse = z.infer<typeof playNextResponse>;

@@ -75,6 +75,7 @@ describe("database lifecycle", () => {
       "operation",
       "playlist_snapshot",
       "playlist_track",
+      "public_play_next",
       "public_playlist_binding",
       "public_playlist_cleanup",
       "public_playlist_creation",

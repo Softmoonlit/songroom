@@ -174,7 +174,6 @@ export function InviteDialog({ open, onOpenChange, sessionId, roomId }: InviteDi
                   <div className="invite-code-display" aria-label={`邀请码 ${query.data.code}`}>
                     {query.data.code}
                   </div>
-                  <span className="invite-code-help">共 10 位字母与数字</span>
                 </div>
 
                 <div className="invite-modal-actions">

@@ -151,9 +151,6 @@ export function ApplicationsDrawer({ open, onClose, sessionId, roomId }: Applica
         <div className="drawer-header">
           <div className="drawer-header-text">
             <h2 className="drawer-title">加入申请审批</h2>
-            <p className="drawer-subtitle">
-              批准后室友将立即成为房间成员，参与点歌与互动
-            </p>
           </div>
           <button
             type="button"

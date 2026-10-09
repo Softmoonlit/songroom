@@ -109,7 +109,6 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
       </Link>
       <div className="page-heading">
         <h1 id="create-room-heading">创建房间</h1>
-        <p>创建后你将成为房主，可邀请室友共同点歌。</p>
       </div>
       {query.isPending ? (
         <p role="status">正在读取网易云身份…</p>

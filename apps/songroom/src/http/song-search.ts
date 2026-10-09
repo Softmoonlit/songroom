@@ -27,6 +27,17 @@ export function registerSongSearchRoutes(app: FastifyInstance, auth: SongRoomAut
     return reply.code(202).send(result);
   });
 
+  typed.post("/api/rooms/:roomId/search/:searchId/more", {
+    schema: {
+      params: searchParams,
+      response: { 202: searchInitiatedResponse }
+    }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const result = searchService.loadMore(principal.userId, request.params.roomId, request.params.searchId);
+    return reply.code(202).send(result);
+  });
+
   typed.get("/api/rooms/:roomId/search/:searchId", {
     schema: {
       params: searchParams,

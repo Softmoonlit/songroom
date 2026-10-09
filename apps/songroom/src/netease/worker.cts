@@ -62,7 +62,9 @@ async function invoke(message: WorkerInput): Promise<AdapterResult> {
     case "qrCreate": moduleName = "login_qr_create"; Object.assign(query, { key: input.key, qrimg: true, platform: "pc" }); break;
     case "qrCheck": moduleName = "login_qr_check"; query.key = input.key; break;
     case "identity": moduleName = "user_account"; break;
-    case "search": moduleName = "cloudsearch"; Object.assign(query, { keywords: input.query, type: 1, limit: 5, offset: 0 }); break;
+    case "search": moduleName = "cloudsearch"; Object.assign(query, { keywords: input.query, type: 1, limit: input.limit, offset: input.offset }); break;
+    case "recentSong": moduleName = "record_recent_song"; query.limit = 1; break;
+    case "trackOrder": moduleName = "song_order_update"; Object.assign(query, { pid: input.playlistId, ids: JSON.stringify(input.songIds) }); break;
     case "userPlaylists": moduleName = "user_playlist"; Object.assign(query, { uid: input.accountId, offset: input.offset, limit: input.limit }); break;
     case "playlistDetail": moduleName = "playlist_detail"; query.id = input.playlistId; break;
     case "songDetail": moduleName = "song_detail"; query.ids = input.songIds.join(","); break;
@@ -104,8 +106,23 @@ async function invoke(message: WorkerInput): Promise<AdapterResult> {
       }
       case "search": {
         const value = body.result;
-        if (!value || (!Array.isArray(value.songs) && value.songCount !== 0)) return error(operation, "PARSE_ERROR", raw);
-        data = { songs: (value.songs ?? []).slice(0, 5).map(song) };
+        if (!value || !Number.isSafeInteger(value.songCount) || value.songCount < 0 || (!Array.isArray(value.songs) && value.songCount !== 0)) return error(operation, "PARSE_ERROR", raw);
+        if (input.operation !== "search") throw Error("invalid operation");
+        data = { songs: (value.songs ?? []).slice(0, input.limit).map(song), songCount: value.songCount };
+        break;
+      }
+      case "recentSong": {
+        const records = body.data?.list;
+        if (!Array.isArray(records)) return error(operation, "PARSE_ERROR", raw);
+        if (records.length === 0) {
+          data = { songId: null };
+        } else {
+          const first = records[0];
+          if (first.resourceType !== "SONG") return error(operation, "PARSE_ERROR", raw);
+          const songId = upstreamId(first.resourceId);
+          if (songId !== upstreamId(first.data?.id)) return error(operation, "PARSE_ERROR", raw);
+          data = { songId };
+        }
         break;
       }
       case "userPlaylists": data = { playlists: body.playlist.map(playlist), more: body.more }; break;
@@ -119,7 +136,7 @@ async function invoke(message: WorkerInput): Promise<AdapterResult> {
       }
       case "songDetail": data = { songs: body.songs.map(song) }; break;
       case "playlistCreate": data = { playlistId: upstreamId(body.id ?? body.playlist?.id) }; break;
-      case "playlistDelete": case "trackAdd": case "trackRemove": data = { acknowledged: true }; break;
+      case "playlistDelete": case "trackAdd": case "trackRemove": case "trackOrder": data = { acknowledged: true }; break;
     }
     const result = { ok: true, data, httpStatus: raw.httpStatus ?? raw.status, businessCode: code };
     const checked = resultSchema(operation).safeParse(result);

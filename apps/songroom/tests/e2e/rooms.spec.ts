@@ -111,8 +111,8 @@ for (const width of [320, 900, 1440]) {
       route.fulfill({ json: roomMembersView.parse({ version: 1, members, allowedActions: memberListActions, disabledReasons: {} }) })
     );
     await page.goto(`/rooms/${roomId}`);
-    await expect(page.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
-    await expect(page.getByText("当前角色：房主", { exact: true })).toBeVisible();
+    await expect(page.getByText(`房间 · ${room.name}`, { exact: true })).toBeVisible();
+    await expect(page.getByText("房主", { exact: true })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "房间导航" });
     await expect(nav.getByRole("button")).toHaveText(["公共歌单", "房间成员", "房间设置"]);
     await expect(nav.getByRole("button", { name: "公共歌单" })).toHaveAttribute("aria-current", "page");
@@ -285,7 +285,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
   await expect(page.getByRole("region", { name: "成员详情" })).toBeVisible();
   await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
   await page.getByRole("link", { name: `进入房间：${other.name}` }).click();
-  await expect(page.getByText("当前角色：室友", { exact: true })).toBeVisible();
+  await expect(page.getByText("室友", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "公共歌单", exact: true })).toHaveAttribute(
     "aria-current",
     "page"
@@ -325,7 +325,7 @@ test("离开建房页后，晚到的建房成功不会跳转回旧房间", async
   release();
   await delivered;
   await expect(page).toHaveURL(/\/rooms$/);
-  await expect(page.getByRole("heading", { name: "房间测试账号 的房间" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "我的房间", exact: true })).toBeVisible();
 });
 
 test("建房输入越界不提交，授权失效后撤销身份确认并展示稳定中文提示", async ({ page }) => {
@@ -446,11 +446,11 @@ test("Ticket 02: 房间工作台双栏吸附居中布局与移动端紧凑顶部
   expect(sidebarStyles.width).toBeLessThanOrEqual(245);
 
   // 紧凑展示房间名、角色/昵称胶囊以及垂直导航项
-  await expect(sidebar.getByRole("heading", { name: room.name, exact: true })).toBeVisible();
+  await expect(sidebar.getByText(`房间 · ${room.name}`, { exact: true })).toBeVisible();
   const identityMeta = sidebar.locator(".room-identity-meta");
   await expect(identityMeta).toBeVisible();
-  await expect(identityMeta.getByText("当前角色：房主", { exact: true })).toBeVisible();
-  await expect(identityMeta.getByText("当前昵称：小林", { exact: true })).toBeVisible();
+  await expect(identityMeta.getByText("房主", { exact: true })).toBeVisible();
+  await expect(identityMeta.getByText("小林", { exact: true })).toBeVisible();
 
   const nav = sidebar.locator(".room-navigation");
   await expect(nav).toBeVisible();

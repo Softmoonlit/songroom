@@ -12,7 +12,7 @@ for (const width of [320, 900, 1440]) {
     await page.goto("/");
     await expect(page).toHaveTitle("SongRoom 点歌台");
     await expect(page.getByRole("heading", { name: "SongRoom 点歌台" })).toBeVisible();
-    await expect(page.getByText("专为宿舍打造的共享音乐点歌台")).toBeVisible();
+    await expect(page.getByText("专为宿舍打造的共享音乐点歌台")).toHaveCount(0);
     await expect(page.locator(".status-card")).toHaveCount(0);
     await expect(page.getByTitle("服务状态：运行正常")).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -68,7 +68,7 @@ test("登录后 Header 移除多余的“我的房间”链接，改用紧凑用
   // 4. 点击账号设置直达设置页
   await dropdown.getByRole("link", { name: "账号设置" }).click();
   await expect(page).toHaveURL(/\/account$/);
-  await expect(page.getByRole("heading", { name: "管理你的点歌台账号" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "账号设置", exact: true })).toBeVisible();
 
   // 5. 账号设置页无多余机制说教，具备模块化分区与清晰占位符
   await expect(page.getByText("账号称呼可以修改并允许重复")).toHaveCount(0);

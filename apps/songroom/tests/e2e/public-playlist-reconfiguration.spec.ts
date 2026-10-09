@@ -231,6 +231,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
           }
         };
       }
+      if (request.url.includes("play-record/song/list")) return { body: { code: 200, data: { list: [] } } };
       throw new Error(`Unexpected offline call: ${request.url}`);
     });
 
@@ -277,7 +278,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
         return (await res.json()).playlist?.id;
       }, { timeout: 15_000 }).toBe("cloud-pl-v1");
 
-      await expect(page.getByRole("heading", { name: "songroom-离线重建房-公共" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
       // 等待首次进入歌单的自动同步完成
       await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeEnabled();
       await expect(page.getByText("歌单已同步")).toBeVisible();
@@ -299,8 +300,8 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       }, { timeout: 15_000 }).toBe("cloud-pl-v2");
 
       // 5. 验证新歌单绑定生效
-      await expect(page.getByRole("heading", { name: "songroom-离线重建房-公共" })).toBeVisible();
-      await page.getByRole("button", { name: "歌单技术信息" }).click();
+      await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "房间设置", exact: true }).click();
       await expect(page.getByText("cloud-pl-v2")).toBeVisible();
       await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
     } finally {

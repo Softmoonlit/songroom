@@ -45,7 +45,7 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
   await ownerClient2.getByRole("button", { name: "登录" }).click();
   await expect(ownerClient2).toHaveURL(/\/rooms$/);
   await ownerClient2.goto(roomUrl);
-  await expect(ownerClient2.getByRole("heading", { level: 1 })).toHaveText("SSE测试音乐间");
+  await expect(ownerClient2.getByText("房间 · SSE测试音乐间", { exact: true })).toBeVisible();
 
   // 3. 验证同账号多端改名自动失效并更新：
   // 设备 1 改名
@@ -53,10 +53,10 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
   const nameInput = page.getByLabel("房间名称", { exact: true });
   await nameInput.fill("SSE新房名");
   await page.getByRole("button", { name: "保存房间名称", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("SSE新房名");
+  await expect(page.getByText("房间 · SSE新房名", { exact: true })).toBeVisible();
 
   // 设备 2 绝对不调用 reload()，通过 SSE 失效事件自动更新页面标题
-  await expect(ownerClient2.getByRole("heading", { level: 1 })).toHaveText("SSE新房名");
+  await expect(ownerClient2.getByText("房间 · SSE新房名", { exact: true })).toBeVisible();
 
   // 4. 模拟申请人设备：独立账号在 Context 3 中提交申请
   const guestContext = await browser.newContext({ viewport: { width: 320, height: 800 } });

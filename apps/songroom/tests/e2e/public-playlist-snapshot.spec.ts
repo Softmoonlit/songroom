@@ -56,7 +56,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
     await page.route(refreshEndpoint, route => route.fulfill({ json: initialSyncView }));
 
     await page.goto(`/rooms/${roomId}`);
-    await expect(page.getByRole("heading", { name: basePlaylist.name })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
     await expect(page.getByText("正在进行首次同步，请稍候…")).toBeVisible();
     await expect(page.getByText("歌单暂无歌曲")).toHaveCount(0);
 

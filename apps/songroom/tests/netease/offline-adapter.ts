@@ -7,13 +7,14 @@ import { fileURLToPath } from "node:url";
 import type { AdapterInput } from "../../src/netease/protocol.js";
 import { createNeteaseAdapter } from "../../src/netease/adapter.js";
 
-export type Outbound = { url: string; headers: Record<string, string>; timeout: number; data: string; report: { pid: number; cwd: string; env: Record<string, string>; mode: number; mask: number } };
+export type Outbound = { url: string; headers: Record<string, string>; timeout: number; data: string; payload: Record<string, unknown>; report: { pid: number; cwd: string; env: Record<string, string>; mode: number; mask: number } };
 export async function offlineAdapter(respond: (request: Outbound) => { body: unknown; status?: number; cookies?: string[]; disconnect?: boolean; redirect?: string }) {
   const outbound: Outbound[] = [];
   const server = createServer(async (request, response) => {
     let input = "";
     for await (const chunk of request) input += chunk;
-    const parsed = JSON.parse(request.headers["x-songroom-offline-contract"] as string) as Outbound;
+    const rawHeader = request.headers["x-songroom-offline-contract"] as string;
+    const parsed = JSON.parse(Buffer.from(rawHeader, "base64").toString("utf8")) as Outbound;
     parsed.data = input;
     outbound.push(parsed);
     const result = respond(parsed);
@@ -36,6 +37,9 @@ const load = Module._load;
 const http = require('node:http');
 const fs = require('node:fs');
 const originalRequest = http.request;
+let payload = {};
+let allPayloads = [];
+// Observe approved arguments while retaining the real encryption and request layers.
 // Real pinned Axios and its redirect dependency run against this loopback fixture.
 http.request = function(options, ...args) {
   const parsed = typeof options === 'string' || options instanceof URL ? new URL(options) : options;
@@ -44,11 +48,18 @@ http.request = function(options, ...args) {
 };
 require('node:https').request = () => { throw Error('OFFLINE_NETWORK_GUARD'); };
 Module._load = function(name, ...args) {
+  if (name === './crypto' && args[0]?.filename.endsWith('/util/request.js')) {
+    const encryption = load.call(this,name,...args);
+    return {...encryption,
+      weapi: value => { payload = structuredClone(value); return encryption.weapi(value); },
+      eapi: (uri,value) => { payload = structuredClone(value); return encryption.eapi(uri,value); }
+    };
+  }
   if (name === 'axios') {
     const realAxios = load.call(this,name,...args).default;
     const transport = settings => {
-      const report = {url:settings.url,headers:settings.headers,timeout:settings.timeout,report:{pid:process.pid,cwd:process.cwd(),env:process.env,mode:fs.statSync(process.cwd()).mode&0o777,mask:process.umask()}};
-      return realAxios({...settings,url:'http://127.0.0.1:${address.port}/rpc',headers:{...settings.headers,'x-songroom-offline-contract':JSON.stringify(report)}});
+      const report = {url:settings.url,headers:settings.headers,timeout:settings.timeout,payload,report:{pid:process.pid,cwd:process.cwd(),env:process.env,mode:fs.statSync(process.cwd()).mode&0o777,mask:process.umask()}};
+      return realAxios({...settings,url:'http://127.0.0.1:${address.port}/rpc',headers:{...settings.headers,'x-songroom-offline-contract':Buffer.from(JSON.stringify(report)).toString('base64')}});
     };
     transport.get=()=>Promise.reject(Error('OFFLINE_NETWORK_GUARD'));
     return {default:transport};

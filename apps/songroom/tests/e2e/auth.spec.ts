@@ -9,11 +9,11 @@ test("注册后恢复房间列表、管理账号并退出当前设备", async ({
   await page.getByLabel("密码").fill("correct horse battery staple");
   await page.getByRole("button", { name: "注册并进入房间列表" }).click();
   await expect(page).toHaveURL(/\/rooms$/);
-  await expect(page.getByRole("heading", { name: "浏览器测试称呼 的房间" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "我的房间", exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.goto("/account");
-  await expect(page.getByRole("heading", { name: "管理你的点歌台账号" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "账号设置", exact: true })).toBeVisible();
   await page.getByLabel("称呼").fill("新的浏览器称呼");
   await page.getByRole("button", { name: "保存称呼" }).click();
   await expect(page.getByRole("status")).toContainText("账号称呼已更新");

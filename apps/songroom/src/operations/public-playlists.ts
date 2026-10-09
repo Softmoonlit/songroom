@@ -1,4 +1,7 @@
 import { v7 } from "uuid";
+import { PublicPlayback } from "./public-playback.js";
+import { PublicPlayNext } from "./public-play-next.js";
+import type { PlayNextCommand, PlayNextResponse, PlayNextOperationView, PlaybackView } from "../shared/public-playlist-contracts.js";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
 import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
@@ -22,6 +25,19 @@ const authorizationErrors = new Set(["AUTH_UNAVAILABLE", "ACCOUNT_EMPTY", "ACCOU
 export class PublicPlaylists {
   readonly #inFlightRefreshes = new Map<string, Promise<void>>();
   readonly #checkTimers = new Map<string, NodeJS.Timeout>();
+  readonly playback: PublicPlayback;
+  readonly playNextService: PublicPlayNext;
+  #readClock = 0;
+
+  #beginRead(): number {
+    const persisted = this.database.select({ value: sql<number>`coalesce(max(${playlistSnapshot.lastReadStartedAt}), 0)` }).from(playlistSnapshot).get()!.value;
+    this.#readClock = Math.max(this.now(), this.#readClock + 1, persisted + 1);
+    return this.#readClock;
+  }
+
+  readPlayback(userId: string, roomId: string, force = false): Promise<PlaybackView> { return this.playback.read(userId, roomId, force); }
+  playNext(userId: string, roomId: string, input: PlayNextCommand): PlayNextResponse { return this.playNextService.accept(userId, roomId, input); }
+  readPlayNextOperation(userId: string, roomId: string, id: string): PlayNextOperationView { return this.playNextService.read(userId, roomId, id); }
 
   constructor(
     readonly database: AppDatabase,
@@ -31,6 +47,11 @@ export class PublicPlaylists {
     readonly eventStream: EventStreamService,
     readonly now: () => number = () => Date.now()
   ) {
+    this.playback = new PublicPlayback(database, adapter, vault, scheduler, now);
+    this.playNextService = new PublicPlayNext(database, adapter, vault, scheduler, eventStream, now,
+      () => this.#beginRead(),
+      (row, detail, data, startedAt) => this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, startedAt, { id: row.authorizationId!, generation: row.generation! })
+    );
     this.scheduler.register("createPublicPlaylist", {
       claim: row => this.#claim(row),
       execute: row => this.#execute(row),
@@ -206,7 +227,8 @@ export class PublicPlaylists {
     const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
     if (!binding) throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单");
 
-    const key = `${binding.accountId}:${binding.playlistId}`;
+    const auth = this.#authorization(current.ownerUserId);
+    const key = `${binding.accountId}:${binding.playlistId}:${binding.generation}:${auth?.id}:${auth?.generation}`;
     let task = this.#inFlightRefreshes.get(key);
     if (!task) {
       task = this.#executeRefresh(current.ownerUserId, binding.accountId, binding.playlistId, binding.generation)
@@ -219,9 +241,12 @@ export class PublicPlaylists {
     return this.#view(userId, roomId);
   }
 
-  #recordRefreshError(accountId: string, playlistId: string, errorCode: AdapterErrorCode | "ACCOUNT_PAUSED"): void {
+  #recordRefreshError(accountId: string, playlistId: string, errorCode: AdapterErrorCode | "ACCOUNT_PAUSED", readStartedAt?: number): void {
     const affected = this.database.transaction(tx => {
       const now = this.now();
+      const existing = tx.select({ lastReadStartedAt: playlistSnapshot.lastReadStartedAt }).from(playlistSnapshot)
+        .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId))).get();
+      if (readStartedAt !== undefined && existing && existing.lastReadStartedAt > readStartedAt) return [];
       tx.insert(playlistSnapshot).values({
         accountId,
         playlistId,
@@ -269,7 +294,7 @@ export class PublicPlaylists {
       return;
     }
 
-    const readStartedAt = this.now();
+    const readStartedAt = this.#beginRead();
     let result: Awaited<ReturnType<NeteaseAdapter["call"]>>;
     try {
       result = await this.scheduler.executeMemoryTask(accountId, async () => {
@@ -277,10 +302,10 @@ export class PublicPlaylists {
       });
     } catch (err) {
       if (err instanceof BusinessError && err.code === "ACCOUNT_PAUSED") {
-        this.#recordRefreshError(accountId, playlistId, "ACCOUNT_PAUSED");
+        this.#recordRefreshError(accountId, playlistId, "ACCOUNT_PAUSED", readStartedAt);
         return;
       }
-      this.#recordRefreshError(accountId, playlistId, "MODULE_ERROR");
+      this.#recordRefreshError(accountId, playlistId, "MODULE_ERROR", readStartedAt);
       return;
     }
 
@@ -295,7 +320,7 @@ export class PublicPlaylists {
           return;
         }
       }
-      this.#recordRefreshError(accountId, playlistId, result.error.code);
+      this.#recordRefreshError(accountId, playlistId, result.error.code, readStartedAt);
       return;
     }
 
@@ -306,10 +331,10 @@ export class PublicPlaylists {
         this.#invalidateBinding(accountId, playlistId, bindingGeneration);
         return;
       }
-      this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION");
+      this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION", readStartedAt);
       return;
     }
-    this.#commitSnapshot(accountId, playlistId, bindingGeneration, data, readStartedAt);
+    this.#commitSnapshot(accountId, playlistId, bindingGeneration, data, readStartedAt, { id: auth.id, generation: auth.generation });
   }
 
   async #verifyTargetDeleted(cookie: string, accountId: string, playlistId: string): Promise<boolean> {
@@ -419,20 +444,21 @@ export class PublicPlaylists {
     playlistId: string,
     generation: number,
     data: { playlist: { id: string; name: string; status: number }; songIds: string[]; songs: Array<{ id: string; name: string; artists: string[]; album: string }> },
-    readStartedAt: number
+    readStartedAt: number,
+    authorizationScope?: { id: string; generation: number }
   ): boolean {
-    if (data.playlist.status !== 0) {
-      this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION");
+    if (data.playlist.id !== playlistId || data.playlist.status !== 0) {
+      this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION", readStartedAt);
       return false;
     }
     if (data.songIds.length !== data.songs.length) {
-      this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR");
+      this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR", readStartedAt);
       return false;
     }
     for (let i = 0; i < data.songIds.length; i++) {
       const song = data.songs[i];
       if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || typeof song.album !== "string") {
-        this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR");
+        this.#recordRefreshError(accountId, playlistId, "PARSE_ERROR", readStartedAt);
         return false;
       }
     }
@@ -449,14 +475,15 @@ export class PublicPlaylists {
         const r = tx.select().from(room).where(eq(room.id, b.roomId)).get();
         if (!r) return false;
         const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, r.ownerUserId)).get();
-        return auth && auth.status === "active" && auth.generation === generation;
+        return b.generation === generation && auth && auth.status === "active" && auth.accountId === accountId
+          && (!authorizationScope || (auth.id === authorizationScope.id && auth.generation === authorizationScope.generation));
       });
       if (!activeBindings.length) return { roomsInfo: [], confirmedOps: [] };
 
       const currentSnapshot = tx.select().from(playlistSnapshot)
         .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId))).get();
 
-      if (currentSnapshot?.syncedAt && currentSnapshot.syncedAt > readStartedAt) {
+      if (currentSnapshot && currentSnapshot.lastReadStartedAt > readStartedAt) {
         // 较新的读取已提交，不被旧读取覆盖
         return { roomsInfo: [], confirmedOps: [] };
       }
@@ -468,6 +495,7 @@ export class PublicPlaylists {
         accountId,
         playlistId,
         snapshotVersion: nextVersion,
+        lastReadStartedAt: readStartedAt,
         syncedAt: now,
         lastErrorCode: null,
         createdAt: now,
@@ -476,12 +504,16 @@ export class PublicPlaylists {
         target: [playlistSnapshot.accountId, playlistSnapshot.playlistId],
         set: {
           snapshotVersion: nextVersion,
+          lastReadStartedAt: readStartedAt,
           syncedAt: now,
           lastErrorCode: null,
           updatedAt: now
         }
       }).run();
 
+      for (const binding of activeBindings) {
+        tx.update(publicPlaylistBinding).set({ name: data.playlist.name }).where(and(eq(publicPlaylistBinding.roomId, binding.roomId), eq(publicPlaylistBinding.generation, generation))).run();
+      }
       tx.delete(playlistTrack).where(and(eq(playlistTrack.accountId, accountId), eq(playlistTrack.playlistId, playlistId))).run();
 
       const insertTrack = this.database.$client.prepare(
@@ -592,6 +624,8 @@ export class PublicPlaylists {
   }
 
   onOwnerRevoked(userId: string): void {
+    this.playback.invalidate(userId);
+    this.playNextService.onOwnerRevoked(userId);
     const notifyRooms: Array<{ roomId: string; version: number }> = [];
     const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
 
@@ -643,6 +677,8 @@ export class PublicPlaylists {
   }
 
   onReauthorized(userId: string, authId: string, accountId: string, generation: number): void {
+    this.playback.invalidate(userId);
+    this.playNextService.onReauthorized(userId, authId, accountId, generation);
     const notifyRooms: Array<{ roomId: string; version: number }> = [];
     const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
     const checksToSchedule: Array<{ opId: string; delayMs: number }> = [];
@@ -914,6 +950,7 @@ export class PublicPlaylists {
     }
   }
   stop(): void {
+    this.playNextService.stop();
     for (const timer of this.#checkTimers.values()) clearTimeout(timer);
     this.#checkTimers.clear();
     this.scheduler.stop();
@@ -921,6 +958,7 @@ export class PublicPlaylists {
   settle(): Promise<void> { return this.scheduler.settle(); }
 
   triggerDueChecks(): void {
+    this.playNextService.triggerDueChecks();
     const rows = this.database.select().from(publicSongRequest)
       .where(and(
         eq(publicSongRequest.step, "unknown"),
@@ -1461,6 +1499,7 @@ export class PublicPlaylists {
   }
 
   #hasTargetConflict(accountId: string, playlistId: string): boolean {
+    if (this.playNextService.hasTargetLock(accountId, playlistId)) return true;
     const snap = this.database.select({ code: playlistSnapshot.lastErrorCode })
       .from(playlistSnapshot)
       .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId)))
@@ -1713,7 +1752,7 @@ export class PublicPlaylists {
 
     const currentRound = detail.checkRound;
     try {
-      const readStartedAt = this.now();
+      const readStartedAt = this.#beginRead();
       const detailResult = await this.scheduler.executeMemoryTask(row.accountId!, async () => {
         return this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.playlistId });
       });
@@ -1732,7 +1771,7 @@ export class PublicPlaylists {
         return;
       }
 
-      const committed = this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt);
+      const committed = this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt, { id: auth.id, generation: auth.generation });
       if (!committed) {
         this.#advanceCheckRound(row, detail, currentRound);
         return;
@@ -1838,7 +1877,7 @@ export class PublicPlaylists {
       }
 
       if (detail.step === "confirming" || this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get()?.step === "confirming") {
-        const readStartedAt = this.now();
+        const readStartedAt = this.#beginRead();
         const detailResult = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.playlistId });
         if (!detailResult.ok) {
           if (detailResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
@@ -1856,7 +1895,7 @@ export class PublicPlaylists {
         }
 
         // 调用统一的快照提交，严格以事务递增单调版本并清理已移除歌曲标签
-        const committed = this.#commitSnapshot(binding.accountId, binding.playlistId, binding.generation, data, readStartedAt);
+        const committed = this.#commitSnapshot(binding.accountId, binding.playlistId, binding.generation, data, readStartedAt, { id: auth.id, generation: auth.generation });
         if (!committed) {
           this.#transitionToAwaitingConfirmation(row, "PARSE_ERROR");
           return;
@@ -1883,8 +1922,8 @@ export class PublicPlaylists {
   terminateMemberInTx(tx: any, roomId: string, userId: string): void {
     const ops = tx.select().from(operation)
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
-
     for (const op of ops) {
+      if (op.kind === "playNext") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
@@ -2038,6 +2077,7 @@ export class PublicPlaylists {
   }
 
   terminateRoomInTx(tx: any, roomId: string, ownerUserId: string): { cleanupId: string | null } {
+    this.playNextService.terminateRoomInTx(tx, roomId);
     let target: { accountId: string; playlistId: string; creationOperationId: string } | null = null;
     const binding = tx.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
     if (binding) {
