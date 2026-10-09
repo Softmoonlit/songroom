@@ -29,3 +29,11 @@
 1. 不修改任何服务端 API、数据契约、状态机或认证逻辑。
 2. 不重构全站大容器（如 `.rooms-page` 820px 基线或 `.main-content` 1180px/1280px 基线）。
 3. 不更改平台授权的业务收口规则（未绑定网易云账号时依然保持通栏提示并阻断建房）。
+
+## 工单落地状态 (Resolved)
+
+- [x] **01-compact-identity-key-value-grid**: 全站账号与成员身份键值框双列紧凑栅格重构 (commit: `654f4b1`)
+- [x] **02-room-creation-desktop-grid-system**: 创建房间页 2 列栅格体系重构 (commit: `bcf2e9d`)
+- [x] **03-room-settings-basic-info-dual-grid**: 房间设置面板基本信息修改双列网格重构 (commit: `6c325d4`)
+- [x] **04-responsive-viewport-and-a11y-verification**: 多视口响应式表现与无障碍回归验证 (commit: `067c302`)
+
