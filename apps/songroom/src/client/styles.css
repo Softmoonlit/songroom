@@ -1602,9 +1602,9 @@ h1 {
 }
 
 .playback-source-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .playback-source-card {
@@ -1616,6 +1616,8 @@ h1 {
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-sizing: border-box;
+  height: 100%;
 }
 
 .playback-source-card.selectable {
@@ -1638,6 +1640,11 @@ h1 {
   border: 1px dashed var(--border-medium);
   opacity: 0.75;
   cursor: not-allowed;
+}
+
+.playback-source-card.placeholder .platform-placeholder-hint {
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 .playback-source-radio-col {
@@ -1689,6 +1696,24 @@ h1 {
   margin: 0;
   color: var(--text-dim);
   font-size: var(--font-xs);
+}
+
+.room-create-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 700px) {
+  .playback-source-list {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .room-create-fields {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
 }
 
 .room-query-error {

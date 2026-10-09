@@ -203,28 +203,30 @@ export function RoomCreatePage({ sessionId }: { sessionId: string }) {
 
           {allowed && (
             <>
-              <label>
-                房间名称
-                <input
-                  value={name}
-                  disabled={mutation.isPending}
-                  placeholder="输入房间名称（1 到 16 个字符）"
-                  onChange={event => setName(event.target.value)}
-                  required
-                  autoComplete="off"
-                />
-              </label>
-              <label>
-                我的房间昵称
-                <input
-                  value={nickname}
-                  disabled={mutation.isPending}
-                  placeholder="输入你在房间内的昵称（1 到 12 个字符）"
-                  onChange={event => setNickname(event.target.value)}
-                  required
-                  autoComplete="off"
-                />
-              </label>
+              <div className="room-create-fields">
+                <label>
+                  房间名称
+                  <input
+                    value={name}
+                    disabled={mutation.isPending}
+                    placeholder="输入房间名称（1 到 16 个字符）"
+                    onChange={event => setName(event.target.value)}
+                    required
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  我的房间昵称
+                  <input
+                    value={nickname}
+                    disabled={mutation.isPending}
+                    placeholder="输入你在房间内的昵称（1 到 12 个字符）"
+                    onChange={event => setNickname(event.target.value)}
+                    required
+                    autoComplete="off"
+                  />
+                </label>
+              </div>
               <button
                 className="primary-button"
                 type="submit"
