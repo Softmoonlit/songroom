@@ -296,4 +296,66 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
       .analyze();
     expect(roomSettingsAxe.violations).toEqual([]);
   });
+
+  test("桌面 1920*1080 宽屏双列栅格对齐与移动端平滑折叠表现", async ({ page }) => {
+    await setupMocks(page, "owner");
+
+    // 1. 1920*1080 宽屏视口验证
+    await page.setViewportSize({ width: 1920, height: 1080 });
+
+    // 1.1 创建房间页桌面双列并排
+    await page.goto("/rooms/new");
+    const neteaseCard = page.locator(".playback-source-card.selectable");
+    const qqCard = page.locator(".playback-source-card.placeholder");
+    const neteaseBox = await neteaseCard.boundingBox();
+    const qqBox = await qqCard.boundingBox();
+    expect(neteaseBox).not.toBeNull();
+    expect(qqBox).not.toBeNull();
+    // 宽屏下两张平台磁贴水平并排（顶部 y 坐标严格一致，允许1px亚像素舍入误差）
+    expect(Math.abs(neteaseBox!.y - qqBox!.y)).toBeLessThanOrEqual(1.5);
+    // 高度严格一致（等高拉伸）
+    expect(Math.abs(neteaseBox!.height - qqBox!.height)).toBeLessThanOrEqual(1.5);
+
+    // 房间名称与房主昵称输入框桌面双列并排
+    const nameInput = page.getByLabel("房间名称");
+    const nicknameInput = page.getByLabel("我的房间昵称");
+    const nameBox = await nameInput.boundingBox();
+    const nicknameBox = await nicknameInput.boundingBox();
+    expect(nameBox).not.toBeNull();
+    expect(nicknameBox).not.toBeNull();
+    expect(Math.abs(nameBox!.y - nicknameBox!.y)).toBeLessThanOrEqual(1.5);
+
+    // 1.2 房间设置页基本信息桌面双列并排
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "房间设置" }).click();
+    const settingsCards = page.locator(".room-settings-cards form");
+    await expect(settingsCards).toHaveCount(2);
+    const firstSettingBox = await settingsCards.nth(0).boundingBox();
+    const secondSettingBox = await settingsCards.nth(1).boundingBox();
+    expect(firstSettingBox).not.toBeNull();
+    expect(secondSettingBox).not.toBeNull();
+    expect(Math.abs(firstSettingBox!.y - secondSettingBox!.y)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(firstSettingBox!.height - secondSettingBox!.height)).toBeLessThanOrEqual(1.5);
+
+    // 2. 375*667 移动端视口验证
+    await page.setViewportSize({ width: 375, height: 667 });
+
+    // 2.1 创建房间页在移动端折叠为单列
+    await page.goto("/rooms/new");
+    const mobileNeteaseBox = await page.locator(".playback-source-card.selectable").boundingBox();
+    const mobileQqBox = await page.locator(".playback-source-card.placeholder").boundingBox();
+    expect(mobileQqBox!.y).toBeGreaterThan(mobileNeteaseBox!.y + mobileNeteaseBox!.height - 1);
+
+    const mobileNameBox = await page.getByLabel("房间名称").boundingBox();
+    const mobileNicknameBox = await page.getByLabel("我的房间昵称").boundingBox();
+    expect(mobileNicknameBox!.y).toBeGreaterThan(mobileNameBox!.y + mobileNameBox!.height - 1);
+
+    // 2.2 房间设置页在移动端折叠为单列
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "房间设置" }).click();
+    const mobileSettingCards = page.locator(".room-settings-cards form");
+    const mFirstBox = await mobileSettingCards.nth(0).boundingBox();
+    const mSecondBox = await mobileSettingCards.nth(1).boundingBox();
+    expect(mSecondBox!.y).toBeGreaterThan(mFirstBox!.y + mFirstBox!.height - 1);
+  });
 });
