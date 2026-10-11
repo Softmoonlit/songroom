@@ -163,14 +163,21 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
   return (
     <section className={`room-workspace${keyboardOpen ? " keyboard-open" : ""}`}>
       <aside className="room-context">
-        <Link className="back-link" to="/rooms">
-          <ArrowLeft size={16} aria-hidden="true" />
-          返回房间列表
-        </Link>
-        <p className="room-title">房间 · {room.name}</p>
-        <div className="room-identity-meta">
-          <span className="room-meta-pill">{roleLabels[room.role]}</span>
-          <span className="room-meta-pill">{room.nickname}</span>
+        <div className="room-context-header">
+          <div className="room-context-info">
+            <Link className="back-link" to="/rooms">
+              <ArrowLeft size={16} aria-hidden="true" />
+              返回房间列表
+            </Link>
+            <p className="room-title">
+              <span className="room-prefix">房间：</span>
+              <span className="room-name">{room.name}</span>
+            </p>
+          </div>
+          <div className="room-identity-meta">
+            <span className="room-meta-pill">{roleLabels[room.role]}</span>
+            <span className="room-meta-pill">{room.nickname}</span>
+          </div>
         </div>
         <nav className="room-navigation" aria-label="房间导航">
           <button

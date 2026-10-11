@@ -118,7 +118,7 @@ test("房名和昵称修改后同步聚合版本，不重复读取已写入的�
       .toEqual({ shell: [1], members: Array.from({ length: version }, (_, index) => index + 1), invite: [], applications: Array.from({ length: version }, (_, index) => index + 1) });
     await page.getByRole("button", { name: "关闭审批抽屉" }).click();
   }
-  await expect(page.getByText("房间 · 新音乐间", { exact: true })).toBeVisible();
+  await expect(page.getByText("房间：新音乐间", { exact: true })).toBeVisible();
   await expect(page.locator(".room-meta-pill").filter({ hasText: "é" })).toBeVisible();
   await page.getByRole("button", { name: "查看成员：é", exact: true }).click();
   await expect(page.getByRole("region", { name: "成员详情" })).toContainText("é");

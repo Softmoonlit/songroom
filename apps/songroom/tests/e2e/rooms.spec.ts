@@ -111,7 +111,7 @@ for (const width of [320, 900, 1440]) {
       route.fulfill({ json: roomMembersView.parse({ version: 1, members, allowedActions: memberListActions, disabledReasons: {} }) })
     );
     await page.goto(`/rooms/${roomId}`);
-    await expect(page.getByText(`房间 · ${room.name}`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`房间：${room.name}`, { exact: true })).toBeVisible();
     await expect(page.getByText("房主", { exact: true })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "房间导航" });
     await expect(nav.getByRole("button")).toHaveText(["公共歌单", "房间成员", "房间设置"]);
@@ -446,7 +446,7 @@ test("Ticket 02: 房间工作台双栏吸附居中布局与移动端紧凑顶部
   expect(sidebarStyles.width).toBeLessThanOrEqual(245);
 
   // 紧凑展示房间名、角色/昵称胶囊以及垂直导航项
-  await expect(sidebar.getByText(`房间 · ${room.name}`, { exact: true })).toBeVisible();
+  await expect(sidebar.getByText(`房间：${room.name}`, { exact: true })).toBeVisible();
   const identityMeta = sidebar.locator(".room-identity-meta");
   await expect(identityMeta).toBeVisible();
   await expect(identityMeta.getByText("房主", { exact: true })).toBeVisible();
