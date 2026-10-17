@@ -107,12 +107,8 @@ function TrackList({ tracks, active, highlight, onHighlightEnd, playback, isFilt
   return <div className="playlist-tracks-wrapper">
     <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
       <span className="tracks-header-col col-index">#</span>
-      <span className="tracks-header-col col-title">
-        <span className="col-title-desktop">歌曲与歌手</span>
-        <span className="col-title-mobile">歌曲 / 点歌人</span>
-      </span>
+      <span className="tracks-header-col col-title">歌曲与歌手</span>
       <span className="tracks-header-col col-requester">点歌人</span>
-      <span className="tracks-header-col col-next">播放安排</span>
     </div>
     {tracks.length === 0 && isFilterActive ? (
       <div className="playlist-tracks-empty-filter" role="status">
@@ -145,9 +141,6 @@ function TrackList({ tracks, active, highlight, onHighlightEnd, playback, isFilt
             <div className="track-requesters-side" aria-label={track.requesters.length ? `点歌人：${track.requesters.join("、")}` : undefined}>
               {track.requesters.map(requester => <span key={requester} className="requester-capsule" title={`点歌人：${requester}`} aria-label={`点歌人：${requester}`}>{requester}</span>)}
             </div>
-            <button type="button" className="secondary-button play-next-button"
-              disabled={playback.nextBlocked || !playback.anchorSongId || playing || track.position === playback.anchorIndex + 1}
-              aria-label={`下一首播放：${track.name}`} onClick={() => playback.playNext(track.songId)}>下一首播放</button>
           </div>;
         })}
       </div>

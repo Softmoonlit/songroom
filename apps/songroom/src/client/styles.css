@@ -4780,7 +4780,7 @@ h1 {
 .playlist-tracks-header-bar,
 .track-item {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) minmax(0, 160px) 104px;
+  grid-template-columns: 2rem minmax(0, 1fr) minmax(0, 160px);
   gap: 12px;
 }
 .track-item {
@@ -4808,12 +4808,7 @@ h1 {
 .playback-indicator i:nth-child(2) { animation-delay: -350ms; }
 .playback-indicator i:nth-child(3) { animation-delay: -650ms; }
 @keyframes playbackBars { from { transform: scaleY(.35); } to { transform: scaleY(1); } }
-.col-title-desktop { display: inline; }
-.col-title-mobile { display: none; }
-
 @media (max-width: 768px) {
-  .col-title-desktop { display: none; }
-  .col-title-mobile { display: inline; }
   .public-playlist-title-heading {
     position: absolute;
     width: 1px;
@@ -4826,14 +4821,14 @@ h1 {
     border: 0;
   }
   .playlist-tracks-header-bar, .track-item {
-    grid-template-columns: 1.5rem minmax(0, 1fr) 96px;
+    grid-template-columns: 1.5rem minmax(0, 1fr) clamp(72px, 24vw, 104px);
     gap: 6px 8px;
   }
+  .playlist-tracks-header-bar { padding-inline: 10px; }
   .track-item { min-height: 104px; padding: 12px 10px; }
   .track-info { grid-column: 2; }
   .play-next-button { grid-column: 3; grid-row: 1 / span 2; }
-  .track-requesters-side { grid-column: 2; max-width: none; justify-content: flex-start; }
-  .tracks-header-col.col-requester { display: none; }
+  .track-requesters-side { grid-column: 3; max-width: none; justify-content: flex-start; }
   .track-index { width: 1.5rem; }
   .playlist-header {
     display: flex;

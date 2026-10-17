@@ -39,13 +39,11 @@ for (const width of [320, 390, 1440]) {
     const headingBox = await heading.boundingBox();
     if (width <= 768) {
       expect(headingBox!.width).toBeLessThanOrEqual(1);
-      await expect(page.locator(".col-title-mobile")).toBeVisible();
-      await expect(page.locator(".col-title-desktop")).toBeHidden();
     } else {
       expect(headingBox!.width).toBeGreaterThan(10);
-      await expect(page.locator(".col-title-desktop")).toBeVisible();
-      await expect(page.locator(".col-title-mobile")).toBeHidden();
     }
+    await expect(page.locator(".tracks-header-col.col-title")).toHaveText("歌曲与歌手");
+    await expect(page.locator(".tracks-header-col.col-requester")).toBeVisible();
     await expect(page.getByText("房间：343", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "歌单技术信息" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "云端新名称" })).toHaveCount(0);
@@ -57,8 +55,8 @@ for (const width of [320, 390, 1440]) {
     const target = page.locator('[data-song-id="401"]');
     await expect(target).toBeInViewport();
     await expect(target.locator(".playback-indicator")).toBeVisible();
-    await expect(target.getByRole("button", { name: "下一首播放：歌曲 401" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "下一首播放：歌曲 402", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
+    await expect(page.getByText("播放安排", { exact: true })).toHaveCount(0);
     const bounds = await target.boundingBox();
     expect(bounds!.y).toBeGreaterThanOrEqual(0);
     expect(bounds!.y + bounds!.height).toBeLessThan(740);
@@ -71,8 +69,38 @@ for (const width of [320, 390, 1440]) {
   });
 }
 
-test("下一首命令保留原锚点与版本，网络不明后同键确认且禁用其他写入", async ({ page }) => {
+for (const width of [320, 390]) {
+  test(`${width}px: 点歌人独立列对齐，多人长昵称换行且不挤出视口`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 820 });
+    await setup(page);
+    const requesters = ["这是一个比较长的室友昵称", "VeryLongRequesterNameWithoutSpaces", "小林"];
+    await page.route(`**${root}/public-playlist`, route => route.fulfill({ json: {
+      ...view,
+      snapshot: { ...view.snapshot!, tracks: [{ ...tracks[0], name: "这是一首名字很长需要省略展示的歌曲", requesters }, ...tracks.slice(1)] }
+    } }));
+    await page.goto(`/rooms/${roomId}`);
+    const track = page.locator('[data-song-id="1"]');
+    await expect(track.locator(".requester-capsule")).toHaveText(requesters);
+    const info = await track.locator(".track-info").boundingBox();
+    const requesterColumn = await track.locator(".track-requesters-side").boundingBox();
+    const header = await page.locator(".tracks-header-col.col-requester").boundingBox();
+    expect(requesterColumn!.x).toBeGreaterThan(info!.x + info!.width);
+    expect(requesterColumn!.x).toBeCloseTo(header!.x, 0);
+    expect(requesterColumn!.x + requesterColumn!.width).toBeLessThanOrEqual(width);
+    for (const tag of await track.locator(".requester-capsule").all()) {
+      const bounds = await tag.boundingBox();
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(requesterColumn!.x + requesterColumn!.width + 1);
+    }
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+test("不展示下一首按钮，已有未确认命令仍可同键查询和恢复", async ({ page }) => {
   await setup(page, "1");
+  const savedCommand = { idempotencyKey: v7(), songId: "4", anchorSongId: "1", snapshotVersion: 7 };
+  await page.addInitScript(({ key, command }) => {
+    if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ command, operationId: null }));
+  }, { key: `songroom:play-next:ui-session:${roomId}`, command: savedCommand });
   const commands: unknown[] = [];
   await page.route(`**${root}/public-playlist/play-next`, async route => {
     const command = route.request().postDataJSON();
@@ -87,17 +115,20 @@ test("下一首命令保留原锚点与版本，网络不明后同键确认且�
     id: operationId, roomId, songId: "4", anchorSongId: "1", status: "awaitingConfirmation", step: "unknown", errorCode: null, version: 2
   } }));
   await page.goto(`/rooms/${roomId}`);
-  await page.getByRole("button", { name: "下一首播放：歌曲 4", exact: true }).click();
-  await expect(page.getByText(/提交结果待确认/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "下一首播放：歌曲 5", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "查询下一首播放结果" })).toBeVisible();
   await expect(page.getByRole("button", { name: "+ 点歌", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "查询下一首播放结果" }).click();
+  await expect(page.getByText(/提交结果待确认/)).toBeVisible();
   await page.getByRole("button", { name: "查询下一首播放结果" }).click();
   await expect(page.getByText(/下一首播放结果待确认/)).toBeVisible();
   expect(commands).toHaveLength(2);
-  expect(commands[1]).toEqual(commands[0]);
-  expect(commands[0]).toMatchObject({ songId: "4", anchorSongId: "1", snapshotVersion: 7 });
+  expect(commands[1]).toEqual(savedCommand);
+  expect(commands[0]).toEqual(savedCommand);
   await page.reload();
-  await expect(page.getByRole("button", { name: "下一首播放：歌曲 5", exact: true })).toBeDisabled();
+  await expect(page.getByText(/下一首播放结果待确认/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "+ 点歌", exact: true })).toBeDisabled();
   expect(commands).toHaveLength(2);
 });
 
@@ -110,7 +141,7 @@ test("无锚点与播放读取失败保留禁用定位；手动同步同时刷�
   });
   await page.goto(`/rooms/${roomId}`);
   await expect(page.getByRole("button", { name: "定位到正在播放" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "下一首播放：歌曲 4", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await page.getByRole("button", { name: "同步歌单", exact: true }).click();
   await expect(page.getByText("播放指示读取失败")).toBeVisible();
   expect(playbackRefreshes).toBe(1);
@@ -169,16 +200,15 @@ test("歌单即时搜索与点歌人下拉筛选、保持绝对序号及复合�
   await searchInput.fill("专用专辑名");
   await expect(page.getByText("未找到匹配的歌曲")).toBeVisible();
 
-  // 3. 筛选视图下“下一首播放”的物理相邻禁用判定
-  // 当前播放指示为 401（position 400）。歌曲 402（position 401）是紧邻下一首，无论是否被筛选都应禁用
+  // 3. 筛选后仍保持绝对序号，不展示下一首播放入口
   await searchInput.fill("歌曲 402");
   await expect(page.locator('[data-song-id="402"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "下一首播放：歌曲 402", exact: true })).toBeDisabled();
+  await expect(page.locator('[data-song-id="402"] .track-index')).toHaveText("402");
+  await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
 
-  // 歌曲 403 不是紧邻下一首，在筛选视图下仍应可用
   await searchInput.fill("歌曲 403");
   await expect(page.locator('[data-song-id="403"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "下一首播放：歌曲 403", exact: true })).toBeEnabled();
+  await expect(page.locator('[data-song-id="403"] .track-index')).toHaveText("403");
 
   // 4. 清空搜索
   await page.getByRole("button", { name: "清空搜索词" }).click();
