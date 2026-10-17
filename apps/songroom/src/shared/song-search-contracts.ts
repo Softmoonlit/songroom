@@ -32,6 +32,7 @@ export const searchErrorCode = z.union([
 
 export const searchView = z.strictObject({
   searchId: uuidv7,
+  version: z.number().int().nonnegative(),
   status: searchStatus,
   songs: z.array(songCandidate),
   hasMore: z.boolean(),

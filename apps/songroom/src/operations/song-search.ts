@@ -209,7 +209,7 @@ export class SongSearchService {
     const session = this.#session(userId, roomId, searchId);
     this.#checkScope(session, this.#context(userId, roomId).scope);
     return {
-      searchId: session.searchId, status: session.status, songs: session.songs,
+      searchId: session.searchId, version: session.version, status: session.status, songs: session.songs,
       errorCode: session.errorCode, hasMore: session.hasMore
     };
   }

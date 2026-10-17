@@ -84,6 +84,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
         status: 200,
         json: {
           searchId,
+          version: 1,
           status: "completed",
           songs: [
             { id: "s-2", name: "七里香", artists: ["周杰伦"], album: "七里香" },
@@ -213,6 +214,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
         status: 200,
         json: {
           searchId,
+          version: 1,
           status: "completed",
           songs: [{ id: "s-cancel", name: "待取消的歌", artists: ["歌手"], album: "专辑" }],
           hasMore: false,
@@ -274,6 +276,7 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
         status: 200,
         json: {
           searchId,
+          version: 1,
           status: "failed",
           songs: [],
           hasMore: true,
@@ -297,6 +300,80 @@ test.describe("独立点歌面板抽屉与交互正反馈", () => {
   });
 });
 
+for (const firstReadInFlight of [false, true]) {
+  test(`首次查询${firstReadInFlight ? "尚未返回" : "已读到搜索中"}时，完成通知立即展示候选，不等待十秒轮询`, async ({ page }) => {
+    await page.addInitScript(() => {
+      const NativeEventSource = window.EventSource;
+      window.EventSource = class extends NativeEventSource {
+        constructor(url: string | URL, options?: EventSourceInit) {
+          super(url, options);
+          this.addEventListener("invalidation", () => {
+            document.documentElement.dataset.searchNotificationReceived = "true";
+          });
+        }
+      };
+    });
+    await setupRoomPage(page);
+    await page.route(playlistEndpoint, route => route.fulfill({ json: {
+      playlist: basePlaylist,
+      snapshot: { version: 1, syncedAt: Date.now(), trackCount: 0, tracks: [] },
+      lastRefreshError: null, operation: null,
+      allowedActions: ["refreshPublicPlaylist", "requestSong"], disabledReason: null, version: 1
+    } }));
+
+    const searchId = v7();
+    let completed = false;
+    let reads = 0;
+    let releaseNotification!: () => void;
+    const notificationReady = new Promise<void>(resolve => { releaseNotification = resolve; });
+    let releaseFirstRead!: () => void;
+    const firstReadReady = new Promise<void>(resolve => { releaseFirstRead = resolve; });
+    await page.route("**/api/events", async route => {
+      await notificationReady;
+      await route.fulfill({
+        headers: { "content-type": "text/event-stream", "cache-control": "no-store" },
+        body: `event: invalidation\ndata: ${JSON.stringify({ type: "search", resourceId: searchId, version: 1 })}\n\n`
+      });
+    });
+    await page.route(searchEndpoint, route => route.fulfill({ status: 202, json: { searchId } }));
+    await page.route(`${searchEndpoint}/${searchId}`, async route => {
+      reads += 1;
+      const view = {
+        searchId,
+        version: completed ? 1 : 0,
+        status: completed ? "completed" : "searching",
+        songs: completed ? [{ id: "instant-song", name: "通知完成即显示的歌曲", artists: ["歌手"], album: "" }] : [],
+        hasMore: false,
+        errorCode: null
+      };
+      // 固定首次响应为旧快照，允许完成通知先于该响应到达浏览器。
+      if (reads === 1 && firstReadInFlight) await firstReadReady;
+      await route.fulfill({ json: view });
+    });
+
+    try {
+      await page.goto(`/rooms/${roomId}`);
+      await page.getByRole("button", { name: "+ 点歌" }).first().click();
+      const drawer = page.getByRole("dialog", { name: "网易云点歌" });
+      await drawer.getByRole("searchbox").fill("即时搜索");
+      await drawer.getByRole("button", { name: "搜索", exact: true }).click();
+      await expect(drawer.getByText("正在搜索网易云单曲…")).toBeVisible();
+      await expect(drawer.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+      await expect.poll(() => reads).toBe(1);
+      completed = true;
+      releaseNotification();
+      await expect(page.locator("html")).toHaveAttribute("data-search-notification-received", "true");
+      releaseFirstRead();
+      await expect(drawer.getByRole("option", { name: /通知完成即显示的歌曲/ })).toBeVisible({ timeout: 3000 });
+      expect(reads).toBe(2);
+      await expect(drawer.getByText("正在搜索网易云单曲…")).toHaveCount(0);
+    } finally {
+      releaseNotification();
+      releaseFirstRead();
+    }
+  });
+}
+
 function candidates(start: number, length = 20) {
   return Array.from({ length }, (_, index) => ({ id: `page-${start + index}`, name: `分页歌曲${start + index}`, artists: ["分页歌手"], album: "分页专辑" }));
 }
@@ -317,7 +394,7 @@ async function setupSearchDrawer(page: import("@playwright/test").Page) {
 test("搜索首次20首且不预取；分页失败保留列表和位置，重试去重追加并停止加载", async ({ page }) => {
   const searchId = v7();
   const first = candidates(0);
-  let view = { searchId, status: "completed", songs: first, hasMore: true, errorCode: null as string | null };
+  let view = { searchId, version: 1, status: "completed", songs: first, hasMore: true, errorCode: null as string | null };
   let moreCalls = 0;
   let releaseMore!: () => void;
   let moreEntered = false;
@@ -328,10 +405,10 @@ test("搜索首次20首且不预取；分页失败保留列表和位置，重试
     if (moreCalls === 1) {
       moreEntered = true;
       await new Promise<void>(resolve => { releaseMore = resolve; });
-      view = { ...view, status: "failed", errorCode: "MODULE_ERROR" };
+      view = { ...view, version: 2, status: "failed", errorCode: "MODULE_ERROR" };
     } else {
       // 上游跨页重复歌曲；服务端读模型已经按ID去重。
-      view = { ...view, status: "completed", songs: candidates(0, 38), hasMore: false, errorCode: null };
+      view = { ...view, version: 3, status: "completed", songs: candidates(0, 38), hasMore: false, errorCode: null };
     }
     await route.fulfill({ status: 202, json: { searchId } });
   });
@@ -382,10 +459,10 @@ test("新关键词提交立即清空候选和选择，旧分页晚到失败不�
   });
   await page.route(`${searchEndpoint}/${oldId}`, route => {
     oldQueryReads += 1;
-    return route.fulfill({ json: { searchId: oldId, status: "completed", songs: candidates(0), hasMore: true, errorCode: null } });
+    return route.fulfill({ json: { searchId: oldId, version: 1, status: "completed", songs: candidates(0), hasMore: true, errorCode: null } });
   });
   await page.route(`${searchEndpoint}/${newId}`, route => route.fulfill({ json: {
-    searchId: newId, status: "completed", songs: [{ id: "new-song", name: "新轮独有歌曲", artists: ["新歌手"], album: "" }], hasMore: false, errorCode: null
+    searchId: newId, version: 1, status: "completed", songs: [{ id: "new-song", name: "新轮独有歌曲", artists: ["新歌手"], album: "" }], hasMore: false, errorCode: null
   } }));
   await page.route(`${searchEndpoint}/${oldId}/more`, async route => {
     oldPageStarted = true;

@@ -89,10 +89,10 @@ export function useEventStream(enabled: boolean): void {
           tracker.recordFromServer("operation", data.id, data.version);
         }
 
-        if (firstKey === "song-search") {
+        if (firstKey === "song-search" && typeof data.version === "number") {
           const searchId = queryKey[1] as string | undefined;
           if (searchId) {
-            tracker.recordFromServer("search", searchId, 1);
+            tracker.recordFromServer("search", searchId, data.version);
           }
         }
       } else if (event.type === "updated" && event.action.type === "error") {
@@ -183,9 +183,12 @@ export function useEventStream(enabled: boolean): void {
               void queryClient.invalidateQueries({ queryKey: ["song-request-operation"] });
               void queryClient.invalidateQueries({ queryKey: ["room-public-playlist"] });
               break;
-            case "search":
-              void queryClient.invalidateQueries({ queryKey: ["song-search", resourceId] });
+            case "search": {
+              const queryKey = ["song-search", resourceId];
+              // 首次查询尚无缓存时，invalidateQueries 会复用在途请求；先取消，避免旧响应吞掉完成通知。
+              void queryClient.cancelQueries({ queryKey }).then(() => queryClient.invalidateQueries({ queryKey }));
               break;
+            }
             case "cleanup":
               void queryClient.invalidateQueries({ queryKey: ["public-playlist-cleanups"] });
               break;

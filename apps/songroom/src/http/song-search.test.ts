@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import type { SearchView, SongCandidate } from "../shared/song-search-contracts.js";
+import { searchView, type SearchView, type SongCandidate } from "../shared/song-search-contracts.js";
 import { initializeDatabase } from "../db/database.js";
 import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
@@ -114,6 +114,42 @@ it("非成员或未认证用户不能搜索；搜索及分页结果仅属于发�
   expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(1);
 });
 
+it.each(["completed", "failed"] as const)("首次搜索返回真实版本：搜索中为0，%s后与完成通知一致为1", async status => {
+  const { app, adapter, member, roomId, baseUrl } = await fixture();
+  let release!: () => void;
+  const resultReady = new Promise<void>(resolve => { release = resolve; });
+  cleanups.push(async () => { release(); });
+  scriptSearch(adapter, async () => {
+    await resultReady;
+    return status === "completed"
+      ? { ok: true, data: { songs: songs(0, 1), songCount: 1 } }
+      : { ok: false, error: { code: "NETWORK_ERROR", outcome: "failed" } };
+  });
+  const sseRes = await fetch(`${baseUrl}/api/events`, { headers: { cookie: member.cookie, accept: "text/event-stream" } });
+  const reader = sseRes.body!.getReader();
+  cleanups.push(async () => { await reader.cancel(); });
+  await reader.read();
+  const searchId = await startSearch(app, roomId, member.cookie);
+  const loading = await request(app, `/api/rooms/${roomId}/search/${searchId}`, member.cookie, undefined, "GET");
+  expect(loading.statusCode).toBe(200);
+  expect(searchView.parse(loading.json())).toMatchObject({ status: "searching", version: 0, songs: [] });
+
+  release();
+  let event = "";
+  const decoder = new TextDecoder();
+  while (!event.includes(searchId)) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    event += decoder.decode(value);
+  }
+  const eventData = event.split("\n").find(line => line.startsWith("data: "));
+  expect(eventData).toBeDefined();
+  const notification = JSON.parse(eventData!.slice("data: ".length));
+  expect(notification).toEqual({ type: "search", resourceId: searchId, version: 1 });
+  const completed = await completedSearch(app, roomId, member.cookie, searchId, status);
+  expect(searchView.parse(completed).version).toBe(notification.version);
+});
+
 it("首次20首通过SSE失效通知读回；分页按相关性去重追加且不自动预取，整页重复时停止", async () => {
   const { app, adapter, member, roomId, baseUrl } = await fixture();
   scriptSearch(adapter, input => ({ ok: true, data: { songs: input.offset === 0 ? songs(0) : songs(18), songCount: 200 + input.offset } }));
@@ -175,23 +211,26 @@ it("加载更多重复点击只执行一页；失败保留前页，明确重试�
     return { ok: true, data: { songs: songs(20), songCount: 40 } };
   });
   const searchId = await startSearch(app, roomId, member.cookie);
-  await completedSearch(app, roomId, member.cookie, searchId);
+  expect((await completedSearch(app, roomId, member.cookie, searchId)).version).toBe(1);
   const url = `/api/rooms/${roomId}/search/${searchId}/more`;
   await request(app, url, member.cookie);
   await expect.poll(() => attempts, { timeout: 3000 }).toBe(1);
   expect((await request(app, url, member.cookie)).statusCode).toBe(202);
   const loading = await request(app, `/api/rooms/${roomId}/search/${searchId}`, member.cookie, undefined, "GET");
   expect(loading.json().songs).toEqual(songs(0));
+  expect(loading.json().version).toBe(1);
   release();
   const failed = await completedSearch(app, roomId, member.cookie, searchId, "failed");
   expect(failed.songs).toEqual(songs(0));
   expect(failed.hasMore).toBe(true);
   expect(failed.errorCode).toBe("NETWORK_ERROR");
+  expect(failed.version).toBe(2);
   expect(attempts).toBe(1);
   await request(app, url, member.cookie);
   const retried = await completedSearch(app, roomId, member.cookie, searchId);
   expect(retried.songs).toEqual(songs(0, 40));
   expect(retried.hasMore).toBe(false);
+  expect(retried.version).toBe(3);
   expect(adapter.inputs.filter(input => input.operation === "search").map(input => input.offset)).toEqual([0, 20, 20]);
 });
 
