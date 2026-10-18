@@ -23,7 +23,8 @@ export type PublicPlaylistSnapshot = z.infer<typeof publicPlaylistSnapshot>;
 
 export const publicPlaylistOperation = z.strictObject({
   id: uuidv7,
-  errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP"])]).nullable(),
+  kind: z.enum(["createPublicPlaylist", "requestPublicSong", "replacePublicPlaylist", "playNext"]).optional(),
+  errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP", "CONCURRENT_OPERATION_LIMIT_EXCEEDED"])]).nullable(),
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
   step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
   playlistId: z.string().nullable().optional(),
@@ -31,7 +32,7 @@ export const publicPlaylistOperation = z.strictObject({
   version: z.number().int().positive()
 });
 
-export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist", "requestSong"]);
+export const publicPlaylistAction = z.enum(["createPublicPlaylist", "refreshPublicPlaylist", "requestSong", "replacePublicPlaylist"]);
 export type PublicPlaylistAction = z.infer<typeof publicPlaylistAction>;
 
 export const publicPlaylistInvalidatedTarget = z.strictObject({

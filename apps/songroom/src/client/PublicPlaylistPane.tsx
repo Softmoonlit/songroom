@@ -1,23 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { LocateFixed, Music2, Plus, RotateCw, Search, X } from "lucide-react";
+import { LocateFixed, Music2, Plus, RotateCw, Search, Shuffle, X } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   publicPlaylistView,
+  randomReplacementOperationView,
   songRequestOperationView,
   songRequestResponse,
   type PublicPlaylistCreateCommand,
   type PublicPlaylistTrack,
-  type PublicPlaylistView
+  type PublicPlaylistView,
+  type RandomReplacementOperationView
 } from "../shared/public-playlist-contracts.js";
 import type { SongCandidate } from "../shared/song-search-contracts.js";
 import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http.js";
 import { QueryError } from "./RoomQueryError.js";
 import { SongRequestDrawer } from "./SongRequestDrawer.js";
+import { RandomReplacementDialog } from "./RandomReplacementDialog.js";
 import { usePublicPlayback } from "./usePublicPlayback.js";
 import { Toast, type ToastData } from "./Toast.js";
 import { getFriendlySongRequestErrorMessage, getFriendlyOperationStatusMessage } from "./song-request-messages.js";
+import {
+  getFriendlyReplacementErrorMessage,
+  getFriendlyReplacementOperationStatus
+} from "./random-replacement-messages.js";
 
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
   queued: "已排队，等待创建公共歌单。",
@@ -172,6 +179,10 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRequester, setSelectedRequester] = useState("all");
 
+  // 随机换一组弹窗与持久操作状态
+  const [isRandomDialogOpen, setIsRandomDialogOpen] = useState(false);
+  const [activeReplacementOperationId, setActiveReplacementOperationId] = useState<string | null>(null);
+
   const availableRequesters = useMemo(() => {
     if (!query.data?.snapshot?.tracks) return [];
     const set = new Set<string>();
@@ -202,7 +213,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const isFilterActive = Boolean(searchQuery.trim() || (selectedRequester && selectedRequester !== "all"));
 
   const playback = usePublicPlayback({ sessionId, roomId, active, view: query.data,
-    pendingWrite: isRequesting || Boolean(activeOperationId), notify: setToast });
+    pendingWrite: isRequesting || Boolean(activeOperationId) || Boolean(activeReplacementOperationId), notify: setToast });
 
   const openSongRequestDrawer = () => {
     setRequestErrorMessage("");
@@ -368,6 +379,53 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     songRequestMutation.mutate(candidate);
   }
 
+  // 异步换歌操作轮询与监听
+  const replacementOperationQuery = useQuery({
+    queryKey: ["random-replacement-operation", activeReplacementOperationId],
+    queryFn: ({ signal }) =>
+      request(
+        `/${roomId}/public-playlist/random-replacement/${activeReplacementOperationId}`,
+        randomReplacementOperationView,
+        signal
+      ),
+    enabled: Boolean(activeReplacementOperationId && active),
+    refetchInterval: q =>
+      q.state.data?.status &&
+      ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status)
+        ? 2500
+        : false,
+    ...queryOptions
+  });
+
+  // 跨页面或刷新恢复：若房间已绑定公共歌单且存在未终结的换歌操作，自动恢复轮询
+  useEffect(() => {
+    const v = query.data;
+    if (
+      v?.playlist &&
+      v.operation?.kind === "replacePublicPlaylist" &&
+      v.operation.status !== "succeeded" &&
+      !activeReplacementOperationId
+    ) {
+      setActiveReplacementOperationId(v.operation.id);
+    }
+  }, [query.data, activeReplacementOperationId]);
+
+  useEffect(() => {
+    if (!replacementOperationQuery.data) return;
+    const op = replacementOperationQuery.data;
+    if (op.status === "succeeded") {
+      setActiveReplacementOperationId(null);
+      setToast({
+        id: uuidv7(),
+        message: "换歌成功！已更新公共歌单。请在网易云官方客户端重新载入歌单并点击「播放全部」。",
+        type: "success"
+      });
+      void client.invalidateQueries({ queryKey });
+    } else if (op.status === "failed" || op.status === "stopped") {
+      void client.invalidateQueries({ queryKey });
+    }
+  }, [replacementOperationQuery.data, client, queryKey]);
+
   // 进入页面触发一次独立显式刷新
   const refreshedOnEnter = useRef<string | null>(null);
   useEffect(() => {
@@ -387,6 +445,14 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   if (query.isError) return <><h1 className="public-playlist-title-heading">公共歌单</h1><QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} /></>;
   if (!query.data) return null;
   const view = query.data;
+
+  const activeReplacementOperation = replacementOperationQuery.data ?? null;
+  const isReplacementBusy = Boolean(
+    activeReplacementOperation &&
+      ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator"].includes(
+        activeReplacementOperation.status
+      )
+  );
 
   const formatTime = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
 
@@ -530,6 +596,21 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
                 <span>搜索</span>
               </button>
             )}
+
+            {view.allowedActions.includes("replacePublicPlaylist") && (
+              <button
+                type="button"
+                className="secondary-button random-replacement-button"
+                disabled={isReplacementBusy || isRequesting || Boolean(activeOperationId) || view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
+                onClick={() => setIsRandomDialogOpen(true)}
+                aria-haspopup="dialog"
+                aria-expanded={isRandomDialogOpen}
+                title="随机换一组歌曲"
+              >
+                <Shuffle size={14} aria-hidden="true" />
+                <span>随机换一组</span>
+              </button>
+            )}
           </div>
         </header>
 
@@ -589,8 +670,37 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
         )}
 
-        {view.operation && view.operation.status !== "succeeded" && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
-        {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
+        {activeReplacementOperation && activeReplacementOperation.status !== "succeeded" && (
+          <div className={`replacement-status-banner status-${activeReplacementOperation.status}`} role="status">
+            <div className="replacement-status-header">
+              <RotateCw
+                size={16}
+                className={
+                  activeReplacementOperation.status === "processing" ||
+                  activeReplacementOperation.status === "queued"
+                    ? "spin-icon"
+                    : ""
+                }
+                aria-hidden="true"
+              />
+              <strong>{getFriendlyReplacementOperationStatus(activeReplacementOperation).title}</strong>
+              {(activeReplacementOperation.status === "failed" || activeReplacementOperation.status === "stopped") && (
+                <button
+                  type="button"
+                  className="status-dismiss-btn"
+                  onClick={() => setActiveReplacementOperationId(null)}
+                  aria-label="关闭状态提示"
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <p className="replacement-status-desc">
+              {getFriendlyReplacementOperationStatus(activeReplacementOperation).description}
+            </p>
+          </div>
+        )}
+
         {view.disabledReason && view.disabledReason !== "PUBLIC_PLAYLIST_EXISTS" && (
           <p className="field-help">{disabledMessages[view.disabledReason]}</p>
         )}
@@ -657,6 +767,21 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       onConfirmSongRequest={handleConfirmSongRequest}
       requestErrorMessage={requestErrorMessage}
       clearRequestErrorMessage={() => setRequestErrorMessage("")}
+    />
+
+    {/* 随机换一组抽选与替换弹窗 */}
+    <RandomReplacementDialog
+      open={isRandomDialogOpen}
+      onOpenChange={setIsRandomDialogOpen}
+      roomId={roomId}
+      onReplacementStarted={opId => {
+        setActiveReplacementOperationId(opId);
+        setToast({
+          id: uuidv7(),
+          message: "换歌操作已提交，正在执行云端替换…",
+          type: "info"
+        });
+      }}
     />
 
     {/* 轻量 Toast 正反馈提示 */}

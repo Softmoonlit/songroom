@@ -4870,6 +4870,332 @@ h1 {
 .playback-indicator i:nth-child(2) { animation-delay: -350ms; }
 .playback-indicator i:nth-child(3) { animation-delay: -650ms; }
 @keyframes playbackBars { from { transform: scaleY(.35); } to { transform: scaleY(1); } }
+
+/* 随机换歌弹窗与状态提示 */
+.random-replacement-modal {
+  max-width: 620px;
+  max-height: 85vh;
+}
+
+.random-replacement-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  max-height: calc(85vh - 160px);
+  padding-right: 2px;
+}
+
+.random-count-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.random-count-label {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.random-count-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.random-count-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.random-count-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-main);
+}
+
+.random-count-btn.active {
+  background: var(--primary);
+  color: #ffffff !important;
+  border-color: var(--primary);
+}
+
+.reshuffle-btn {
+  margin-left: auto;
+  font-size: var(--font-xs);
+  height: 30px;
+  padding: 0 10px;
+}
+
+.random-replacement-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 16px;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+
+.random-replacement-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.random-stats-card {
+  padding: 12px 14px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.random-stats-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--font-sm);
+}
+
+.stats-main-count {
+  color: var(--text-main);
+}
+
+.count-shortfall-note {
+  font-size: var(--font-xs);
+  color: #d97706;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+.stats-replace-scope {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.random-member-contributions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-xs);
+}
+
+.contributions-title {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.contribution-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.contribution-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--font-xs);
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.random-preview-tracks-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-tracks-heading {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-main);
+}
+
+.random-preview-tracks-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.preview-track-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.preview-track-item:last-child {
+  border-bottom: none;
+}
+
+.preview-track-index {
+  font-size: var(--font-xs);
+  color: var(--text-dim);
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.preview-track-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.preview-track-name {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-track-meta {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-track-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.track-badge.is-new {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #dcfce7;
+  color: #14532d;
+  border: 1px solid #86efac;
+  font-weight: 600;
+}
+
+.random-confirm-guidance {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--primary);
+}
+
+.error-retry-btn {
+  margin-left: auto;
+  font-size: var(--font-xs);
+}
+
+.random-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.replacement-status-banner {
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.replacement-status-banner.status-queued,
+.replacement-status-banner.status-processing {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+}
+
+.replacement-status-banner.status-awaitingConfirmation,
+.replacement-status-banner.status-waitingAuthorization {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.replacement-status-banner.status-needsAdministrator,
+.replacement-status-banner.status-failed {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.replacement-status-banner.status-stopped {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.replacement-status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-sm);
+}
+
+.status-dismiss-btn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  transition: opacity var(--transition-fast);
+}
+
+.status-dismiss-btn:hover {
+  opacity: 1;
+}
+
+.replacement-status-desc {
+  margin: 0;
+  font-size: var(--font-xs);
+  line-height: 1.5;
+}
+
 @media (max-width: 768px) {
   .public-playlist-title-heading {
     position: absolute;

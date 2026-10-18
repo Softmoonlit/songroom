@@ -218,6 +218,9 @@ export class PublicPlaylists {
       if (disabledReason !== "ACCOUNT_PAUSED" && disabledReason !== "UPSTREAM_QUEUE_FULL" && disabledReason !== "TARGET_BLOCKED") {
         allowedActions.push("requestSong");
       }
+      if (current.ownerUserId === userId && disabledReason !== "ACCOUNT_PAUSED" && disabledReason !== "UPSTREAM_QUEUE_FULL" && disabledReason !== "TARGET_BLOCKED") {
+        allowedActions.push("replacePublicPlaylist");
+      }
     }
 
     let opView: PublicPlaylistView["operation"] = null;
@@ -230,6 +233,9 @@ export class PublicPlaylists {
         : null;
       opView = {
         id: currentOperation.id,
+        kind: (["createPublicPlaylist", "requestPublicSong", "replacePublicPlaylist", "playNext"] as const).includes(currentOperation.kind as any)
+          ? (currentOperation.kind as any)
+          : undefined,
         status: currentOperation.status,
         errorCode: currentOperation.errorCode,
         version: currentOperation.version,
