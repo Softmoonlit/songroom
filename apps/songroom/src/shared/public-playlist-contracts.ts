@@ -115,3 +115,41 @@ export const playNextOperationView = z.strictObject({
 export type PlayNextOperationView = z.infer<typeof playNextOperationView>;
 export const playNextResponse = z.strictObject({ replay: z.boolean(), operation: playNextOperationView });
 export type PlayNextResponse = z.infer<typeof playNextResponse>;
+
+export const randomReplacementPreviewCommand = z.strictObject({
+  count: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20)]).default(10)
+});
+export type RandomReplacementPreviewCommand = z.infer<typeof randomReplacementPreviewCommand>;
+
+export const randomPreviewTrack = z.strictObject({
+  songId: z.string().min(1),
+  name: z.string(),
+  artists: z.array(z.string()),
+  album: z.string(),
+  sourceMemberId: uuidv7,
+  sourceMemberNickname: z.string(),
+  isNew: z.boolean()
+});
+export type RandomPreviewTrack = z.infer<typeof randomPreviewTrack>;
+
+export const randomPreviewMemberContribution = z.strictObject({
+  memberId: uuidv7,
+  nickname: z.string(),
+  count: z.number().int().nonnegative()
+});
+export type RandomPreviewMemberContribution = z.infer<typeof randomPreviewMemberContribution>;
+
+export const randomReplacementPreviewView = z.strictObject({
+  previewId: uuidv7,
+  roomId: uuidv7,
+  targetCount: z.number().int().positive(),
+  actualCount: z.number().int().nonnegative(),
+  tracks: z.array(randomPreviewTrack),
+  memberContributions: z.array(randomPreviewMemberContribution),
+  oldTrackCount: z.number().int().nonnegative(),
+  oldTracksWithRequesterCount: z.number().int().nonnegative(),
+  createdAt: z.number().int().positive(),
+  expiresAt: z.number().int().positive()
+});
+export type RandomReplacementPreviewView = z.infer<typeof randomReplacementPreviewView>;
+

@@ -20,6 +20,7 @@ import { Rooms } from "../rooms/rooms.js";
 import { registerRoomRoutes } from "./rooms.js";
 import { Invites } from "../invites/invites.js";
 import { registerInviteRoutes } from "./invites.js";
+import { PublicRandomPreview } from "../operations/public-random-preview.js";
 import { PublicPlaylists } from "../operations/public-playlists.js";
 import { PersonalPlaylists } from "../operations/personal-playlists.js";
 import { UpstreamScheduler } from "../operations/upstream-scheduling.js";
@@ -43,6 +44,7 @@ export interface SongRoomApp {
   searchService: SongSearchService;
   playlists: PublicPlaylists;
   personalPlaylists: PersonalPlaylists;
+  randomPreview: PublicRandomPreview;
   scheduler: UpstreamScheduler;
   abnormalService: AbnormalOperationsService;
   getState: () => RuntimeState;
@@ -84,6 +86,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const scheduler = new UpstreamScheduler(database, eventStream, dependencies.now);
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, dependencies.now);
+  const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, dependencies.now);
   const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, adapter, vault, eventStream, personalPlaylists, dependencies.now);
   binding.onRevoke = userId => playlists.onOwnerRevoked(userId);
@@ -192,7 +195,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     registerNeteaseRoutes(fastify, auth, binding);
     registerRoomRoutes(fastify, auth, new Rooms(database, binding, eventStream, dependencies.now, playlists));
     registerInviteRoutes(fastify, auth, new Invites(database, eventStream, dependencies.now));
-    registerPublicPlaylistRoutes(fastify, auth, playlists);
+    registerPublicPlaylistRoutes(fastify, auth, playlists, randomPreview);
     registerPersonalPlaylistRoutes(fastify, auth, personalPlaylists);
     registerSongSearchRoutes(fastify, auth, searchService);
     registerAdminOperationRoutes(fastify, auth, config, abnormalService);
@@ -274,5 +277,5 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     fastify.log.info({ state, address }, "application lifecycle");
     return address;
   };
-  return { config, fastify, database, auth, eventStream, searchService, playlists, personalPlaylists, scheduler, abnormalService, getState: () => state, listen, drain, close };
+  return { config, fastify, database, auth, eventStream, searchService, playlists, personalPlaylists, randomPreview, scheduler, abnormalService, getState: () => state, listen, drain, close };
 }

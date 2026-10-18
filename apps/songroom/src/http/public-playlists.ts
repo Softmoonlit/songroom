@@ -1,19 +1,25 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { playbackView, playNextCommand, playNextResponse, playNextOperationView } from "../shared/public-playlist-contracts.js";
+import { playbackView, playNextCommand, playNextResponse, playNextOperationView, randomReplacementPreviewCommand, randomReplacementPreviewView } from "../shared/public-playlist-contracts.js";
 import type { SongRoomAuth } from "../auth.js";
 import type { PublicPlaylists } from "../operations/public-playlists.js";
+import type { PublicRandomPreview } from "../operations/public-random-preview.js";
 import { publicPlaylistCreateCommand, publicPlaylistView, publicSongRequestCommand, songRequestOperationView, songRequestResponse } from "../shared/public-playlist-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
 import { uuidv7 } from "../shared/contracts.js";
 import { requireSession } from "./session.js";
 import type { ZodProvider } from "./zod.js";
+import { BusinessError } from "../shared/errors.js";
 
 const operationParams = roomParams.extend({
   operationId: uuidv7
 });
 
-export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoomAuth, playlists: PublicPlaylists): void {
+const randomPreviewParams = roomParams.extend({
+  previewId: uuidv7
+});
+
+export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoomAuth, playlists: PublicPlaylists, randomPreview: PublicRandomPreview): void {
   const typed = app.withTypeProvider<ZodProvider>();
   typed.get("/api/rooms/:roomId/public-playlist", { schema: { params: roomParams, response: { 200: publicPlaylistView } } }, async (request, reply) => {
     const principal = await requireSession(auth, request, reply);
@@ -55,5 +61,17 @@ export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoo
     const principal = await requireSession(auth, request, reply);
     return playlists.readPlayNextOperation(principal.userId, request.params.roomId, request.params.operationId);
   });
-
+  typed.post("/api/rooms/:roomId/public-playlist/random-preview", { schema: { params: roomParams, body: randomReplacementPreviewCommand, response: { 200: randomReplacementPreviewView } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const view = await randomPreview.generate(principal.userId, request.params.roomId, request.body);
+    return reply.code(200).send(view);
+  });
+  typed.get("/api/rooms/:roomId/public-playlist/random-preview/:previewId", { schema: { params: randomPreviewParams, response: { 200: randomReplacementPreviewView } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const view = randomPreview.get(principal.userId, request.params.roomId, request.params.previewId);
+    if (!view) {
+      throw new BusinessError(404, "PREVIEW_NOT_FOUND", "换歌预览不存在或已失效");
+    }
+    return reply.code(200).send(view);
+  });
 }

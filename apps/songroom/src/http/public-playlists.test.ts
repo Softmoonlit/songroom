@@ -6,11 +6,11 @@ import { v7 } from "uuid";
 import { eq } from "drizzle-orm";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase } from "../db/database.js";
-import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding } from "../db/schema.js";
+import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, personalPlaylistBinding } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
-import { publicPlaylistView } from "../shared/public-playlist-contracts.js";
+import { publicPlaylistView, randomReplacementPreviewView } from "../shared/public-playlist-contracts.js";
 
 const origins = new WeakMap<SongRoomApp, string>();
 const cleanups: (() => Promise<void>)[] = [];
@@ -255,3 +255,89 @@ it("经由公开刷新核查失效，清空旧快照与标签并允许房主重�
   const newBinding = app.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get()!;
   expect(newBinding.generation).toBe(2);
 }, 20000);
+
+it("随机换歌预览路由鉴权、参数校验与预览只读获取", async () => {
+  const { app, adapter, owner, member, url } = await fixture();
+  const roomId = url.split("/")[3];
+  const previewUrl = `/api/rooms/${roomId}/public-playlist/random-preview`;
+
+  // 1. 未登录 401
+  expect((await request(app, previewUrl, undefined, { count: 10 })).statusCode).toBe(401);
+
+  // 2. 普通成员调用 403 OWNER_ONLY
+  const memberRes = await request(app, previewUrl, member.cookie, { count: 10 });
+  expect(memberRes.statusCode).toBe(403);
+
+  // 3. 非法 count 400
+  const invalidCountRes = await request(app, previewUrl, owner.cookie, { count: 7 });
+  expect(invalidCountRes.statusCode).toBe(400);
+
+  // 4. 房主成功生成预览
+  // 先设置公共歌单与个人歌单数据
+  const publicPlId = "cloud-pub-1";
+  app.database.insert(publicPlaylistBinding).values({
+    roomId,
+    accountId: "test",
+    playlistId: publicPlId,
+    name: "公共歌单",
+    generation: 1,
+    creationOperationId: v7()
+  }).run();
+
+  const memberRow = app.database.select().from(roomMembership).where(eq(roomMembership.userId, owner.userId)).get()!;
+  app.database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: memberRow.id,
+    accountId: "test",
+    playlistId: "owner-personal-1",
+    name: "房主个人歌单",
+    type: "ownerCreated",
+    writeable: true,
+    generation: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
+
+  adapter.playlistDetail = async (input) => {
+    if (input.playlistId === publicPlId) {
+      return {
+        ok: true,
+        data: {
+          playlist: { id: publicPlId, name: "公共歌单", creatorId: "test", subscribed: false, status: 0 },
+          songIds: ["old-song-1"],
+          songs: [{ id: "old-song-1", name: "旧歌", artists: ["歌手"], album: "专辑" }]
+        }
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        playlist: { id: "owner-personal-1", name: "房主个人歌单", creatorId: "test", subscribed: false, status: 0 },
+        songIds: ["new-song-1", "old-song-1"],
+        songs: [
+          { id: "new-song-1", name: "新歌", artists: ["歌手"], album: "专辑" },
+          { id: "old-song-1", name: "旧歌", artists: ["歌手"], album: "专辑" }
+        ]
+      }
+    };
+  };
+
+  const previewRes = await request(app, previewUrl, owner.cookie, { count: 10 });
+  expect(previewRes.statusCode).toBe(200);
+  const preview = randomReplacementPreviewView.parse(previewRes.json());
+  expect(preview.actualCount).toBe(2);
+  expect(preview.oldTrackCount).toBe(1);
+
+  // 5. GET 预览
+  const getPreviewUrl = `${previewUrl}/${preview.previewId}`;
+  const getRes = await request(app, getPreviewUrl, owner.cookie);
+  expect(getRes.statusCode).toBe(200);
+  const fetched = randomReplacementPreviewView.parse(getRes.json());
+  expect(fetched.previewId).toBe(preview.previewId);
+
+  // 6. 普通成员 GET 预览 403
+  const memberGetRes = await request(app, getPreviewUrl, member.cookie);
+  expect(memberGetRes.statusCode).toBe(403);
+});
+
