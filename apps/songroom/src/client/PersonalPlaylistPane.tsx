@@ -295,6 +295,8 @@ function PersonalPlaylistBindDialog({
   );
 }
 
+const terminalStatuses = new Set(["succeeded", "failed", "stopped"]);
+
 export function PersonalPlaylistPane({
   sessionId,
   roomId,
@@ -314,6 +316,10 @@ export function PersonalPlaylistPane({
     queryKey: ["room-personal-playlist", sessionId, roomId],
     queryFn: ({ signal }) => request(`/${roomId}/personal-playlist`, personalPlaylistView, signal),
     enabled: active,
+    refetchInterval: q => {
+      const op = q.state.data?.operation;
+      return op && !terminalStatuses.has(op.status) ? 2_000 : false;
+    },
     ...queryOptions
   });
 
