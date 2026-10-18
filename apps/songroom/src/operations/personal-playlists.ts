@@ -1,18 +1,23 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
 import {
+  commandReceipt,
   neteaseAuthorization,
+  operation,
   personalPlaylistBinding,
+  personalPlaylistCreation,
   playlistSnapshot,
   playlistTrack,
   publicPlaylistBinding,
+  publicPlaylistCleanup,
   room,
   roomMembership
 } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterErrorCode, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
-import { UpstreamScheduler } from "./upstream-scheduling.js";
+import { UpstreamScheduler, type Operation } from "./upstream-scheduling.js";
+import type { PublicPlaylists } from "./public-playlists.js";
 import { EventStreamService } from "../events/event-stream.js";
 import { BusinessError } from "../shared/errors.js";
 import { prepareCommand } from "../commands/commands.js";
@@ -21,6 +26,7 @@ import {
   type PersonalPlaylistBindCommand,
   type PersonalPlaylistCandidatesView,
   type PersonalPlaylistCandidate,
+  type PersonalPlaylistCreateCommand,
   type PersonalPlaylistUnbindCommand,
   type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
@@ -37,8 +43,15 @@ export class PersonalPlaylists {
     private readonly adapter: NeteaseAdapter,
     private readonly scheduler: UpstreamScheduler,
     private readonly eventStream: EventStreamService,
+    private readonly publicPlaylists: PublicPlaylists,
     private readonly now: () => number = () => Date.now()
-  ) {}
+  ) {
+    this.scheduler.register("createPersonalPlaylist", {
+      claim: row => this.#claimCreate(row),
+      execute: row => this.#executeCreate(row),
+      recover: () => this.#recoverCreate()
+    });
+  }
 
   #beginRead(): number {
     return ++this.#readCounter;
@@ -83,7 +96,7 @@ export class PersonalPlaylists {
       };
     }
 
-    const playlists = await this.#fetchAccountPlaylists(cookie, auth.accountId);
+    const playlists = await this.#fetchAccountPlaylists(cookie, auth.accountId, fn => this.scheduler.executeMemoryTask(auth.accountId, fn));
     if (!playlists) {
       return {
         candidates: [],
@@ -164,7 +177,7 @@ export class PersonalPlaylists {
       throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "网易云授权不可用");
     }
 
-    const accountPlaylists = await this.#fetchAccountPlaylists(cookie, auth.accountId);
+    const accountPlaylists = await this.#fetchAccountPlaylists(cookie, auth.accountId, fn => this.scheduler.executeMemoryTask(auth.accountId, fn));
     if (!accountPlaylists) {
       throw new BusinessError(502, "MODULE_ERROR", "读取网易云歌单失败");
     }
@@ -172,6 +185,12 @@ export class PersonalPlaylists {
     const target = accountPlaylists.find(p => p.id === command.playlistId && p.status === 0);
     if (!target) {
       throw new BusinessError(422, "TARGET_PERMISSION", "只能绑定本人创建或已收藏的网易云歌单");
+    }
+
+    const isRoommateDedicated = this.database.select().from(personalPlaylistBinding)
+      .where(and(eq(personalPlaylistBinding.playlistId, command.playlistId), eq(personalPlaylistBinding.type, "roommateDedicated"))).get();
+    if (isRoommateDedicated) {
+      throw new BusinessError(422, "TARGET_PERMISSION", "不能绑定室友专用个人歌单");
     }
 
     const isOwner = target.creatorId === auth.accountId;
@@ -282,6 +301,98 @@ export class PersonalPlaylists {
     return this.read(userId, roomId);
   }
 
+  create(userId: string, roomId: string, command: PersonalPlaylistCreateCommand): { accepted: boolean; view: PersonalPlaylistView } {
+    if (this.scheduler.isStopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
+    const member = this.#getMember(userId, roomId);
+    const roomRow = this.#getRoom(roomId);
+    if (roomRow.ownerUserId === userId) {
+      throw new BusinessError(403, "ROOMMATE_ONLY", "房主请绑定已有或收藏歌单，不能创建专用个人歌单");
+    }
+
+    const prepared = prepareCommand(
+      userId,
+      command.idempotencyKey,
+      "createPersonalPlaylist",
+      { roomId },
+      this.now()
+    );
+
+    const now = this.now();
+    const id = v7();
+    const name = `songroom-${roomRow.name}-${member.nickname}`;
+
+    const outcome = this.database.transaction(tx => {
+      this.#prune();
+
+      const original = readCommandResource(tx, prepared, now);
+      if (original) {
+        return { replay: true };
+      }
+
+      const existingBinding = tx.select().from(personalPlaylistBinding)
+        .where(and(eq(personalPlaylistBinding.roomId, roomId), eq(personalPlaylistBinding.memberId, member.id))).get();
+      if (existingBinding) {
+        throw new BusinessError(409, "PERSONAL_PLAYLIST_EXISTS", "该成员已配置个人歌单");
+      }
+
+      const pendingOp = tx.select().from(operation)
+        .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId), sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).get();
+      if (pendingOp) {
+        throw new BusinessError(409, "OPERATION_PENDING", "当前有正在处理的操作");
+      }
+
+      const auth = tx.select().from(neteaseAuthorization)
+        .where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
+      if (!auth || auth.status !== "active" || !auth.credentials) {
+        throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "房主网易云授权不可用");
+      }
+      if (this.scheduler.paused(auth.accountId)) {
+        throw new BusinessError(423, "ACCOUNT_PAUSED", "房主网易云账号已暂停");
+      }
+      const admissionCode = this.scheduler.admissionCode(auth.accountId);
+      if (admissionCode) {
+        throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "房主网易云账号已暂停" : "网易云账号操作队列已满");
+      }
+
+      recordCommandResource(tx, prepared, id, now);
+      tx.insert(operation).values({
+        id,
+        kind: "createPersonalPlaylist",
+        userId,
+        roomId,
+        accountId: auth.accountId,
+        authorizationId: auth.id,
+        generation: auth.generation,
+        status: "queued",
+        errorCode: null,
+        lastGranted: now,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      }).run();
+      tx.insert(personalPlaylistCreation).values({
+        operationId: id,
+        ownerUserId: roomRow.ownerUserId,
+        memberId: member.id,
+        name,
+        step: "ready",
+        recovered: false
+      }).run();
+      this.#bumpRoom(tx, roomId);
+      return { replay: false, accountId: auth.accountId };
+    });
+
+    if (outcome.replay) {
+      return { accepted: false, view: this.read(userId, roomId) };
+    }
+
+    this.scheduler.kick();
+    const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()!;
+    this.eventStream.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: updatedRoom.version });
+
+    return { accepted: true, view: this.read(userId, roomId) };
+  }
+
   read(userId: string, roomId: string, memberId?: string): PersonalPlaylistView {
     const callerMember = this.#getMember(userId, roomId);
     const roomRow = this.#getRoom(roomId);
@@ -302,13 +413,60 @@ export class PersonalPlaylists {
     const binding = this.database.select().from(personalPlaylistBinding)
       .where(and(eq(personalPlaylistBinding.roomId, roomId), eq(personalPlaylistBinding.memberId, targetMember.id))).get();
 
+    let opView: PersonalPlaylistView["operation"] = null;
+    const currentOperation = this.database.select().from(operation)
+      .where(and(eq(operation.roomId, roomId), eq(operation.userId, targetMember.userId), eq(operation.kind, "createPersonalPlaylist")))
+      .orderBy(desc(operation.createdAt), desc(operation.id))
+      .get();
+    if (currentOperation) {
+      const creationDetail = this.database.select().from(personalPlaylistCreation)
+        .where(eq(personalPlaylistCreation.operationId, currentOperation.id)).get();
+      opView = {
+        id: currentOperation.id,
+        status: currentOperation.status as any,
+        errorCode: currentOperation.errorCode as any,
+        step: creationDetail?.step as any,
+        playlistId: creationDetail?.playlistId,
+        recovered: creationDetail ? Boolean(creationDetail.recovered) : false,
+        version: currentOperation.version
+      };
+    }
+
     if (!binding) {
+      let allowedActions: PersonalPlaylistView["allowedActions"] = [];
+      let disabledReason: PersonalPlaylistView["disabledReason"] = null;
+
+      if (isSelf) {
+        if (isOwner) {
+          const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, userId)).get();
+          if (!auth || auth.status !== "active" || !auth.credentials) {
+            disabledReason = "NETEASE_AUTH_REQUIRED";
+          } else if (this.scheduler.paused(auth.accountId)) {
+            disabledReason = "ACCOUNT_PAUSED";
+          } else {
+            allowedActions = ["bindPersonalPlaylist"];
+          }
+        } else {
+          const ownerAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
+          if (opView && !["succeeded", "failed", "stopped"].includes(opView.status)) {
+            disabledReason = "OPERATION_PENDING";
+          } else if (!ownerAuth || ownerAuth.status !== "active" || !ownerAuth.credentials) {
+            disabledReason = "NETEASE_AUTH_REQUIRED";
+          } else if (this.scheduler.paused(ownerAuth.accountId)) {
+            disabledReason = "ACCOUNT_PAUSED";
+          } else {
+            allowedActions = ["createPersonalPlaylist"];
+          }
+        }
+      }
+
       return {
         playlist: null,
+        operation: opView,
         snapshot: null,
         lastRefreshError: null,
-        allowedActions: isOwner && isSelf ? ["bindPersonalPlaylist"] : [],
-        disabledReason: null,
+        allowedActions,
+        disabledReason,
         version: roomRow.version
       };
     }
@@ -336,8 +494,12 @@ export class PersonalPlaylists {
     } : null;
 
     let allowedActions: PersonalPlaylistView["allowedActions"] = [];
-    if (isOwner && isSelf) {
-      allowedActions = ["bindPersonalPlaylist", "unbindPersonalPlaylist", "refreshPersonalPlaylist"];
+    if (isSelf) {
+      if (isOwner) {
+        allowedActions = ["bindPersonalPlaylist", "unbindPersonalPlaylist", "refreshPersonalPlaylist"];
+      } else {
+        allowedActions = ["refreshPersonalPlaylist"];
+      }
     }
 
     return {
@@ -347,6 +509,7 @@ export class PersonalPlaylists {
         type: binding.type as any,
         writeable: binding.writeable
       },
+      operation: opView,
       snapshot,
       lastRefreshError: (snap?.lastErrorCode as any) ?? null,
       allowedActions,
@@ -484,7 +647,7 @@ export class PersonalPlaylists {
         if (b.type === "ownerSubscribed" && !data.playlist.subscribed) {
           return null; // 标记权限失效
         }
-        if (b.type === "ownerCreated" && data.playlist.creatorId !== accountId) {
+        if ((b.type === "ownerCreated" || b.type === "roommateDedicated") && data.playlist.creatorId !== accountId) {
           return null;
         }
       }
@@ -597,7 +760,11 @@ export class PersonalPlaylists {
     }
   }
 
-  async #fetchAccountPlaylists(cookie: string, accountId: string): Promise<Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number }> | null> {
+  async #fetchAccountPlaylists(
+    cookie: string,
+    accountId: string,
+    callStrategy: (fn: () => Promise<AdapterResult<"userPlaylists">>) => Promise<AdapterResult<"userPlaylists">> = fn => fn()
+  ): Promise<Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number }> | null> {
     const list: Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number }> = [];
     let offset = 0;
     const limit = 1000;
@@ -606,9 +773,7 @@ export class PersonalPlaylists {
       if (++pages > 50) return null;
       let res: AdapterResult<"userPlaylists">;
       try {
-        res = await this.scheduler.executeMemoryTask(accountId, async () => {
-          return this.adapter.call({ operation: "userPlaylists", cookie, accountId, offset, limit });
-        });
+        res = await callStrategy(() => this.adapter.call({ operation: "userPlaylists", cookie, accountId, offset, limit }));
       } catch {
         return null;
       }
@@ -657,7 +822,430 @@ export class PersonalPlaylists {
     return r;
   }
 
-  #bumpRoom(tx: DatabaseTransaction, roomId: string): void {
+  onReauthorized(userId: string, authId: string, accountId: string, generation: number): void {
+    const notifyRooms: Array<{ roomId: string; version: number }> = [];
+
+    this.database.transaction(tx => {
+      const ownedRooms = tx.select({ id: room.id }).from(room).where(eq(room.ownerUserId, userId)).all();
+      for (const r of ownedRooms) {
+        let roomChanged = false;
+        const personalOps = tx.select().from(operation).where(and(
+          eq(operation.roomId, r.id),
+          eq(operation.kind, "createPersonalPlaylist"),
+          sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`
+        )).all();
+
+        for (const op of personalOps) {
+          const detail = tx.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, op.id)).get();
+          if (!detail) continue;
+
+          if (op.status === "needsAdministrator") continue;
+
+          if (["ready", "verified"].includes(detail.step)) {
+            const condition = this.#conditions({ ...op, accountId, authorizationId: authId, generation });
+            if (condition === "valid") {
+              tx.update(personalPlaylistCreation).set({ step: "ready" }).where(eq(personalPlaylistCreation.operationId, op.id)).run();
+              tx.update(operation).set({
+                accountId,
+                authorizationId: authId,
+                generation,
+                status: "queued",
+                errorCode: null,
+                version: sql`${operation.version} + 1`,
+                updatedAt: this.now()
+              }).where(eq(operation.id, op.id)).run();
+              this.#bumpRoom(tx, r.id);
+              roomChanged = true;
+            }
+          }
+        }
+
+        if (roomChanged) {
+          const updated = tx.select({ version: room.version }).from(room).where(eq(room.id, r.id)).get();
+          if (updated) notifyRooms.push({ roomId: r.id, version: updated.version });
+        }
+      }
+    });
+
+    for (const r of notifyRooms) {
+      this.eventStream.notifyRoom(this.database, r.roomId, { type: "room", resourceId: r.roomId, version: r.version });
+    }
+    this.scheduler.kick();
+  }
+
+  #bumpRoom(tx: AppDatabase | DatabaseTransaction, roomId: string): void {
     tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
+  }
+
+  #claimCreate(row: Operation): boolean {
+    const detail = this.database.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, row.id)).get();
+    if (!detail) {
+      this.#status(row.id, "needsAdministrator");
+      return false;
+    }
+    if (detail.step === "confirming") {
+      try {
+        this.#bindDedicated(row);
+      } catch {
+        this.#status(row.id, "needsAdministrator");
+      }
+      return false;
+    }
+    if (["sending", "unknown"].includes(detail.step)) {
+      this.#status(row.id, "needsAdministrator", row.errorCode);
+      return false;
+    }
+    const condition = this.#conditions(row);
+    if (condition !== "valid") {
+      this.#conditionStatus(row, condition);
+      return false;
+    }
+    const roomRow = this.database.select().from(room).where(eq(room.id, row.roomId)).get();
+    if (!roomRow) return false;
+    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
+    if (!auth || !auth.credentials) {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return false;
+    }
+    try {
+      this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
+    } catch {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return false;
+    }
+    if (detail.step === "verified") {
+      this.database.update(personalPlaylistCreation).set({ step: "sending", sentAt: this.now() }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+    }
+    this.#bumpRoom(this.database, row.roomId);
+    return true;
+  }
+
+  async #executeCreate(row: Operation): Promise<void> {
+    const detail = this.database.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, row.id)).get()!;
+    const roomRow = this.database.select().from(room).where(eq(room.id, row.roomId)).get();
+    if (!roomRow) {
+      this.#status(row.id, "stopped");
+      return;
+    }
+    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
+    if (!auth || !auth.credentials) {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
+    let cookie: string;
+    try {
+      cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
+    } catch {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
+
+    try {
+      if (detail.step === "ready") {
+        const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
+        if (!identity.ok) {
+          this.#readFailure(row, identity.error.code);
+          return;
+        }
+        if (identity.data.accountId !== row.accountId) {
+          this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH");
+          return;
+        }
+        const condition = this.#conditions(row);
+        if (condition !== "valid") {
+          this.#conditionStatus(row, condition);
+          return;
+        }
+
+        const beforeList = await this.#fetchAccountPlaylists(cookie, row.accountId!);
+        if (!beforeList) {
+          this.#readFailure(row, "NETWORK_ERROR");
+          return;
+        }
+
+        this.database.transaction(tx => {
+          tx.update(personalPlaylistCreation).set({
+            step: "verified",
+            beforePlaylists: JSON.stringify(beforeList)
+          }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+          this.#status(row.id, "queued");
+        });
+        return;
+      }
+
+      const createResult = await (async () => {
+        try {
+          return await this.adapter.call({ operation: "playlistCreate", cookie, name: detail.name });
+        } catch {
+          return null;
+        }
+      })();
+
+      if (!createResult) {
+        await this.#transitionToUnknownCreation(row, "MODULE_ERROR", cookie);
+        return;
+      }
+
+      if (!createResult.ok) {
+        if (createResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
+        if (createResult.error.outcome === "failed") {
+          this.#status(row.id, "failed", createResult.error.code);
+          return;
+        }
+        await this.#transitionToUnknownCreation(row, createResult.error.code, cookie);
+        return;
+      }
+
+      this.database.transaction(tx => {
+        tx.update(personalPlaylistCreation).set({ step: "confirming", playlistId: createResult.data.playlistId }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+        this.#bumpRoom(tx, row.roomId);
+      });
+      this.#bindDedicated(row);
+    } catch {
+      const saved = this.database.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, row.id)).get();
+      if (saved?.step === "confirming") {
+        this.#status(row.id, "needsAdministrator", "MODULE_ERROR");
+      } else if (saved?.step === "sending" || saved?.step === "unknown") {
+        await this.#transitionToUnknownCreation(row, "MODULE_ERROR", cookie);
+      } else {
+        this.#status(row.id, "failed", "MODULE_ERROR");
+      }
+    }
+  }
+
+  #recoverCreate(): void {
+    this.#prune();
+    for (const row of this.database.select().from(operation).where(eq(operation.kind, "createPersonalPlaylist")).all()) {
+      if (["succeeded", "failed", "stopped"].includes(row.status) || row.status === "waitingAuthorization") continue;
+      const detail = this.database.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, row.id)).get();
+      if (!detail) {
+        this.#status(row.id, "needsAdministrator");
+        continue;
+      }
+      if (["sending", "unknown"].includes(detail.step)) {
+        this.database.transaction(tx => {
+          tx.update(personalPlaylistCreation).set({ step: "unknown" }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+          this.#status(row.id, "needsAdministrator", row.errorCode);
+        });
+      } else if (detail.step === "confirming") {
+        this.database.transaction(tx => {
+          tx.update(personalPlaylistCreation).set({ recovered: true }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+          this.#status(row.id, "queued", row.errorCode);
+        });
+      } else if (detail.step === "verified") {
+        this.database.update(personalPlaylistCreation).set({ step: "ready" }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+        this.#status(row.id, "queued");
+      } else if (row.status === "processing") {
+        this.#status(row.id, "queued");
+      }
+    }
+  }
+
+  async #transitionToUnknownCreation(row: Operation, errorCode: Operation["errorCode"], cookie: string): Promise<void> {
+    let afterList: Array<{ id: string; name: string }> | null = null;
+    try {
+      afterList = await this.#fetchAccountPlaylists(cookie, row.accountId!);
+    } catch {
+      // 忽略只读补查失败，不影响记录 unknown 证据
+    }
+
+    const notifyInfo = this.database.transaction(tx => {
+      tx.update(personalPlaylistCreation).set({
+        step: "unknown",
+        afterPlaylists: afterList ? JSON.stringify(afterList) : null
+      }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+      tx.update(operation).set({
+        status: "needsAdministrator",
+        errorCode,
+        version: sql`${operation.version} + 1`,
+        updatedAt: this.now()
+      }).where(eq(operation.id, row.id)).run();
+      this.#bumpRoom(tx, row.roomId);
+      const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (!updatedOp) return null;
+      return { roomId: row.roomId, opVersion: updatedOp.version, roomVersion: updatedRoom?.version ?? 0 };
+    });
+
+    if (notifyInfo) {
+      this.eventStream.notifyRoom(this.database, notifyInfo.roomId, { type: "room", resourceId: notifyInfo.roomId, version: notifyInfo.roomVersion });
+    }
+  }
+
+  #bindDedicated(row: Operation): void {
+    let boundPlaylistId: string | null = null;
+    const now = this.now();
+
+    this.database.transaction(tx => {
+      const detail = tx.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, row.id)).get()!;
+      const condition = this.#conditions(row);
+      if (condition !== "valid") {
+        const roomExists = tx.select({ id: room.id }).from(room).where(eq(room.id, row.roomId)).get();
+        const memberExists = tx.select({ id: roomMembership.id }).from(roomMembership).where(eq(roomMembership.id, detail.memberId)).get();
+        if ((!roomExists || !memberExists) && detail.playlistId) {
+          this.publicPlaylists.ensureCleanupInTx(tx, detail.ownerUserId, row.accountId!, detail.playlistId, row.id);
+        }
+        this.#conditionStatus(row, condition, true);
+        return;
+      }
+
+      const targetPlaylistId = detail.playlistId!;
+
+      const existingUsage = tx.select().from(personalPlaylistBinding)
+        .where(eq(personalPlaylistBinding.playlistId, targetPlaylistId)).get();
+      if (existingUsage) {
+        this.#status(row.id, "needsAdministrator");
+        return;
+      }
+
+      const bindingId = v7();
+      tx.insert(personalPlaylistBinding).values({
+        id: bindingId,
+        roomId: row.roomId,
+        memberId: detail.memberId,
+        accountId: row.accountId!,
+        playlistId: targetPlaylistId,
+        name: detail.name,
+        type: "roommateDedicated",
+        writeable: true,
+        generation: 1,
+        creationOperationId: row.id,
+        createdAt: now,
+        updatedAt: now
+      }).run();
+
+      tx.update(personalPlaylistCreation).set({ step: "succeeded" }).where(eq(personalPlaylistCreation.operationId, row.id)).run();
+      this.#status(row.id, "succeeded");
+      this.#bumpRoom(tx, row.roomId);
+      boundPlaylistId = targetPlaylistId;
+    });
+
+    if (boundPlaylistId) {
+      const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+      if (updatedRoom) {
+        this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
+        this.eventStream.notifyRoom(this.database, row.roomId, { type: "snapshot", resourceId: row.roomId, version: updatedRoom.version });
+      }
+      const roomRow = this.database.select().from(room).where(eq(room.id, row.roomId)).get();
+      if (roomRow) {
+        void this.#executeRefresh(roomRow.ownerUserId, row.accountId!, boundPlaylistId, 1);
+      }
+    }
+  }
+
+  restoreCreatedBindingInTx(tx: DatabaseTransaction, roomId: string, memberId: string, accountId: string, playlistId: string, name: string, operationId: string): void {
+    const now = this.now();
+    tx.insert(personalPlaylistBinding)
+      .values({
+        id: v7(),
+        roomId,
+        memberId,
+        accountId,
+        playlistId,
+        name,
+        type: "roommateDedicated",
+        writeable: true,
+        generation: 1,
+        creationOperationId: operationId,
+        createdAt: now,
+        updatedAt: now
+      })
+      .run();
+
+    tx.insert(playlistSnapshot)
+      .values({
+        accountId,
+        playlistId,
+        snapshotVersion: 0,
+        createdAt: now,
+        updatedAt: now
+      })
+      .onConflictDoNothing()
+      .run();
+
+    tx.update(personalPlaylistCreation)
+      .set({
+        playlistId,
+        step: "succeeded",
+        recovered: true
+      })
+      .where(eq(personalPlaylistCreation.operationId, operationId))
+      .run();
+
+    tx.update(operation)
+      .set({
+        status: "succeeded",
+        errorCode: null,
+        accountId: null,
+        authorizationId: null,
+        generation: null,
+        version: sql`${operation.version} + 1`,
+        updatedAt: now
+      })
+      .where(eq(operation.id, operationId))
+      .run();
+
+    this.#bumpRoom(tx, roomId);
+  }
+
+  #status(operationId: string, status: Operation["status"], errorCode?: Operation["errorCode"]): void {
+    this.database.transaction(tx => {
+      const isTerminal = ["succeeded", "failed", "stopped"].includes(status);
+      tx.update(operation).set({
+        status,
+        errorCode: errorCode ?? null,
+        ...(isTerminal ? { accountId: null, authorizationId: null, generation: null } : {}),
+        version: sql`${operation.version} + 1`,
+        updatedAt: this.now()
+      }).where(eq(operation.id, operationId)).run();
+      const op = tx.select().from(operation).where(eq(operation.id, operationId)).get();
+      if (op) {
+        this.#bumpRoom(tx, op.roomId);
+      }
+    });
+  }
+
+  #readFailure(row: Operation, code: AdapterErrorCode): void {
+    if (code === "RATE_LIMITED") {
+      this.scheduler.pause(row.accountId!);
+      this.#status(row.id, "queued");
+      return;
+    }
+    if (["AUTH_UNAVAILABLE", "ACCOUNT_MISMATCH"].includes(code)) {
+      this.#status(row.id, "waitingAuthorization", code as any);
+      return;
+    }
+    this.#status(row.id, "queued", code);
+  }
+
+  #conditions(row: Operation): "valid" | "stopped" | "waitingAuthorization" {
+    const current = this.database.select().from(room).where(eq(room.id, row.roomId)).get();
+    const member = this.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, row.roomId), eq(roomMembership.userId, row.userId))).get();
+    if (!current || !member || current.ownerUserId === row.userId) return "stopped";
+
+    const binding = this.database.select().from(personalPlaylistBinding).where(and(eq(personalPlaylistBinding.roomId, row.roomId), eq(personalPlaylistBinding.memberId, member.id))).get();
+    if (binding && binding.creationOperationId !== row.id) return "stopped";
+
+    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.ownerUserId)).get();
+    if (!auth || auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation || auth.status !== "active" || !auth.credentials) {
+      return "waitingAuthorization";
+    }
+    return "valid";
+  }
+
+  #conditionStatus(row: Operation, condition: "stopped" | "waitingAuthorization", created = false): void {
+    this.#status(
+      row.id,
+      condition === "stopped" && created ? "needsAdministrator" : condition,
+      condition === "waitingAuthorization" ? "AUTH_UNAVAILABLE" : null
+    );
+  }
+
+  #prune(): void {
+    const cutoff = this.now() - 24 * 60 * 60 * 1000;
+    this.database.delete(operation).where(
+      sql`${operation.kind} = 'createPersonalPlaylist' AND ${operation.status} IN ('succeeded', 'failed', 'stopped') AND ${operation.updatedAt} <= ${cutoff}`
+    ).run();
+    this.database.delete(commandReceipt).where(sql`${commandReceipt.expiresAt} <= ${this.now()}`).run();
   }
 }

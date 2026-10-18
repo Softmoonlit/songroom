@@ -192,4 +192,26 @@ describe("personal-playlist HTTP routes", () => {
     expect(memberView.playlist?.id).toBe("pl-my-fav");
     expect(memberView.allowedActions).toEqual([]);
   });
+
+  it("室友创建专用个人歌单路由限制与受理：房主被拒绝，室友受理返回 202 并包含 operation 信息", async () => {
+    const { app, owner, member, outsider, roomId } = await fixture();
+    const createUrl = `/api/rooms/${roomId}/personal-playlist/create`;
+
+    // 未登录
+    expect((await request(app, createUrl, undefined, { idempotencyKey: v7() })).statusCode).toBe(401);
+    // 局外人
+    expect((await request(app, createUrl, outsider.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
+
+    // 房主被拒绝 (403 ROOMMATE_ONLY)
+    const ownerRes = await request(app, createUrl, owner.cookie, { idempotencyKey: v7() });
+    expect(ownerRes.statusCode).toBe(403);
+
+    // 室友创建受理 (202)
+    const createRes = await request(app, createUrl, member.cookie, { idempotencyKey: v7() });
+    expect(createRes.statusCode).toBe(202);
+    const view = personalPlaylistView.parse(createRes.json());
+    expect(view.playlist).toBeNull();
+    expect(view.operation?.status).toBe("queued");
+    expect(view.operation?.step).toBe("ready");
+  });
 });

@@ -6,13 +6,16 @@ import { v7 } from "uuid";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
-import { neteaseAuthorization, personalPlaylistBinding, playlistSnapshot, playlistTrack, room, roomMembership, user } from "../db/schema.js";
+import { neteaseAuthorization, operation, personalPlaylistBinding, personalPlaylistCreation, playlistSnapshot, playlistTrack, publicPlaylistCleanup, room, roomMembership, user } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { EventStreamService } from "../events/event-stream.js";
+import { PublicPlaylists } from "./public-playlists.js";
 import { PersonalPlaylists } from "./personal-playlists.js";
 import { BusinessError } from "../shared/errors.js";
+import { prepareCommand } from "../commands/commands.js";
+import { readCommandResource } from "../commands/receipts.js";
 
 class Adapter implements NeteaseAdapter {
   inputs: AdapterInput[] = [];
@@ -35,9 +38,13 @@ class Adapter implements NeteaseAdapter {
     data: {
       playlist: {
         id: input.playlistId,
-        name: input.playlistId === "pl-created-1" ? "房主自建我喜欢的歌" : "房主收藏周杰伦精选",
-        creatorId: input.playlistId === "pl-created-1" ? "cloud-owner" : "someone-else",
-        subscribed: input.playlistId !== "pl-created-1",
+        name: input.playlistId === "pl-created-1"
+          ? "房主自建我喜欢的歌"
+          : input.playlistId === "pl-sub-2"
+          ? "房主收藏周杰伦精选"
+          : "songroom-主房间-室友",
+        creatorId: "cloud-owner",
+        subscribed: input.playlistId === "pl-sub-2",
         status: 0
       },
       songIds: ["song-1", "song-2"],
@@ -47,6 +54,10 @@ class Adapter implements NeteaseAdapter {
       ]
     }
   });
+  create: (input: Extract<AdapterInput, { operation: "playlistCreate" }>) => Promise<AdapterResult<"playlistCreate">> = async () => ({
+    ok: true,
+    data: { playlistId: "pl-roommate-dedicated" }
+  });
 
   async assertVendorIntegrity() {}
   async dispose() {}
@@ -55,6 +66,7 @@ class Adapter implements NeteaseAdapter {
     if (input.operation === "identity") return await this.identity(input) as AdapterResult<I["operation"]>;
     if (input.operation === "userPlaylists") return await this.userPlaylists(input) as AdapterResult<I["operation"]>;
     if (input.operation === "playlistDetail") return await this.detail(input) as AdapterResult<I["operation"]>;
+    if (input.operation === "playlistCreate") return await this.create(input) as AdapterResult<I["operation"]>;
     throw new Error(`unexpected adapter call: ${input.operation}`);
   }
 }
@@ -114,7 +126,8 @@ function fixture() {
   scheduler.start();
   fixtures.push({ root, database, scheduler });
 
-  const service = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream);
+  const publicPlaylists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream);
+  const service = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, publicPlaylists);
   return { database, vault, adapter, scheduler, service, roomId, ownerMemberId, roommateMemberId };
 }
 
@@ -325,5 +338,211 @@ describe("PersonalPlaylists operations", () => {
 
     const refreshView = await service.refresh("owner", roomId);
     expect(refreshView.lastRefreshError).toBe("TARGET_PERMISSION");
+  });
+
+  it("室友可以发起创建专用个人歌单，上游创建成功后绑定为 roommateDedicated 且具备 writeable: true，歌单名称符合命名规范", async () => {
+    const { service, roomId, scheduler } = fixture();
+    const result = service.create("roommate", roomId, { idempotencyKey: v7() });
+    expect(result.accepted).toBe(true);
+    expect(result.view.operation?.status).toBe("queued");
+
+    // 等待调度器异步执行完成
+    await scheduler.settle();
+
+    const readView = service.read("roommate", roomId);
+    expect(readView.playlist).toEqual({
+      id: "pl-roommate-dedicated",
+      name: "songroom-主房间-室友",
+      type: "roommateDedicated",
+      writeable: true
+    });
+    expect(readView.allowedActions).toEqual(["refreshPersonalPlaylist"]);
+    expect(readView.snapshot?.trackCount).toBe(2);
+  });
+
+  it("房主调用创建专用个人歌单接口被 403 拒绝（ROOMMATE_ONLY）", async () => {
+    const { service, roomId } = fixture();
+    expect(() => service.create("owner", roomId, { idempotencyKey: v7() })).toThrowError(
+      expect.objectContaining({ code: "ROOMMATE_ONLY" })
+    );
+  });
+
+  it("已有个人歌单的室友再次创建被 409 拒绝（PERSONAL_PLAYLIST_EXISTS）", async () => {
+    const { service, roomId, scheduler } = fixture();
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    expect(() => service.create("roommate", roomId, { idempotencyKey: v7() })).toThrowError(
+      expect.objectContaining({ code: "PERSONAL_PLAYLIST_EXISTS" })
+    );
+  });
+
+  it("同成员同一房间存在未完成写操作时拒绝新的创建（409 OPERATION_PENDING）", async () => {
+    const { service, roomId } = fixture();
+    // 首次创建被受理处于排队中
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+
+    // 再次用不同 idempotencyKey 创建
+    expect(() => service.create("roommate", roomId, { idempotencyKey: v7() })).toThrowError(
+      expect.objectContaining({ code: "OPERATION_PENDING" })
+    );
+  });
+
+  it("创建专用个人歌单幂等防重：同键同内容重放返回 accepted: false，同键不同内容拒绝", async () => {
+    const { database, service, roomId } = fixture();
+    const key = v7();
+    const first = service.create("roommate", roomId, { idempotencyKey: key });
+    expect(first.accepted).toBe(true);
+
+    const replayed = service.create("roommate", roomId, { idempotencyKey: key });
+    expect(replayed.accepted).toBe(false);
+
+    // 同键不同内容拒绝（由 inspectCommand 校验并报 IDEMPOTENCY_CONFLICT）
+    const preparedOther = prepareCommand("roommate", key, "createPersonalPlaylist", { roomId: "diff-room" }, Date.now());
+    expect(() => readCommandResource(database, preparedOther, Date.now())).toThrowError(
+      expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" })
+    );
+  });
+
+  it("房主网易云账号已风控暂停或授权失效时拒绝室友创建（ACCOUNT_PAUSED / NETEASE_AUTH_REQUIRED）", async () => {
+    const { database, service, roomId, scheduler } = fixture();
+    scheduler.pause("cloud-owner");
+
+    expect(() => service.create("roommate", roomId, { idempotencyKey: v7() })).toThrowError(
+      expect.objectContaining({ code: "ACCOUNT_PAUSED" })
+    );
+
+    scheduler.resume("cloud-owner");
+    // 置授权为失效
+    database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.userId, "owner")).run();
+
+    expect(() => service.create("roommate", roomId, { idempotencyKey: v7() })).toThrowError(
+      expect.objectContaining({ code: "NETEASE_AUTH_REQUIRED" })
+    );
+  });
+
+  it("房主不能将室友创建的专用个人歌单绑定到房主个人歌单", async () => {
+    const { adapter, service, roomId, scheduler } = fixture();
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    // 上游清单中包含室友专用歌单
+    adapter.userPlaylists = async () => ({
+      ok: true,
+      data: {
+        playlists: [
+          { id: "pl-roommate-dedicated", name: "songroom-主房间-室友", creatorId: "cloud-owner", subscribed: false, status: 0 }
+        ],
+        more: false
+      }
+    });
+
+    await expect(service.bind("owner", roomId, {
+      idempotencyKey: v7(),
+      playlistId: "pl-roommate-dedicated"
+    })).rejects.toThrowError(expect.objectContaining({ code: "TARGET_PERMISSION" }));
+  });
+
+  it("创建过程遇到明确失败（outcome: failed）时直接标记为 failed，不进入 needsAdministrator", async () => {
+    const { adapter, service, roomId, scheduler } = fixture();
+    adapter.create = async () => ({
+      ok: false,
+      error: { code: "TARGET_PERMISSION", message: "无权创建", outcome: "failed" }
+    });
+
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    const view = service.read("roommate", roomId);
+    expect(view.playlist).toBeNull();
+    expect(view.operation?.status).toBe("failed");
+    expect(view.operation?.errorCode).toBe("TARGET_PERMISSION");
+  });
+
+  it("创建过程遇到上游未知异常时安全记录证据并进入 needsAdministrator 状态", async () => {
+    const { adapter, service, roomId, scheduler } = fixture();
+    adapter.create = async () => {
+      throw new Error("network timeout");
+    };
+
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    const view = service.read("roommate", roomId);
+    expect(view.playlist).toBeNull();
+    expect(view.operation?.status).toBe("needsAdministrator");
+    expect(view.operation?.step).toBe("unknown");
+    expect(view.disabledReason).toBe("OPERATION_PENDING");
+  });
+
+  it("24小时后终结操作被清理，不会因外键阻碍修剪已绑定专用歌单", async () => {
+    const { database, service, roomId, scheduler } = fixture();
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    const readView = service.read("roommate", roomId);
+    expect(readView.playlist?.id).toBe("pl-roommate-dedicated");
+
+    // 模拟 25 小时后修剪终结操作
+    const past = Date.now() - 25 * 60 * 60 * 1000;
+    database.update(operation).set({ updatedAt: past }).run();
+
+    // 触发下一次 prune 操作（比如创建新房间并调用 prune）
+    expect(() => {
+      database.delete(operation).where(
+        eq(operation.kind, "createPersonalPlaylist")
+      ).run();
+    }).not.toThrow();
+
+    // 绑定依然有效存活
+    const binding = database.select().from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).get();
+    expect(binding).toBeDefined();
+    expect(binding?.playlistId).toBe("pl-roommate-dedicated");
+  });
+
+  it("创建执行期间室友被移除，保留证据并停止绑定，安全转入歌单清理任务", async () => {
+    const { database, adapter, service, roomId, scheduler } = fixture();
+    // 拦截创建：在 playlistCreate 成功拿到 ID 之后，模拟室友被移除
+    adapter.create = async () => {
+      // 模拟室友在写入上游期间被移除
+      database.delete(roomMembership).where(eq(roomMembership.userId, "roommate")).run();
+      return { ok: true, data: { playlistId: "pl-roommate-late" } };
+    };
+
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    // 证据行保留未被级联删除
+    const creationRow = database.select().from(personalPlaylistCreation).get();
+    expect(creationRow).toBeDefined();
+    expect(creationRow?.playlistId).toBe("pl-roommate-late");
+
+    // 绑定未建立
+    const binding = database.select().from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).get();
+    expect(binding).toBeUndefined();
+
+    // 转化为云端清理任务
+    const cleanups = database.select().from(publicPlaylistCleanup).all();
+    expect(cleanups.length).toBe(1);
+    expect(cleanups[0].playlistId).toBe("pl-roommate-late");
+  });
+
+  it("创建期间房主授权代次变化，不恢复绑定到新代次", async () => {
+    const { database, adapter, service, roomId, scheduler } = fixture();
+    adapter.create = async () => {
+      // 模拟房主重新授权，generation 从 1 变为 2
+      database.update(neteaseAuthorization).set({ generation: 2 }).where(eq(neteaseAuthorization.userId, "owner")).run();
+      return { ok: true, data: { playlistId: "pl-gen-mismatch" } };
+    };
+
+    service.create("roommate", roomId, { idempotencyKey: v7() });
+    await scheduler.settle();
+
+    // 绑定未建立，操作进入 waitingAuthorization
+    const binding = database.select().from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).get();
+    expect(binding).toBeUndefined();
+
+    const op = database.select().from(operation).get()!;
+    expect(op.status).toBe("waitingAuthorization");
   });
 });

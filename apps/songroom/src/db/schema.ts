@@ -140,7 +140,7 @@ export const joinApplication = sqliteTable("join_application", {
 // 封闭业务操作信封；原始归属不用级联外键，可能已发的创建证据不能随实体删除。
 export const operation = sqliteTable("operation", {
   id: text("id").primaryKey(),
-  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong", "playNext"] }).notNull(),
+  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong", "playNext", "createPersonalPlaylist"] }).notNull(),
   userId: text("user_id").notNull(),
   roomId: text("room_id").notNull(),
   accountId: text("account_id"),
@@ -154,7 +154,7 @@ export const operation = sqliteTable("operation", {
   updatedAt: integer("updated_at").notNull()
 }, table => [
   check("operation_version_valid", sql`${table.version} > 0`),
-  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong', 'playNext')`),
+  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong', 'playNext', 'createPersonalPlaylist')`),
   check("operation_status_valid", sql`${table.status} IN ('queued', 'processing', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed', 'stopped')`),
   check("operation_recovery_scope_valid", sql`(${table.status} IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NULL AND ${table.authorizationId} IS NULL AND ${table.generation} IS NULL) OR (${table.status} NOT IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NOT NULL AND ${table.authorizationId} IS NOT NULL AND ${table.generation} IS NOT NULL AND ${table.generation} > 0)`),
   uniqueIndex("operation_pending_public_room_unique").on(table.roomId).where(sql`${table.kind} = 'createPublicPlaylist' AND ${table.status} NOT IN ('succeeded', 'failed', 'stopped')`),
@@ -215,18 +215,35 @@ export const personalPlaylistBinding = sqliteTable("personal_playlist_binding", 
   accountId: text("account_id").notNull(),
   playlistId: text("playlist_id").notNull(),
   name: text("name").notNull(),
-  type: text("type", { enum: ["ownerCreated", "ownerSubscribed"] }).notNull(),
+  type: text("type", { enum: ["ownerCreated", "ownerSubscribed", "roommateDedicated"] }).notNull(),
   writeable: integer("writeable", { mode: "boolean" }).notNull(),
   generation: integer("generation").notNull().default(1),
+  creationOperationId: text("creation_operation_id"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
   uniqueIndex("personal_playlist_binding_room_member_unique").on(table.roomId, table.memberId),
   index("personal_playlist_binding_target_index").on(table.accountId, table.playlistId),
-  check("personal_playlist_binding_type_valid", sql`${table.type} IN ('ownerCreated', 'ownerSubscribed')`),
+  check("personal_playlist_binding_type_valid", sql`${table.type} IN ('ownerCreated', 'ownerSubscribed', 'roommateDedicated')`),
   check("personal_playlist_binding_writeable_valid", sql`${table.writeable} IN (0, 1)`),
   check("personal_playlist_binding_generation_valid", sql`${table.generation} > 0`),
   check("personal_playlist_binding_fields_valid", sql`length(${table.playlistId}) > 0 AND length(${table.accountId}) > 0 AND length(${table.name}) > 0`)
+]);
+
+export const personalPlaylistCreation = sqliteTable("personal_playlist_creation", {
+  operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
+  ownerUserId: text("owner_user_id").notNull(),
+  memberId: text("member_id").notNull(),
+  name: text("name").notNull(),
+  step: text("step", { enum: ["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
+  playlistId: text("playlist_id"),
+  beforePlaylists: text("before_playlists"),
+  afterPlaylists: text("after_playlists"),
+  sentAt: integer("sent_at"),
+  recovered: integer("recovered", { mode: "boolean" }).notNull().default(false)
+}, table => [
+  check("personal_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
+  check("personal_playlist_creation_name_len", sql`length(${table.name}) >= 1 AND length(${table.name}) <= 100`)
 ]);
 
 // 真实账号请求启动预算与风控暂停持久化；执行权在发送前短事务中认领。
@@ -378,7 +395,7 @@ export const adminAuditLog = sqliteTable("admin_audit_log", {
 ]);
 
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, personalPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, requesterTag, publicPlaylistCleanup, adminAuditLog };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, personalPlaylistBinding, personalPlaylistCreation, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, requesterTag, publicPlaylistCleanup, adminAuditLog };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

@@ -1713,15 +1713,20 @@ export class PublicPlaylists {
   }
 
   async #runConfirmationCheck(operationId: string): Promise<void> {
-    const claimed = this.database.transaction(tx => {
-      const row = tx.select().from(operation).where(eq(operation.id, operationId)).get();
-      if (!row || row.status !== "awaitingConfirmation") return null;
-      const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, operationId)).get();
-      if (!detail || detail.step !== "unknown") return null;
+    let claimed: { row: Operation; detail: typeof publicSongRequest.$inferSelect } | null = null;
+    try {
+      claimed = this.database.transaction(tx => {
+        const row = tx.select().from(operation).where(eq(operation.id, operationId)).get();
+        if (!row || row.status !== "awaitingConfirmation") return null;
+        const detail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, operationId)).get();
+        if (!detail || detail.step !== "unknown") return null;
 
-      tx.update(publicSongRequest).set({ nextCheckAt: null }).where(eq(publicSongRequest.operationId, operationId)).run();
-      return { row, detail };
-    });
+        tx.update(publicSongRequest).set({ nextCheckAt: null }).where(eq(publicSongRequest.operationId, operationId)).run();
+        return { row, detail };
+      });
+    } catch {
+      return;
+    }
 
     if (!claimed) return;
     const { row, detail } = claimed;

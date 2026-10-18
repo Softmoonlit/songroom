@@ -5,7 +5,7 @@ import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "./database.js";
 import { sql } from "drizzle-orm";
-import { neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistCleanup, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
+import { neteaseAuthorization, operation, personalPlaylistBinding, personalPlaylistCreation, playlistSnapshot, playlistTrack, publicPlaylistCleanup, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
 import { roomNickname } from "../shared/room-contracts.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase }> = [];
@@ -345,6 +345,42 @@ it("个人歌单绑定在同一房间每成员唯一，允许跨房间绑定同�
     createdAt: now,
     updatedAt: now
   }).run()).toThrow();
+
+  // 支持室友专用个人歌单类型 roommateDedicated 与 creationOperationId
+  const roommateMemberId = v7();
+  database.insert(roomMembership).values({ id: roommateMemberId, roomId, userId: "roommate", nickname: "室友" }).run();
+  const opId = v7();
+  database.insert(operation).values({
+    id: opId,
+    kind: "createPersonalPlaylist",
+    userId: "roommate",
+    roomId,
+    status: "succeeded",
+    version: 1,
+    createdAt: now,
+    updatedAt: now
+  }).run();
+  database.insert(personalPlaylistCreation).values({
+    operationId: opId,
+    ownerUserId: "owner",
+    memberId: roommateMemberId,
+    name: "songroom-宿舍-室友",
+    step: "succeeded"
+  }).run();
+  expect(() => database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: roommateMemberId,
+    accountId: "cloud-owner",
+    playlistId: "pl-roommate-1",
+    name: "songroom-宿舍-室友",
+    type: "roommateDedicated",
+    writeable: true,
+    generation: 1,
+    creationOperationId: opId,
+    createdAt: now,
+    updatedAt: now
+  }).run()).not.toThrow();
 
   // 成员移除级联删除个人歌单绑定
   database.delete(roomMembership).where(sql`${roomMembership.id} = ${ownerMemberId}`).run();

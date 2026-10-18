@@ -8,7 +8,8 @@ import {
   personalPlaylistCandidatesView,
   personalPlaylistView,
   type PersonalPlaylistCandidate,
-  type PersonalPlaylistTrack
+  type PersonalPlaylistTrack,
+  type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
 import { DestructiveConfirmDialog } from "./DestructiveConfirmDialog.js";
 import { errorMessage, errorMessageForCode, queryOptions, request } from "./room-http.js";
@@ -36,6 +37,40 @@ function getRefreshErrorMessage(code: string): string {
       return errorMessageForCode(code);
   }
 }
+
+const personalOperationMessages: Record<NonNullable<PersonalPlaylistView["operation"]>["status"], string> = {
+  queued: "已排队，等待创建专用个人歌单。",
+  processing: "正在创建专用个人歌单。",
+  awaitingConfirmation: "创建结果待确认，可能已在网易云创建。请勿重复创建。",
+  waitingAuthorization: "正在等待房主恢复网易云授权。",
+  needsAdministrator: "创建结果未知，需要管理员处理。",
+  succeeded: "专用个人歌单已创建并绑定。",
+  failed: "创建明确失败，请重试。",
+  stopped: "创建操作已停止。"
+};
+
+export function getPersonalOperationMessage(op: NonNullable<PersonalPlaylistView["operation"]>): string {
+  if (op.step === "confirming") {
+    if (op.recovered) {
+      return "具体 ID 已恢复，正在核验并完成个人歌单关联。";
+    }
+    return "已获 ID 待关联，正在建立个人歌单绑定。";
+  }
+  if (op.step === "unknown" || op.status === "needsAdministrator") {
+    return "创建结果未知，需要管理员处理。";
+  }
+  return personalOperationMessages[op.status];
+}
+
+const personalDisabledMessages: Record<NonNullable<PersonalPlaylistView["disabledReason"]>, string> = {
+  NOT_OWNER: "只有房主可配置自建或收藏歌单。",
+  ROOMMATE_ONLY: "房主请绑定已有或收藏歌单，不能创建专用个人歌单。",
+  NETEASE_AUTH_REQUIRED: "房主网易云授权不可用，请等待房主完成授权。",
+  ACCOUNT_PAUSED: "房主网易云账号已暂停，请联系管理员核查。",
+  TARGET_BLOCKED: "目标歌单已被设为私密或已删除。",
+  PERSONAL_PLAYLIST_EXISTS: "当前已配置个人歌单。",
+  OPERATION_PENDING: "当前有正在处理的歌单创建操作，请稍候。"
+};
 
 function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]; active: boolean }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -273,12 +308,31 @@ export function PersonalPlaylistPane({
   const [bindDialogOpen, setBindDialogOpen] = useState(false);
   const [unbindDialogOpen, setUnbindDialogOpen] = useState(false);
   const [unbindError, setUnbindError] = useState("");
+  const [createError, setCreateError] = useState("");
 
   const query = useQuery({
     queryKey: ["room-personal-playlist", sessionId, roomId],
     queryFn: ({ signal }) => request(`/${roomId}/personal-playlist`, personalPlaylistView, signal),
     enabled: active,
     ...queryOptions
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () => {
+      setCreateError("");
+      return request(`/${roomId}/personal-playlist/create`, personalPlaylistView, undefined, {
+        idempotencyKey: uuidv7()
+      });
+    },
+    retry: false,
+    onSuccess: data => {
+      queryClient.setQueryData(["room-personal-playlist", sessionId, roomId], data);
+      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
+      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
+    },
+    onError: failure => {
+      setCreateError(errorMessage(failure));
+    }
   });
 
   const refreshMutation = useMutation({
@@ -340,6 +394,7 @@ export function PersonalPlaylistPane({
   const data = query.data;
   const playlist = data.playlist;
   const canBind = data.allowedActions.includes("bindPersonalPlaylist");
+  const canCreate = data.allowedActions.includes("createPersonalPlaylist");
   const canUnbind = data.allowedActions.includes("unbindPersonalPlaylist");
   const canRefresh = data.allowedActions.includes("refreshPersonalPlaylist");
 
@@ -352,8 +407,34 @@ export function PersonalPlaylistPane({
           <p className="empty-state-desc">
             {canBind
               ? "绑定网易云已创建或收藏的歌单作为个人歌单来源。个人歌单为可选配置，不影响你直接搜索点歌。"
+              : canCreate
+              ? "在房主网易云账号下创建专属于你的个人歌单，名称为 songroom-房间名-昵称。个人歌单为可选配置，不影响你直接搜索点歌。"
               : "当前未配置个人歌单。个人歌单为可选配置，不影响你直接搜索点歌。"}
           </p>
+
+          {data.operation && data.operation.status !== "succeeded" && (
+            <p className="netease-status" role="status">
+              {getPersonalOperationMessage(data.operation)}
+            </p>
+          )}
+
+          {data.operation?.errorCode && (
+            <p className="field-help" role="alert">
+              {errorMessageForCode(data.operation.errorCode)}
+            </p>
+          )}
+
+          {data.disabledReason && (
+            <p className="field-help">{personalDisabledMessages[data.disabledReason]}</p>
+          )}
+
+          {createError && (
+            <div className="error-banner" role="alert">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{createError}</span>
+            </div>
+          )}
+
           {canBind && (
             <button
               type="button"
@@ -361,6 +442,17 @@ export function PersonalPlaylistPane({
               onClick={() => setBindDialogOpen(true)}
             >
               绑定个人歌单
+            </button>
+          )}
+
+          {canCreate && (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={createMutation.isPending}
+              onClick={() => createMutation.mutate()}
+            >
+              {createMutation.isPending ? "正在创建…" : "创建专用个人歌单"}
             </button>
           )}
         </div>
@@ -387,7 +479,7 @@ export function PersonalPlaylistPane({
             <h1 className="playlist-name">{playlist.name}</h1>
             <div className="playlist-badges">
               <span className={`status-pill ${playlist.type === "ownerCreated" ? "role-owner" : "role-member"}`}>
-                {playlist.type === "ownerCreated" ? "自建歌单" : "收藏歌单"}
+                {playlist.type === "ownerCreated" ? "自建歌单" : playlist.type === "roommateDedicated" ? "专用歌单" : "收藏歌单"}
               </span>
               <span className="candidate-playlist-note">
                 {playlist.writeable ? "可维护" : "只读"}
@@ -560,7 +652,7 @@ export function MemberPersonalPlaylistSection({
         <div>
           <dt>来源属性</dt>
           <dd>
-            {data.playlist.type === "ownerCreated" ? "自建（可维护）" : "收藏（只读）"}
+            {data.playlist.type === "ownerCreated" ? "自建（可维护）" : data.playlist.type === "roommateDedicated" ? "专用（可维护）" : "收藏（只读）"}
           </dd>
         </div>
         <div>

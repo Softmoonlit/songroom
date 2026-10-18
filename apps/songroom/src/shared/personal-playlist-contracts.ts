@@ -2,7 +2,7 @@ import { z } from "zod";
 import { adapterErrorCodeSchema } from "../netease/protocol.js";
 import { uuidv7 } from "./contracts.js";
 
-export const personalPlaylistBindingType = z.enum(["ownerCreated", "ownerSubscribed"]);
+export const personalPlaylistBindingType = z.enum(["ownerCreated", "ownerSubscribed", "roommateDedicated"]);
 export type PersonalPlaylistBindingType = z.infer<typeof personalPlaylistBindingType>;
 
 export const personalPlaylistTrack = z.strictObject({
@@ -25,9 +25,21 @@ export type PersonalPlaylistSnapshot = z.infer<typeof personalPlaylistSnapshot>;
 export const personalPlaylistAction = z.enum([
   "bindPersonalPlaylist",
   "unbindPersonalPlaylist",
-  "refreshPersonalPlaylist"
+  "refreshPersonalPlaylist",
+  "createPersonalPlaylist"
 ]);
 export type PersonalPlaylistAction = z.infer<typeof personalPlaylistAction>;
+
+export const personalPlaylistOperation = z.strictObject({
+  id: uuidv7,
+  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED")]).nullable(),
+  status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
+  step: z.enum(["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
+  playlistId: z.string().nullable().optional(),
+  recovered: z.boolean().optional(),
+  version: z.number().int().positive()
+});
+export type PersonalPlaylistOperation = z.infer<typeof personalPlaylistOperation>;
 
 export const personalPlaylistView = z.strictObject({
   playlist: z.strictObject({
@@ -36,10 +48,19 @@ export const personalPlaylistView = z.strictObject({
     type: personalPlaylistBindingType,
     writeable: z.boolean()
   }).nullable(),
+  operation: personalPlaylistOperation.nullable().optional(),
   snapshot: personalPlaylistSnapshot.nullable().optional(),
   lastRefreshError: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED")]).nullable().optional(),
   allowedActions: z.array(personalPlaylistAction),
-  disabledReason: z.enum(["NOT_OWNER", "NETEASE_AUTH_REQUIRED", "ACCOUNT_PAUSED", "TARGET_BLOCKED"]).nullable(),
+  disabledReason: z.enum([
+    "NOT_OWNER",
+    "ROOMMATE_ONLY",
+    "NETEASE_AUTH_REQUIRED",
+    "ACCOUNT_PAUSED",
+    "TARGET_BLOCKED",
+    "PERSONAL_PLAYLIST_EXISTS",
+    "OPERATION_PENDING"
+  ]).nullable(),
   version: z.number().int().positive()
 });
 export type PersonalPlaylistView = z.infer<typeof personalPlaylistView>;
@@ -69,3 +90,8 @@ export const personalPlaylistUnbindCommand = z.strictObject({
   idempotencyKey: uuidv7
 });
 export type PersonalPlaylistUnbindCommand = z.infer<typeof personalPlaylistUnbindCommand>;
+
+export const personalPlaylistCreateCommand = z.strictObject({
+  idempotencyKey: uuidv7
+});
+export type PersonalPlaylistCreateCommand = z.infer<typeof personalPlaylistCreateCommand>;

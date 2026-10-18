@@ -20,6 +20,8 @@ import {
   adminAuditLog,
   neteaseAuthorization,
   operation,
+  personalPlaylistBinding,
+  personalPlaylistCreation,
   publicPlaylistBinding,
   publicPlaylistCleanup,
   publicPlaylistCreation,
@@ -578,6 +580,117 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
 
       const binding = verifyDb.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get()!;
       expect(binding.playlistId).toBe(newPlaylistId);
+      expect(binding.creationOperationId).toBe(opId);
+    } finally {
+      verifyDb.$client.close();
+    }
+  });
+
+  it("室友专用个人歌单创建证据唯一且业务有效：恢复绑定为 roommateDedicated", async () => {
+    const env = await setupTestApp();
+
+    const adminRegRes = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { origin: env.config.baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "admin-password-123" })
+    });
+    const adminUserId = ((await adminRegRes.json()) as { user: { id: string } }).user.id;
+    await env.restartApp([adminUserId]);
+
+    const ownerId = v7();
+    const roommateId = v7();
+    const roomId = v7();
+    const roommateMemberId = v7();
+    const opId = v7();
+    const accountId = "netease-user-roommate-dedicated";
+    const newPlaylistId = "pl-roommate-recovered-123";
+
+    const db = openDatabase(env.dbPath);
+    try {
+      db.insert(user).values([
+        { id: ownerId, name: "Owner", email: "owner@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() },
+        { id: roommateId, name: "Roommate", email: "roommate@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() }
+      ]).run();
+      db.insert(room).values({ id: roomId, ownerUserId: ownerId, name: "室友歌单恢复房间" }).run();
+      db.insert(roomMembership).values([
+        { id: v7(), roomId, userId: ownerId, nickname: "房主" },
+        { id: roommateMemberId, roomId, userId: roommateId, nickname: "室友" }
+      ]).run();
+
+      const vault = new CredentialVault(env.config.credentialKeyPath);
+      const authId = v7();
+      const encrypted = vault.encrypt("fake_cookie_value", { authorizationId: authId, accountId, generation: 1 });
+      db.insert(neteaseAuthorization).values({
+        id: authId,
+        userId: ownerId,
+        accountId,
+        nickname: "房主网易云",
+        generation: 1,
+        status: "active",
+        credentials: encrypted
+      }).run();
+
+      db.insert(operation).values({
+        id: opId,
+        kind: "createPersonalPlaylist",
+        userId: roommateId,
+        roomId,
+        accountId,
+        authorizationId: authId,
+        generation: 1,
+        status: "needsAdministrator",
+        errorCode: "MODULE_ERROR",
+        version: 1,
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now() - 1000
+      }).run();
+
+      db.insert(personalPlaylistCreation).values({
+        operationId: opId,
+        ownerUserId: ownerId,
+        memberId: roommateMemberId,
+        name: "songroom-室友歌单恢复房间-室友",
+        step: "unknown",
+        beforePlaylists: JSON.stringify([{ id: "pl-exist-1", name: "原歌单" }]),
+        afterPlaylists: JSON.stringify([
+          { id: "pl-exist-1", name: "原歌单" },
+          { id: newPlaylistId, name: "songroom-室友歌单恢复房间-室友" }
+        ]),
+        recovered: false
+      }).run();
+    } finally {
+      db.$client.close();
+    }
+
+    const actionResult = await runAdminAbnormalAction(env.config, "resolve-create", opId, {
+      isTTY: true,
+      fetch: env.trustedFetch,
+      prompts: {
+        adminEmail: async () => "admin@example.com",
+        adminPassword: async () => "admin-password-123",
+        reason: async () => "证据明确唯一，恢复室友专用个人歌单绑定",
+        confirm: async () => true
+      }
+    });
+
+    expect(actionResult.ok).toBe(true);
+    expect(actionResult.result?.conclusion).toBe("binding_restored");
+
+    const verifyDb = openDatabase(env.dbPath);
+    try {
+      const opRow = verifyDb.select().from(operation).where(eq(operation.id, opId)).get()!;
+      expect(opRow.status).toBe("succeeded");
+      expect(opRow.version).toBe(2);
+
+      const creationRow = verifyDb.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, opId)).get()!;
+      expect(creationRow.step).toBe("succeeded");
+      expect(creationRow.playlistId).toBe(newPlaylistId);
+      expect(creationRow.recovered).toBe(true);
+
+      const binding = verifyDb.select().from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).get()!;
+      expect(binding.playlistId).toBe(newPlaylistId);
+      expect(binding.type).toBe("roommateDedicated");
+      expect(binding.writeable).toBe(true);
       expect(binding.creationOperationId).toBe(opId);
     } finally {
       verifyDb.$client.close();

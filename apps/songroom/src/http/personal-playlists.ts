@@ -4,6 +4,7 @@ import type { PersonalPlaylists } from "../operations/personal-playlists.js";
 import {
   personalPlaylistBindCommand,
   personalPlaylistCandidatesView,
+  personalPlaylistCreateCommand,
   personalPlaylistUnbindCommand,
   personalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
@@ -31,6 +32,14 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
   }, async (request, reply) => {
     const principal = await requireSession(auth, request, reply);
     return playlists.candidates(principal.userId, request.params.roomId);
+  });
+
+  typed.post("/api/rooms/:roomId/personal-playlist/create", {
+    schema: { params: roomParams, body: personalPlaylistCreateCommand, response: { 200: personalPlaylistView, 202: personalPlaylistView } }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const result = playlists.create(principal.userId, request.params.roomId, request.body);
+    return reply.code(result.accepted ? 202 : 200).send(result.view);
   });
 
   typed.post("/api/rooms/:roomId/personal-playlist/bind", {

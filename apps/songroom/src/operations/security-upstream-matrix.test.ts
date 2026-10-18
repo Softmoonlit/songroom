@@ -23,6 +23,7 @@ import { CredentialVault } from "../netease/credentials.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { PublicPlaylists } from "./public-playlists.js";
+import { PersonalPlaylists } from "./personal-playlists.js";
 import { EventStreamService } from "../events/event-stream.js";
 import { Invites } from "../invites/invites.js";
 import { Rooms } from "../rooms/rooms.js";
@@ -55,9 +56,10 @@ function fixture() {
   const eventStream = new EventStreamService();
   const binding = new NeteaseBinding(database, adapter, vault, now);
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now);
+  const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, now);
   const invites = new Invites(database, eventStream, now);
   const roomsService = new Rooms(database, binding, eventStream, now, playlists);
-  const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, adapter, vault, eventStream, now);
+  const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, adapter, vault, eventStream, personalPlaylists, now);
   fixtures.push({ root, database, scheduler });
 
   // 创建用户

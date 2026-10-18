@@ -1,4 +1,4 @@
-import { errorMessage } from "./room-http";
+import { errorMessage } from "./room-http.js";
 
 export function QueryError({
   error,
