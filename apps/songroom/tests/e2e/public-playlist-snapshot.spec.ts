@@ -56,6 +56,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
     await page.route(refreshEndpoint, route => route.fulfill({ json: initialSyncView }));
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
     await expect(page.getByText("正在进行首次同步，请稍候…")).toBeVisible();
     await expect(page.getByText("歌单暂无歌曲")).toHaveCount(0);
@@ -107,6 +108,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
     for (const width of [320, 900, 1440]) {
       await page.setViewportSize({ width, height: 800 });
       await page.goto(`/rooms/${roomId}`);
+      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
       await expect(page.getByText("晴天", { exact: true })).toBeVisible();
       await expect(page.getByText("七里香", { exact: true })).toBeVisible();
@@ -150,6 +152,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
 
     await page.route(endpoint, route => route.fulfill({ json: syncedView }));
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByText("晴天", { exact: true })).toBeVisible();
 
     // 触发刷新返回失败

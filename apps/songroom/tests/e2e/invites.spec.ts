@@ -136,7 +136,7 @@ for (const copySucceeds of [true, false]) {
     const inviteReads: string[] = [];
     page.on("request", request => { if (request.url().endsWith("/invite")) inviteReads.push(request.url()); });
     await page.goto(`/rooms/${roomId}`);
-    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "搜索歌曲", exact: true })).toBeVisible();
     expect(inviteReads).toHaveLength(0);
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByRole("button", { name: "复制邀请链接" })).toHaveCount(0);

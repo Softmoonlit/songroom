@@ -34,6 +34,7 @@ for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 820 });
     await setup(page);
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     const heading = page.getByRole("heading", { name: "公共歌单", exact: true });
     await expect(heading).toBeAttached();
     const headingBox = await heading.boundingBox();
@@ -81,6 +82,7 @@ for (const width of [320, 390]) {
     await page.route(`**${root}/public-playlist`, route => route.fulfill({ json: multiRequesterView }));
     await page.route(`**${root}/public-playlist/refresh`, route => route.fulfill({ json: multiRequesterView }));
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "歌单已同步" })).toBeVisible();
     const track = page.locator('[data-song-id="1"]');
     await expect(track.locator(".requester-capsule")).toHaveText(requesters);
@@ -118,6 +120,7 @@ test("不展示下一首按钮，已有未确认命令仍可同键查询和恢�
     id: operationId, roomId, songId: "4", anchorSongId: "1", status: "awaitingConfirmation", step: "unknown", errorCode: null, version: 2
   } }));
   await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "查询下一首播放结果" })).toBeVisible();
   await expect(page.getByRole("button", { name: "随机换一组" })).toBeDisabled();
@@ -129,6 +132,7 @@ test("不展示下一首按钮，已有未确认命令仍可同键查询和恢�
   expect(commands[1]).toEqual(savedCommand);
   expect(commands[0]).toEqual(savedCommand);
   await page.reload();
+  await page.getByRole("button", { name: "公共歌单", exact: true }).click();
   await expect(page.getByText(/下一首播放结果待确认/)).toBeVisible();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "随机换一组" })).toBeDisabled();
@@ -143,6 +147,7 @@ test("无锚点与播放读取失败保留禁用定位；手动同步同时刷�
     return route.fulfill({ json: { songId: null, checkedAt: Date.now(), errorCode: "NETWORK_ERROR" } });
   });
   await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
   await expect(page.getByRole("button", { name: "定位到正在播放" })).toBeDisabled();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await page.getByRole("button", { name: "同步歌单", exact: true }).click();
@@ -162,6 +167,7 @@ test("只在公共页可见时轮询，返回立即读播放，减少动态效�
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install();
   await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
   await expect(page.locator(".playback-indicator")).toBeVisible();
   await expect(page.locator(".playback-indicator i").first()).toHaveCSS("animation-name", "none");
   const initial = reads;
@@ -177,6 +183,7 @@ test("只在公共页可见时轮询，返回立即读播放，减少动态效�
 test("歌单即时搜索与点歌人下拉筛选、保持绝对序号及复合过滤", async ({ page }) => {
   await setup(page, "401");
   await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
   // 初始不展开搜索栏
   await expect(page.getByRole("search", { name: "歌单内搜索与筛选" })).toHaveCount(0);

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Bell, ListMusic, Music2, Settings, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, Bell, ListMusic, Music2, Search, Settings, UserPlus, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { v7 } from "uuid";
 import { publicPlaylistView } from "../shared/public-playlist-contracts";
@@ -16,6 +16,7 @@ import { PublicPlaylistPane } from "./PublicPlaylistPane";
 import { MemberPersonalPlaylistSection, PersonalPlaylistPane } from "./PersonalPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
 import { getMusicPlatform } from "./music-platforms";
+import { SongSearchPane } from "./SongSearchPane";
 
 function DeleteRoomDialog({
   sessionId,
@@ -135,14 +136,14 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     queryFn: ({ signal }) => request(`/${roomId}`, roomShellView, signal),
     ...queryOptions
   });
-  type RoomTab = "public" | "personal" | "members" | "settings";
-  const [active, setActive] = useState<RoomTab>("public");
+  type RoomTab = "search" | "public" | "personal" | "members" | "settings";
+  const [active, setActive] = useState<RoomTab>("search");
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const scrollPositions = useRef<Record<RoomTab, number>>({ public: 0, personal: 0, members: 0, settings: 0 });
+  const scrollPositions = useRef<Record<RoomTab, number>>({ search: 0, public: 0, personal: 0, members: 0, settings: 0 });
   const keyboardOpen = useVirtualKeyboard();
 
   const leaveMutation = useMutation({
@@ -203,6 +204,14 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         <nav className="room-navigation" aria-label="房间导航">
           <button
             type="button"
+            aria-current={active === "search" ? "page" : undefined}
+            onClick={() => selectTab("search")}
+          >
+            <Search size={18} aria-hidden="true" />
+            搜索歌曲
+          </button>
+          <button
+            type="button"
             aria-current={active === "public" ? "page" : undefined}
             onClick={() => selectTab("public")}
           >
@@ -238,6 +247,14 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         </nav>
       </aside>
       <div className="room-page-content">
+        <section hidden={active !== "search"} aria-label="搜索歌曲">
+          <SongSearchPane
+            sessionId={sessionId}
+            roomId={roomId}
+            active={active === "search"}
+            onNavigateToPersonal={() => selectTab("personal")}
+          />
+        </section>
         <section hidden={active !== "public"} aria-label="公共歌单">
           <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
         </section>

@@ -158,6 +158,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await setupRoom(page, true);
     await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: initialPublicView }));
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
     const ownerReplaceBtn = page.getByRole("button", { name: "随机换一组" });
     await expect(ownerReplaceBtn).toBeVisible();
@@ -172,6 +173,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       })
     );
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
     const roommateReplaceBtn = page.getByRole("button", { name: "随机换一组" });
     await expect(roommateReplaceBtn).toHaveCount(0);
@@ -193,6 +195,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     });
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     // 弹窗可见，默认选中 10 首
@@ -226,6 +229,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.route(randomPreviewEndpoint, route => route.fulfill({ json: mockPreview10 }));
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -262,6 +266,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     });
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -290,6 +295,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -341,6 +347,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -470,6 +477,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
     await page.getByRole("button", { name: "确认替换" }).click();
 
@@ -533,6 +541,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
     // 页面初次载入即可见恢复的操作状态
     const statusBanner = page.locator(".replacement-status-banner");
@@ -550,6 +559,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     // 刷新页面
     await page.reload();
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.locator(".replacement-status-banner")).toBeVisible();
     await expect(page.locator(".replacement-status-banner")).toContainText(
       "正在添加新歌曲到公共歌单（已添加 4 / 10 首）…"
@@ -568,6 +578,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -640,6 +651,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -666,6 +678,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -684,6 +697,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
 
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await page.getByRole("button", { name: "随机换一组" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -706,6 +720,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     ]) {
       await page.setViewportSize(viewport);
       await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
       // 验证页面无横向滚动条
       const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);

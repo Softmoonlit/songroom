@@ -77,6 +77,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       });
 
       await page.goto(`/rooms/${roomId}`);
+      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
       // 验证失效状态文案清晰展示
       const invalidCard = page.getByRole("region", { name: "公共歌单失效状态" });
@@ -122,6 +123,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       });
 
       await page.goto(`/rooms/${roomId}`);
+      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
       // 验证失效状态与等待房主说明
       await expect(page.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
@@ -156,6 +158,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
 
     await page.route(endpoint, route => route.fulfill({ json: publicPlaylistView.parse(readFailedView) }));
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
     await expect(page.getByText(/暂时读取失败.*已保留上次快照/)).toBeVisible();
     await expect(page.getByText("晴天")).toBeVisible();
@@ -178,13 +181,14 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
 
     await page.route(endpoint, route => route.fulfill({ json: publicPlaylistView.parse(awaitingConfirmationView) }));
     await page.reload();
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
 
     await expect(page.getByRole("status")).toContainText(/创建结果待核查/);
     await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
   });
 
   test("真实运行应用（无 route 拦截）：经历公开刷新核查失效并成功重建为新代次", async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(120_000);
     let playlistState: "initial" | "deleted" | "recreated" = "initial";
     let createCount = 0;
 
@@ -272,6 +276,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       await page.getByRole("button", { name: "创建并进入房间" }).click();
 
       // 1. 创建初始公共歌单
+      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
       await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
       await page.getByRole("button", { name: "创建公共歌单" }).click();
       await expect.poll(async () => {

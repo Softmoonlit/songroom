@@ -265,6 +265,7 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     await guest.getByRole("link", { name: "进入房间：真实审批音乐间", exact: true }).click();
     await expect(guest).toHaveURL(actualRoomUrl);
     await expect(guest.getByText("室友昵称", { exact: true })).toBeVisible();
+    await guest.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(guest.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
     const binding = await guest.request.get("/api/netease/binding");
     expect((await binding.json()).binding).toBeNull();

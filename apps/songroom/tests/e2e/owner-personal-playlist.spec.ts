@@ -141,7 +141,7 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       });
 
       await page.goto(`/rooms/${roomId}`);
-      await page.getByRole("button", { name: "我的歌单" }).click();
+      await page.getByRole("button", { name: "我的歌单", exact: true }).click();
       await expect(page.getByRole("heading", { name: "尚未配置个人歌单" })).toBeVisible();
       await expect(page.getByText(/不影响你直接搜索点歌/)).toHaveCount(0);
       await expect(page.getByRole("button", { name: /绑定个人歌单|更换歌单|解除绑定/ })).toHaveCount(0);
@@ -162,7 +162,7 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
         json: { ...emptyPersonalView, allowedActions: [], disabledReason: "NETEASE_AUTH_REQUIRED" }
       }));
       await page.goto(`/rooms/${roomId}`);
-      await page.getByRole("button", { name: "我的歌单" }).click();
+      await page.getByRole("button", { name: "我的歌单", exact: true }).click();
       await expect(page.getByText("房主网易云授权不可用，请等待房主完成授权。")).toBeVisible();
       await expect(page.getByRole("button", { name: /创建专用个人歌单|绑定个人歌单/ })).toHaveCount(0);
     });
@@ -182,16 +182,16 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       await route.fulfill({ json: currentView });
     });
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "我的歌单" }).click();
+    await page.getByRole("button", { name: "我的歌单", exact: true }).click();
     await page.getByRole("button", { name: "创建专用个人歌单" }).click();
     const pendingMessage = "创建结果待确认，可能已在网易云创建。请勿重复创建。";
     await expect(page.getByText(pendingMessage)).toBeVisible();
     await expect(page.getByRole("button", { name: "创建专用个人歌单" })).toHaveCount(0);
     await page.getByRole("button", { name: "房间设置" }).click();
-    await page.getByRole("button", { name: "我的歌单" }).click();
+    await page.getByRole("button", { name: "我的歌单", exact: true }).click();
     await expect(page.getByText(pendingMessage)).toBeVisible();
     await page.reload();
-    await page.getByRole("button", { name: "我的歌单" }).click();
+    await page.getByRole("button", { name: "我的歌单", exact: true }).click();
     await expect(page.getByText(pendingMessage)).toBeVisible();
     await expect(page.getByText("创建明确失败，请重试。")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建专用个人歌单" })).toHaveCount(0);
@@ -208,7 +208,7 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       }
     }));
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "我的歌单" }).click();
+    await page.getByRole("button", { name: "我的歌单", exact: true }).click();
     await expect(page.getByText("创建结果未知，需要管理员处理。")).toBeVisible();
     await expect(page.getByText("创建明确失败，请重试。")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建专用个人歌单" })).toHaveCount(0);
@@ -247,7 +247,7 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       await page.route(refreshEndpoint, route => route.fulfill({ json: dedicatedPersonalView }));
       await page.goto(`/rooms/${roomId}`);
       const nav = page.getByRole("navigation", { name: "房间导航" });
-      await expect(nav.getByRole("button")).toHaveText(["公共歌单", "我的歌单", "房间成员", "房间设置"]);
+      await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "公共歌单", "我的歌单", "房间成员", "房间设置"]);
       await nav.getByRole("button", { name: "我的歌单" }).click();
       await expect(nav.getByRole("button", { name: "我的歌单" })).toHaveAttribute("aria-current", "page");
       await expect(page.getByRole("heading", { name: "songroom-测试音乐间-房主小林" })).toBeVisible();

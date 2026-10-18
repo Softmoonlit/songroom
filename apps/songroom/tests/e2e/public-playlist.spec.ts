@@ -39,6 +39,7 @@ for (const width of [320, 390, 900, 1440]) {
       return route.fulfill({ status: 202, json: view });
     });
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).press("Enter");
     await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
     expect(writes).toBe(0);
     const create = page.getByRole("button", { name: "创建公共歌单", exact: true });
@@ -51,6 +52,7 @@ for (const width of [320, 390, 900, 1440]) {
     const before = reads;
     view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null, version: 2 }, allowedActions: ["refreshPublicPlaylist"], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
     await page.reload();
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-071", { exact: true })).toBeVisible();
@@ -74,6 +76,7 @@ for (const [status, text] of [
       return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: { id: operationId, status, errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 }) });
     });
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(text);
     await expect(page.getByRole("button", { name: /创建公共歌单|重试创建/ })).toHaveCount(0);
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
@@ -96,6 +99,7 @@ for (const [title, op, text] of [
       return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: op, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 }) });
     });
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(text);
     await expect(page.getByRole("status")).not.toContainText("创建明确失败");
     await expect(page.getByRole("button", { name: /创建公共歌单|重试创建/ })).toHaveCount(0);
@@ -107,6 +111,7 @@ for (const [reason, text] of [["OWNER_ONLY", "只有房主"], ["NETEASE_AUTH_REQ
     await roomPage(page);
     await page.route(endpoint, route => route.fulfill({ json: { ...empty, allowedActions: [], disabledReason: reason } }));
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("region", { name: "公共歌单", exact: true })).toContainText(text);
     await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);
   });
@@ -123,6 +128,7 @@ for (const [code, text] of [
       ...empty, operation: { id: operationId, status: "needsAdministrator", errorCode: code, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1
     }) }));
     await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("region", { name: "公共歌单", exact: true })).toContainText(text);
     await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);
   });
@@ -139,6 +145,7 @@ test("创建响应丢失后安全重试复用 UUIDv7，明确本地拒绝后刷�
     return route.fulfill({ status: 202, json: { ...empty, operation: { id: operationId, status: "queued", errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 } });
   });
   await page.goto(`/rooms/${roomId}`);
+  await page.getByRole("button", { name: "公共歌单", exact: true }).click();
   const create = page.getByRole("button", { name: "创建公共歌单", exact: true });
   await create.click();
   await expect(page.getByRole("alert")).toContainText("暂时无法");
@@ -197,6 +204,7 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     await page.getByLabel("房间名称").fill("离线音乐间");
     await page.getByLabel("我的房间昵称").fill("房主");
     await page.getByRole("button", { name: "创建并进入房间" }).click();
+    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
     await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(0);
     const url = page.url();
