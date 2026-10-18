@@ -2,10 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { SongRoomAuth } from "../auth.js";
 import type { PersonalPlaylists } from "../operations/personal-playlists.js";
 import {
-  personalPlaylistBindCommand,
-  personalPlaylistCandidatesView,
   personalPlaylistCreateCommand,
-  personalPlaylistUnbindCommand,
   personalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
@@ -27,12 +24,6 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
     return playlists.read(principal.userId, request.params.roomId);
   });
 
-  typed.get("/api/rooms/:roomId/personal-playlist/candidates", {
-    schema: { params: roomParams, response: { 200: personalPlaylistCandidatesView } }
-  }, async (request, reply) => {
-    const principal = await requireSession(auth, request, reply);
-    return playlists.candidates(principal.userId, request.params.roomId);
-  });
 
   typed.post("/api/rooms/:roomId/personal-playlist/create", {
     schema: { params: roomParams, body: personalPlaylistCreateCommand, response: { 200: personalPlaylistView, 202: personalPlaylistView } }
@@ -42,19 +33,7 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
     return reply.code(result.accepted ? 202 : 200).send(result.view);
   });
 
-  typed.post("/api/rooms/:roomId/personal-playlist/bind", {
-    schema: { params: roomParams, body: personalPlaylistBindCommand, response: { 200: personalPlaylistView } }
-  }, async (request, reply) => {
-    const principal = await requireSession(auth, request, reply);
-    return playlists.bind(principal.userId, request.params.roomId, request.body);
-  });
 
-  typed.post("/api/rooms/:roomId/personal-playlist/unbind", {
-    schema: { params: roomParams, body: personalPlaylistUnbindCommand, response: { 200: personalPlaylistView } }
-  }, async (request, reply) => {
-    const principal = await requireSession(auth, request, reply);
-    return playlists.unbind(principal.userId, request.params.roomId, request.body);
-  });
 
   typed.post("/api/rooms/:roomId/personal-playlist/refresh", {
     schema: { params: roomParams, response: { 200: personalPlaylistView } }

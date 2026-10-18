@@ -267,7 +267,7 @@ export class AbnormalOperationsService {
             lastErrorCode: op.errorCode,
             impactDescription:
               added.length === 1
-                ? "具体 ID 证据唯一：若原房间与室友仍有效则恢复专用个人歌单绑定；若原业务已结束转歌单清理"
+                ? "具体 ID 证据唯一：若原房间与归属成员仍有效则恢复专用个人歌单绑定；若原业务已结束转歌单清理"
                 : "证据歧义：新增歌单数量不等于 1，将继续保持暂停，不得按名称猜测或再次创建",
             updatedAt: op.updatedAt
           };
@@ -603,8 +603,11 @@ export class AbnormalOperationsService {
     const currentAuth = roomRow ? this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get() : null;
 
     const isBusinessValid = Boolean(
+      personalDetail &&
       roomRow &&
+      roomRow.ownerUserId === personalDetail.ownerUserId &&
       member &&
+      member.id === personalDetail.memberId &&
       !existingBinding &&
       currentAuth &&
       currentAuth.status === "active" &&
@@ -654,22 +657,17 @@ export class AbnormalOperationsService {
         previousStatus: "needsAdministrator",
         nextStatus: "succeeded",
         conclusion: "binding_restored",
-        message: `创建证据唯一，已成功为房间恢复室友专用个人歌单绑定 (${candidate.id})`
+        message: `创建证据唯一，已成功为房间恢复专用个人歌单绑定 (${candidate.id})`
       };
     }
 
     // 业务已结束：转个人歌单清理任务
     let cleanupId: string;
-    const ownerUserId = roomRow ? roomRow.ownerUserId : op.userId;
+    const ownerUserId = personalDetail!.ownerUserId;
     this.database.transaction(tx => {
       cleanupId = this.playlists.ensureCleanupInTx(tx, ownerUserId, op.accountId!, candidate.id, op.id);
 
-      tx.update(personalPlaylistCreation)
-        .set({
-          playlistId: null,
-          step: "stopped",
-          recovered: true
-        })
+      tx.delete(personalPlaylistCreation)
         .where(eq(personalPlaylistCreation.operationId, operationId))
         .run();
 

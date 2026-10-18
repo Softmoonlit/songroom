@@ -9,7 +9,7 @@ import { room, roomMembership, neteaseAuthorization } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
-import { personalPlaylistCandidatesView, personalPlaylistView } from "../shared/personal-playlist-contracts.js";
+import { personalPlaylistView } from "../shared/personal-playlist-contracts.js";
 
 const origins = new WeakMap<SongRoomApp, string>();
 const cleanups: (() => Promise<void>)[] = [];
@@ -116,69 +116,33 @@ function request(app: SongRoomApp, url: string, cookie?: string, body?: unknown,
 }
 
 describe("personal-playlist HTTP routes", () => {
-  it("个人歌单只读查询与候选清单限制房间成员与房主权限，响应头包含 no-store", async () => {
+  it("个人歌单查询限制房间成员，房主与室友只显示主动创建且响应禁止缓存", async () => {
     const { app, owner, member, outsider, roomId } = await fixture();
     const url = `/api/rooms/${roomId}/personal-playlist`;
-    const candidatesUrl = `/api/rooms/${roomId}/personal-playlist/candidates`;
-
-    // 未登录
     expect((await request(app, url)).statusCode).toBe(401);
-    // 局外人
     expect((await request(app, url, outsider.cookie)).statusCode).toBe(404);
-
-    // 房主查询自己（未配置）
-    const ownerRes = await request(app, url, owner.cookie);
-    expect(ownerRes.statusCode).toBe(200);
-    expect(ownerRes.headers["cache-control"]).toBe("no-store");
-    const ownerView = personalPlaylistView.parse(ownerRes.json());
-    expect(ownerView.playlist).toBeNull();
-    expect(ownerView.allowedActions).toContain("bindPersonalPlaylist");
-
-    // 候选列表：仅房主可获取
-    expect((await request(app, candidatesUrl, member.cookie)).statusCode).toBe(403);
-    const candidatesRes = await request(app, candidatesUrl, owner.cookie);
-    expect(candidatesRes.statusCode).toBe(200);
-    const candidatesView = personalPlaylistCandidatesView.parse(candidatesRes.json());
-    expect(candidatesView.candidates).toHaveLength(2);
-    expect(candidatesView.candidates[0]).toEqual({ id: "pl-my-fav", name: "我喜欢的音乐", type: "ownerCreated", writeable: true });
-    expect(candidatesView.candidates[1]).toEqual({ id: "pl-sub-rock", name: "摇滚精选", type: "ownerSubscribed", writeable: false });
+    for (const principal of [owner, member]) {
+      const response = await request(app, url, principal.cookie);
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(personalPlaylistView.parse(response.json())).toMatchObject({ playlist: null, allowedActions: ["createPersonalPlaylist"] });
+    }
   });
 
-  it("房主绑定本人自建或收藏歌单成功，拒绝未授权来源与任意公开可读但未拥有歌单", async () => {
-    const { app, owner, member, roomId } = await fixture();
-    const bindUrl = `/api/rooms/${roomId}/personal-playlist/bind`;
-
-    // 室友无权绑定
-    expect((await request(app, bindUrl, member.cookie, { idempotencyKey: v7(), playlistId: "pl-my-fav" })).statusCode).toBe(403);
-
-    // 跨站拒绝
-    expect((await request(app, bindUrl, owner.cookie, { idempotencyKey: v7(), playlistId: "pl-my-fav" }, "https://evil.com")).statusCode).toBe(403);
-
-    // 任意非清单 ID 拒绝
-    const rejectRes = await request(app, bindUrl, owner.cookie, { idempotencyKey: v7(), playlistId: "pl-arbitrary-public" });
-    expect(rejectRes.statusCode).toBe(422);
-
-    // 绑定自建歌单成功
-    const bindRes = await request(app, bindUrl, owner.cookie, { idempotencyKey: v7(), playlistId: "pl-my-fav" });
-    expect(bindRes.statusCode).toBe(200);
-    const view = personalPlaylistView.parse(bindRes.json());
-    expect(view.playlist?.id).toBe("pl-my-fav");
-    expect(view.playlist?.writeable).toBe(true);
-    expect(view.snapshot?.trackCount).toBe(1);
-    expect(view.snapshot?.tracks[0].name).toBe("反方向的钟");
-
-    // 解绑
-    const unbindUrl = `/api/rooms/${roomId}/personal-playlist/unbind`;
-    const unbindRes = await request(app, unbindUrl, owner.cookie, { idempotencyKey: v7() });
-    expect(unbindRes.statusCode).toBe(200);
-    const unbindView = personalPlaylistView.parse(unbindRes.json());
-    expect(unbindView.playlist).toBeNull();
+  it("已有、自建和收藏歌单候选、绑定及解绑 API 已退役", async () => {
+    const { app, owner, roomId } = await fixture();
+    const base = `/api/rooms/${roomId}/personal-playlist`;
+    expect((await request(app, `${base}/candidates`, owner.cookie)).statusCode).toBe(404);
+    expect((await request(app, `${base}/bind`, owner.cookie, { idempotencyKey: v7(), playlistId: "pl-my-fav" })).statusCode).toBe(404);
+    expect((await request(app, `${base}/unbind`, owner.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
   });
 
   it("室友可在成员详情中只读查看房主个人歌单，不暴露维护权限", async () => {
     const { app, owner, member, outsider, roomId, ownerMemberId } = await fixture();
-    const bindUrl = `/api/rooms/${roomId}/personal-playlist/bind`;
-    await request(app, bindUrl, owner.cookie, { idempotencyKey: v7(), playlistId: "pl-my-fav" });
+    const createUrl = `/api/rooms/${roomId}/personal-playlist/create`;
+    const createRes = await request(app, createUrl, owner.cookie, { idempotencyKey: v7() });
+    expect(createRes.statusCode).toBe(202);
+    await app.scheduler.settle();
 
     const memberViewUrl = `/api/rooms/${roomId}/members/${ownerMemberId}/personal-playlist`;
 
@@ -189,11 +153,12 @@ describe("personal-playlist HTTP routes", () => {
     const memberRes = await request(app, memberViewUrl, member.cookie);
     expect(memberRes.statusCode).toBe(200);
     const memberView = personalPlaylistView.parse(memberRes.json());
-    expect(memberView.playlist?.id).toBe("pl-my-fav");
+    expect(memberView.playlist).toEqual({ id: expect.any(String), name: "摇滚精选" });
+    expect(memberView.snapshot?.trackCount).toBe(1);
     expect(memberView.allowedActions).toEqual([]);
   });
 
-  it("室友创建专用个人歌单路由限制与受理：房主被拒绝，室友受理返回 202 并包含 operation 信息", async () => {
+  it("成员创建接口校验登录、成员与同源，房主和室友均可受理并幂等返回", async () => {
     const { app, owner, member, outsider, roomId } = await fixture();
     const createUrl = `/api/rooms/${roomId}/personal-playlist/create`;
 
@@ -202,16 +167,24 @@ describe("personal-playlist HTTP routes", () => {
     // 局外人
     expect((await request(app, createUrl, outsider.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
 
-    // 房主被拒绝 (403 ROOMMATE_ONLY)
-    const ownerRes = await request(app, createUrl, owner.cookie, { idempotencyKey: v7() });
-    expect(ownerRes.statusCode).toBe(403);
+    expect((await request(app, createUrl, owner.cookie, { idempotencyKey: v7() }, "https://evil.com")).statusCode).toBe(403);
+    for (const principal of [owner, member]) {
+      const key = v7();
+      const createRes = await request(app, createUrl, principal.cookie, { idempotencyKey: key });
+      expect(createRes.statusCode).toBe(202);
+      const view = personalPlaylistView.parse(createRes.json());
+      expect(view.operation?.status).toBe("queued");
+      expect(view.operation?.step).toBe("ready");
+      const replayed = await request(app, createUrl, principal.cookie, { idempotencyKey: key });
+      expect(replayed.statusCode).toBe(200);
+      expect(personalPlaylistView.parse(replayed.json()).operation?.id).toBe(view.operation?.id);
+    }
+  });
 
-    // 室友创建受理 (202)
-    const createRes = await request(app, createUrl, member.cookie, { idempotencyKey: v7() });
-    expect(createRes.statusCode).toBe(202);
-    const view = personalPlaylistView.parse(createRes.json());
-    expect(view.playlist).toBeNull();
-    expect(view.operation?.status).toBe("queued");
-    expect(view.operation?.step).toBe("ready");
+  it("创建接口拒绝指定其他成员或绑定外部目标，不能越权创建", async () => {
+    const { app, owner, roomId, roommateMemberId } = await fixture();
+    const url = `/api/rooms/${roomId}/personal-playlist/create`;
+    expect((await request(app, url, owner.cookie, { idempotencyKey: v7(), memberId: roommateMemberId })).statusCode).toBe(400);
+    expect((await request(app, url, owner.cookie, { idempotencyKey: v7(), playlistId: "external" })).statusCode).toBe(400);
   });
 });

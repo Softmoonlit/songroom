@@ -119,6 +119,139 @@ describe("database lifecycle", () => {
     } finally { current.$client.close(); }
   });
 
+  it.each([22, 23, 24])("从版本 %s 升级退役外部来源与孤立快照，保留公共资源和旧 bind/unbind 防重事实", versions => {
+    const filePath = temporaryDatabasePath();
+    createOldDatabase(filePath, versions);
+    const now = Date.now();
+    const old = new Database(filePath);
+    old.pragma("foreign_keys = ON");
+    old.exec(`
+      INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES ('owner', '房主', 'owner@example.com', 0, 1, 1);
+      INSERT INTO room (id, name, owner_user_id) VALUES ('room-a', '宿舍', 'owner'), ('room-b', '另一个宿舍', 'owner'), ('untouched', '无旧关联', 'owner');
+      INSERT INTO room_membership (id, room_id, user_id, nickname) VALUES ('member-a', 'room-a', 'owner', '房主'), ('member-b', 'room-b', 'owner', '房主');
+      INSERT INTO personal_playlist_binding (id, room_id, member_id, account_id, playlist_id, name, type, writeable, created_at, updated_at) VALUES
+        ('external-a', 'room-a', 'member-a', 'cloud', 'external', '已有', 'ownerCreated', 1, 1, 1),
+        ('external-b', 'room-b', 'member-b', 'cloud', 'public', '收藏', 'ownerSubscribed', 0, 1, 1);
+      INSERT INTO public_playlist_binding (room_id, account_id, playlist_id, name, creation_operation_id) VALUES ('room-a', 'cloud', 'public', '公共', 'public-creation');
+      INSERT INTO playlist_snapshot (account_id, playlist_id, created_at, updated_at) VALUES ('cloud', 'external', 1, 1), ('cloud', 'public', 1, 1), ('other-cloud', 'external', 1, 1);
+      INSERT INTO playlist_track (account_id, playlist_id, position, song_id, name, artists, album) VALUES
+        ('cloud', 'external', 0, 'song', '歌曲', '[]', ''), ('cloud', 'public', 0, 'song', '歌曲', '[]', ''), ('other-cloud', 'external', 0, 'song', '歌曲', '[]', '');
+    `);
+    const receipts = ["bindPersonalPlaylist", "unbindPersonalPlaylist"].map(intent => {
+      const key = v7({ msecs: now });
+      const digest = canonicalDigest({ intent, roomId: "room-a" });
+      const resourceId = `${intent}-result`;
+      old.prepare("INSERT INTO command_receipt VALUES (?, ?, ?, ?, ?)").run("owner", key, digest, resourceId, now + 86_400_000);
+      return { accountId: "owner", key, digest, resourceId };
+    });
+    old.close();
+
+    migrateDatabase(filePath);
+    migrateDatabase(filePath);
+
+    const current = openDatabase(filePath);
+    try {
+      expect(current.$client.prepare("SELECT * FROM personal_playlist_binding").all()).toEqual([]);
+      expect(current.$client.prepare("SELECT account_id, playlist_id FROM playlist_snapshot ORDER BY account_id, playlist_id").all()).toEqual([
+        { account_id: "cloud", playlist_id: "public" }, { account_id: "other-cloud", playlist_id: "external" }
+      ]);
+      expect(current.$client.prepare("SELECT count(*) FROM playlist_track").pluck().get()).toBe(2);
+      expect(current.$client.prepare("SELECT count(*) FROM public_playlist_cleanup").pluck().get()).toBe(0);
+      expect(current.$client.prepare("SELECT count(*) FROM room_membership").pluck().get()).toBe(2);
+      expect(current.$client.prepare("SELECT count(*) FROM public_playlist_binding").pluck().get()).toBe(1);
+      for (const receipt of receipts) {
+        expect(readCommandResource(current, receipt, now)).toBe(receipt.resourceId);
+        expect(() => readCommandResource(current, { ...receipt, digest: canonicalDigest({ intent: "createPersonalPlaylist" }) }, now)).toThrowError("IDEMPOTENCY_CONFLICT");
+      }
+      expect(current.$client.prepare("SELECT id, version FROM room ORDER BY id").all()).toEqual([
+        { id: "room-a", version: 2 }, { id: "room-b", version: 2 }, { id: "untouched", version: 1 }
+      ]);
+      expect(checkDatabase(filePath).schemaVersion).toBe(25);
+    } finally { current.$client.close(); }
+  });
+
+  it.each([23, 24])("从版本 %s 升级保留有独立创建证据的专用绑定、共享快照和所有在途创建状态，不依赖已到期操作信封", versions => {
+    const filePath = temporaryDatabasePath();
+    createOldDatabase(filePath, versions);
+    const old = new Database(filePath);
+    old.pragma("foreign_keys = ON");
+    old.exec(`
+      INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES ('owner', '房主', 'owner@example.com', 0, 1, 1), ('roommate', '室友', 'roommate@example.com', 0, 1, 1);
+      INSERT INTO room (id, name, owner_user_id) VALUES ('room-a', '宿舍', 'owner'), ('room-b', '另一个宿舍', 'owner');
+      INSERT INTO room_membership (id, room_id, user_id, nickname) VALUES ('owner-member', 'room-a', 'owner', '房主'), ('dedicated-member', 'room-b', 'roommate', '室友');
+      INSERT INTO personal_playlist_binding (id, room_id, member_id, account_id, playlist_id, name, type, writeable, generation, creation_operation_id, created_at, updated_at) VALUES
+        ('external', 'room-a', 'owner-member', 'cloud', 'dedicated', '收藏', 'ownerSubscribed', 0, 1, NULL, 1, 1),
+        ('dedicated', 'room-b', 'dedicated-member', 'cloud', 'dedicated', 'songroom-另一个宿舍-室友', 'roommateDedicated', 1, 3, 'expired-creation-operation', 11, 22);
+      INSERT INTO playlist_snapshot (account_id, playlist_id, snapshot_version, created_at, updated_at) VALUES ('cloud', 'dedicated', 7, 1, 1);
+      INSERT INTO playlist_track (account_id, playlist_id, position, song_id, name, artists, album) VALUES ('cloud', 'dedicated', 0, 'song', '歌曲', '[]', '');
+    `);
+    for (const [index, step] of ["ready", "verified", "sending", "confirming", "unknown"].entries()) {
+      const status = step === "ready" ? "queued" : step === "unknown" ? "awaitingConfirmation" : "processing";
+      old.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, created_at, updated_at) VALUES (?, 'createPersonalPlaylist', ?, 'room-a', 'cloud', 'auth', 2, ?, 1, 2)").run(`pending-${index}`, `actor-${index}`, status);
+      old.prepare("INSERT INTO personal_playlist_creation (operation_id, owner_user_id, member_id, name, step, playlist_id, before_playlists, after_playlists, sent_at, recovered) VALUES (?, 'owner', ?, '专用创建', ?, ?, ?, ?, ?, ?)").run(`pending-${index}`, `member-${index}`, step, step === "confirming" ? "returned-id" : null, '["before"]', step === "unknown" ? '["after"]' : null, ["sending", "confirming", "unknown"].includes(step) ? 123 : null, index % 2);
+    }
+    const operations = old.prepare("SELECT * FROM operation ORDER BY id").all();
+    const creations = old.prepare("SELECT * FROM personal_playlist_creation ORDER BY operation_id").all();
+    const snapshots = old.prepare("SELECT * FROM playlist_snapshot").all();
+    const tracks = old.prepare("SELECT * FROM playlist_track").all();
+    old.close();
+
+    migrateDatabase(filePath);
+
+    const current = openDatabase(filePath);
+    try {
+      expect(current.$client.prepare("SELECT * FROM personal_playlist_binding").all()).toEqual([{
+        id: "dedicated", room_id: "room-b", member_id: "dedicated-member", account_id: "cloud", playlist_id: "dedicated",
+        name: "songroom-另一个宿舍-室友", generation: 3,
+        creation_operation_id: "expired-creation-operation", created_at: 11, updated_at: 22
+      }]);
+      expect(current.$client.prepare("SELECT * FROM operation ORDER BY id").all()).toEqual(operations);
+      expect(current.$client.prepare("SELECT * FROM personal_playlist_creation ORDER BY operation_id").all()).toEqual(creations);
+      expect(current.$client.prepare("SELECT * FROM playlist_snapshot").all()).toEqual(snapshots);
+      expect(current.$client.prepare("SELECT * FROM playlist_track").all()).toEqual(tracks);
+      expect(current.$client.pragma("foreign_key_check")).toEqual([]);
+      expect(checkDatabase(filePath).ok).toBe(true);
+    } finally { current.$client.close(); }
+  });
+
+  it.each([
+    ["缺少创建证据", "UPDATE personal_playlist_binding SET creation_operation_id = NULL WHERE id = 'dedicated'"],
+    ["空创建证据", "UPDATE personal_playlist_binding SET creation_operation_id = '' WHERE id = 'dedicated'"],
+    ["只读专用来源", "UPDATE personal_playlist_binding SET writeable = 0 WHERE id = 'dedicated'"],
+    ["专用目标重复", "INSERT INTO personal_playlist_binding SELECT 'duplicate', room_id, 'other-member', account_id, playlist_id, name, type, writeable, generation, 'other-creation', created_at, updated_at FROM personal_playlist_binding WHERE id = 'dedicated'"],
+    ["创建证据重复", "INSERT INTO personal_playlist_binding SELECT 'duplicate', room_id, 'other-member', account_id, 'other-target', name, type, writeable, generation, creation_operation_id, created_at, updated_at FROM personal_playlist_binding WHERE id = 'dedicated'"],
+    ["公共目标冲突", "INSERT INTO public_playlist_binding (room_id, account_id, playlist_id, name, creation_operation_id) VALUES ('room-a', 'cloud', 'dedicated', '公共', 'public-op')"],
+    ["成员跨房间", "UPDATE personal_playlist_binding SET room_id = 'room-a' WHERE id = 'dedicated'"]
+  ])("旧专用绑定%s时升级拒绝且完整回滚，包括先执行的外部退役", (_reason, damage) => {
+    const filePath = temporaryDatabasePath();
+    createOldDatabase(filePath, 24);
+    const old = new Database(filePath);
+    old.pragma("foreign_keys = ON");
+    old.exec(`
+      INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES ('owner', '房主', 'owner@example.com', 0, 1, 1), ('roommate', '室友', 'roommate@example.com', 0, 1, 1), ('other', '另一室友', 'other@example.com', 0, 1, 1);
+      INSERT INTO room (id, name, owner_user_id) VALUES ('room-a', '宿舍', 'owner'), ('room-b', '另一个宿舍', 'owner');
+      INSERT INTO room_membership (id, room_id, user_id, nickname) VALUES ('owner-member', 'room-a', 'owner', '房主'), ('dedicated-member', 'room-b', 'roommate', '室友'), ('other-member', 'room-b', 'other', '另一室友');
+      INSERT INTO personal_playlist_binding (id, room_id, member_id, account_id, playlist_id, name, type, writeable, generation, creation_operation_id, created_at, updated_at) VALUES
+        ('external', 'room-a', 'owner-member', 'cloud', 'external', '收藏', 'ownerSubscribed', 0, 1, NULL, 1, 1),
+        ('dedicated', 'room-b', 'dedicated-member', 'cloud', 'dedicated', '专用', 'roommateDedicated', 1, 1, 'dedicated-op', 1, 1);
+      INSERT INTO playlist_snapshot (account_id, playlist_id, created_at, updated_at) VALUES ('cloud', 'external', 1, 1);
+      INSERT INTO playlist_track (account_id, playlist_id, position, song_id, name, artists, album) VALUES ('cloud', 'external', 0, 'song', '歌曲', '[]', '');
+    `);
+    old.exec(damage);
+    const tables = ["schema_meta", "__drizzle_migrations", "room", "room_membership", "personal_playlist_binding", "playlist_snapshot", "playlist_track", "public_playlist_binding", "command_receipt", "public_playlist_cleanup", "operation", "personal_playlist_creation"];
+    const before = tables.map(table => old.prepare(`SELECT * FROM ${table}`).all());
+    old.close();
+
+    expect(() => migrateDatabase(filePath)).toThrow();
+
+    const unchanged = new Database(filePath);
+    try {
+      expect(tables.map(table => unchanged.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+      expect(unchanged.pragma("foreign_key_check")).toEqual([]);
+      expect(unchanged.prepare("SELECT name FROM sqlite_master WHERE name LIKE '__new_%'").all()).toEqual([]);
+    } finally { unchanged.close(); }
+  });
+
   it("does not change an existing non-WAL journal mode when opening", () => {
     const filePath = temporaryDatabasePath();
     initializeDatabase(filePath);

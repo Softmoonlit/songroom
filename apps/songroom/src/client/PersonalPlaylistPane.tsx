@@ -1,17 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import { AlertCircle, ListMusic, RotateCw, X } from "lucide-react";
+import { AlertCircle, ListMusic, RotateCw } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
-  personalPlaylistCandidatesView,
   personalPlaylistView,
-  type PersonalPlaylistCandidate,
   type PersonalPlaylistTrack,
   type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
-import { DestructiveConfirmDialog } from "./DestructiveConfirmDialog.js";
 import { errorMessage, errorMessageForCode, queryOptions, request } from "./room-http.js";
 import { QueryError } from "./RoomQueryError.js";
 
@@ -63,8 +59,6 @@ export function getPersonalOperationMessage(op: NonNullable<PersonalPlaylistView
 }
 
 const personalDisabledMessages: Record<NonNullable<PersonalPlaylistView["disabledReason"]>, string> = {
-  NOT_OWNER: "只有房主可配置自建或收藏歌单。",
-  ROOMMATE_ONLY: "房主请绑定已有或收藏歌单，不能创建专用个人歌单。",
   NETEASE_AUTH_REQUIRED: "房主网易云授权不可用，请等待房主完成授权。",
   ACCOUNT_PAUSED: "房主网易云账号已暂停，请联系管理员核查。",
   TARGET_BLOCKED: "目标歌单已被设为私密或已删除。",
@@ -158,153 +152,6 @@ function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]
   );
 }
 
-function PersonalPlaylistBindDialog({
-  open,
-  onOpenChange,
-  sessionId,
-  roomId
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  sessionId: string;
-  roomId: string;
-}) {
-  const queryClient = useQueryClient();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [bindError, setBindError] = useState("");
-
-  const candidatesQuery = useQuery({
-    queryKey: ["room-personal-playlist-candidates", sessionId, roomId],
-    queryFn: ({ signal }) => request(`/${roomId}/personal-playlist/candidates`, personalPlaylistCandidatesView, signal),
-    enabled: open,
-    ...queryOptions
-  });
-
-  const bindMutation = useMutation({
-    mutationFn: (playlistId: string) => {
-      return request(`/${roomId}/personal-playlist/bind`, personalPlaylistView, undefined, {
-        idempotencyKey: uuidv7(),
-        playlistId
-      });
-    },
-    retry: false,
-    onSuccess: data => {
-      queryClient.setQueryData(["room-personal-playlist", sessionId, roomId], data);
-      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
-      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
-      onOpenChange(false);
-    },
-    onError: failure => {
-      setBindError(errorMessage(failure));
-    }
-  });
-
-  const candidates = candidatesQuery.data?.candidates ?? [];
-
-  return (
-    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
-      <AlertDialog.Portal>
-        <AlertDialog.Overlay className="dialog-overlay" />
-        <AlertDialog.Content className="invite-modal" aria-describedby="bind-playlist-desc">
-          <div className="invite-modal-header">
-            <div>
-              <AlertDialog.Title className="invite-modal-title">绑定个人歌单</AlertDialog.Title>
-              <AlertDialog.Description id="bind-playlist-desc" className="invite-modal-desc">
-                从你网易云账号已创建或收藏的歌单中选择一个作为当前房间的个人歌单来源。
-              </AlertDialog.Description>
-            </div>
-            <AlertDialog.Cancel asChild>
-              <button
-                type="button"
-                className="invite-modal-close"
-                aria-label="关闭绑定窗口"
-                disabled={bindMutation.isPending}
-              >
-                <X size={18} aria-hidden="true" />
-              </button>
-            </AlertDialog.Cancel>
-          </div>
-
-          <div className="invite-modal-body">
-            {bindError && (
-              <div className="error-banner" role="alert">
-                <AlertCircle size={16} aria-hidden="true" />
-                <span>{bindError}</span>
-              </div>
-            )}
-
-            {candidatesQuery.isPending ? (
-              <p role="status">正在读取网易云歌单清单…</p>
-            ) : candidatesQuery.isError ? (
-              <QueryError
-                error={candidatesQuery.error}
-                retrying={candidatesQuery.isFetching}
-                retry={() => void candidatesQuery.refetch()}
-              />
-            ) : candidates.length === 0 ? (
-              <p className="empty-hint" role="status">
-                暂无可绑定的歌单。请先在网易云音乐中创建歌单或收藏歌单。
-              </p>
-            ) : (
-              <div className="candidate-playlist-list" role="radiogroup" aria-label="候选歌单列表">
-                {candidates.map(c => {
-                  const isSelected = selectedId === c.id;
-                  return (
-                    <label
-                      key={c.id}
-                      className={`candidate-playlist-item ${isSelected ? "selected" : ""}`}
-                    >
-                      <input
-                        type="radio"
-                        name="personal-playlist-candidate"
-                        value={c.id}
-                        checked={isSelected}
-                        onChange={() => {
-                          setSelectedId(c.id);
-                          setBindError("");
-                        }}
-                      />
-                      <div className="candidate-playlist-info">
-                        <span className="candidate-playlist-name">{c.name}</span>
-                        <div className="candidate-playlist-tags">
-                          <span className={`status-pill ${c.type === "ownerCreated" ? "role-owner" : "role-member"}`}>
-                            {c.type === "ownerCreated" ? "自建" : "收藏"}
-                          </span>
-                          <span className="candidate-playlist-note">
-                            {c.writeable ? "可维护" : "只读"}
-                          </span>
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="modal-actions">
-            <AlertDialog.Cancel asChild>
-              <button type="button" className="secondary-button" disabled={bindMutation.isPending}>
-                取消
-              </button>
-            </AlertDialog.Cancel>
-            <button
-              type="button"
-              className="primary-button"
-              disabled={!selectedId || bindMutation.isPending}
-              onClick={() => {
-                if (selectedId) bindMutation.mutate(selectedId);
-              }}
-            >
-              {bindMutation.isPending ? "正在绑定…" : "确认绑定"}
-            </button>
-          </div>
-        </AlertDialog.Content>
-      </AlertDialog.Portal>
-    </AlertDialog.Root>
-  );
-}
-
 const terminalStatuses = new Set(["succeeded", "failed", "stopped"]);
 
 export function PersonalPlaylistPane({
@@ -317,9 +164,6 @@ export function PersonalPlaylistPane({
   active: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [bindDialogOpen, setBindDialogOpen] = useState(false);
-  const [unbindDialogOpen, setUnbindDialogOpen] = useState(false);
-  const [unbindError, setUnbindError] = useState("");
   const [createError, setCreateError] = useState("");
 
   const query = useQuery({
@@ -373,24 +217,6 @@ export function PersonalPlaylistPane({
     }
   }, [active, query.data?.playlist?.id, query.data?.allowedActions]);
 
-  const unbindMutation = useMutation({
-    mutationFn: () => {
-      return request(`/${roomId}/personal-playlist/unbind`, personalPlaylistView, undefined, {
-        idempotencyKey: uuidv7()
-      });
-    },
-    retry: false,
-    onSuccess: data => {
-      setUnbindDialogOpen(false);
-      queryClient.setQueryData(["room-personal-playlist", sessionId, roomId], data);
-      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
-      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
-    },
-    onError: failure => {
-      setUnbindError(errorMessage(failure));
-    }
-  });
-
   if (query.isPending) {
     return (
       <div className="personal-playlist-pane">
@@ -409,9 +235,7 @@ export function PersonalPlaylistPane({
 
   const data = query.data;
   const playlist = data.playlist;
-  const canBind = data.allowedActions.includes("bindPersonalPlaylist");
   const canCreate = data.allowedActions.includes("createPersonalPlaylist");
-  const canUnbind = data.allowedActions.includes("unbindPersonalPlaylist");
   const canRefresh = data.allowedActions.includes("refreshPersonalPlaylist");
 
   if (!playlist) {
@@ -421,11 +245,7 @@ export function PersonalPlaylistPane({
           <ListMusic size={48} className="empty-state-icon" aria-hidden="true" />
           <h2 className="empty-state-title">尚未配置个人歌单</h2>
           <p className="empty-state-desc">
-            {canBind
-              ? "绑定网易云已创建或收藏的歌单作为个人歌单来源。个人歌单为可选配置，不影响你直接搜索点歌。"
-              : canCreate
-              ? "在房主网易云账号下创建专属于你的个人歌单，名称为 songroom-房间名-昵称。个人歌单为可选配置，不影响你直接搜索点歌。"
-              : "当前未配置个人歌单。个人歌单为可选配置，不影响你直接搜索点歌。"}
+            在房主网易云账号下创建本房间专属于你的个人歌单，名称为 songroom-房间名-昵称。
           </p>
 
           {data.operation && data.operation.status !== "succeeded" && (
@@ -451,16 +271,6 @@ export function PersonalPlaylistPane({
             </div>
           )}
 
-          {canBind && (
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => setBindDialogOpen(true)}
-            >
-              绑定个人歌单
-            </button>
-          )}
-
           {canCreate && (
             <button
               type="button"
@@ -472,14 +282,6 @@ export function PersonalPlaylistPane({
             </button>
           )}
         </div>
-        {bindDialogOpen && (
-          <PersonalPlaylistBindDialog
-            open={bindDialogOpen}
-            onOpenChange={setBindDialogOpen}
-            sessionId={sessionId}
-            roomId={roomId}
-          />
-        )}
       </div>
     );
   }
@@ -494,12 +296,8 @@ export function PersonalPlaylistPane({
           <div className="playlist-title-group">
             <h1 className="playlist-name">{playlist.name}</h1>
             <div className="playlist-badges">
-              <span className={`status-pill ${playlist.type === "ownerCreated" ? "role-owner" : "role-member"}`}>
-                {playlist.type === "ownerCreated" ? "自建歌单" : playlist.type === "roommateDedicated" ? "专用歌单" : "收藏歌单"}
-              </span>
-              <span className="candidate-playlist-note">
-                {playlist.writeable ? "可维护" : "只读"}
-              </span>
+              <span className="status-pill role-member">专用歌单</span>
+              <span className="candidate-playlist-note">可维护</span>
             </div>
           </div>
 
@@ -519,26 +317,6 @@ export function PersonalPlaylistPane({
                   aria-hidden="true"
                 />
                 <span>{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
-              </button>
-            )}
-
-            {canBind && (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setBindDialogOpen(true)}
-              >
-                更换歌单
-              </button>
-            )}
-
-            {canUnbind && (
-              <button
-                type="button"
-                className="danger-button text-button"
-                onClick={() => setUnbindDialogOpen(true)}
-              >
-                解除绑定
               </button>
             )}
           </div>
@@ -564,37 +342,6 @@ export function PersonalPlaylistPane({
       </div>
 
       <PersonalTrackList tracks={tracks} active={active} />
-
-      {bindDialogOpen && (
-        <PersonalPlaylistBindDialog
-          open={bindDialogOpen}
-          onOpenChange={setBindDialogOpen}
-          sessionId={sessionId}
-          roomId={roomId}
-        />
-      )}
-
-      {unbindDialogOpen && (
-        <DestructiveConfirmDialog
-          open={unbindDialogOpen}
-          onOpenChange={open => {
-            setUnbindDialogOpen(open);
-            if (open) setUnbindError("");
-          }}
-          title={`解绑歌单“${playlist.name}”？`}
-          descriptionText={`确定要解除当前房间与歌单“${playlist.name}”的绑定吗？解绑后仅移除该房间配置，不会删除网易云上的歌单或取消收藏，其他房间的绑定也不受影响。`}
-          badges={[
-            { label: "不删除云端歌单", variant: "neutral" },
-            { label: "仅解绑当前房间", variant: "neutral" }
-          ]}
-          confirmText="确认解绑"
-          pendingText="正在解绑…"
-          cancelText="取消"
-          onConfirm={() => unbindMutation.mutate()}
-          isPending={unbindMutation.isPending}
-          error={unbindError}
-        />
-      )}
     </div>
   );
 }
@@ -667,9 +414,7 @@ export function MemberPersonalPlaylistSection({
         </div>
         <div>
           <dt>来源属性</dt>
-          <dd>
-            {data.playlist.type === "ownerCreated" ? "自建（可维护）" : data.playlist.type === "roommateDedicated" ? "专用（可维护）" : "收藏（只读）"}
-          </dd>
+          <dd>专用（仅本人可维护）</dd>
         </div>
         <div>
           <dt>歌曲数</dt>

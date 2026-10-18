@@ -151,13 +151,11 @@ describe("恢复结果未知的公共歌单清理 (ticket 18)", { timeout: 20000
 
     await app.playlists.settle();
 
-    // 验证清理状态为 succeeded
+    // 明确成功后不再保留清理任务
     const cleanupsRes = await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET");
     expect(cleanupsRes.statusCode).toBe(200);
     const cleanups = cleanupsRes.json().cleanups;
-    expect(cleanups).toHaveLength(1);
-    expect(cleanups[0].status).toBe("succeeded");
-    expect(cleanups[0].playlistId).toBe(publicPlaylistId);
+    expect(cleanups).toEqual([]);
 
     // 验证 adapter：只有 1 次 playlistDelete 调用，没有调用详情接口或核查
     const deleteCalls = adapter.inputs.filter(i => i.operation === "playlistDelete");
@@ -218,11 +216,11 @@ describe("恢复结果未知的公共歌单清理 (ticket 18)", { timeout: 20000
     expect(authId).toBeDefined();
     await app.playlists.settle();
 
-    // 验证状态在核查后成功收敛为 succeeded
+    // 只读核查确认删除后移除清理任务
     const cleanupsRes2 = await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET");
     expect(cleanupsRes2.statusCode).toBe(200);
     const cleanups2 = cleanupsRes2.json().cleanups;
-    expect(cleanups2[0].status).toBe("succeeded");
+    expect(cleanups2).toEqual([]);
 
     // 核心红线验证：绝不自动再次调用删除接口！
     expect(adapter.inputs.filter(i => i.operation === "playlistDelete")).toHaveLength(0);
@@ -273,11 +271,11 @@ describe("恢复结果未知的公共歌单清理 (ticket 18)", { timeout: 20000
     const newApp = await restartApp(config, adapter);
     await newApp.playlists.settle();
 
-    // 验证重启后只读核查确认已删除，收敛为 succeeded
+    // 重启后只读核查确认删除并移除清理任务
     const cleanupsRes = await request(newApp, "/api/cleanups/public-playlists", owner, undefined, "GET");
     expect(cleanupsRes.statusCode).toBe(200);
     const cleanups = cleanupsRes.json().cleanups;
-    expect(cleanups[0].status).toBe("succeeded");
+    expect(cleanups).toEqual([]);
 
     // 核心红线验证：重启后绝没有调用 playlistDelete
     expect(adapter.inputs.filter(i => i.operation === "playlistDelete")).toHaveLength(0);

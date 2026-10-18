@@ -227,8 +227,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      type: "ownerCreated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -242,8 +241,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友个人歌单",
-      type: "roommateDedicated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -338,8 +336,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友个人歌单",
-      type: "roommateDedicated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -394,8 +391,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      type: "ownerCreated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -468,8 +464,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      type: "ownerCreated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -533,8 +528,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      type: "ownerCreated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -601,8 +595,7 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      type: "ownerCreated",
-      writeable: true,
+      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()

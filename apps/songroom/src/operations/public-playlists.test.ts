@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+import type { FastifyReply } from "fastify";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +10,7 @@ import { randomBytes } from "node:crypto";
 import { v7 } from "uuid";
 import { afterEach, expect, it, vi } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, personalPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { PublicPlaylists } from "./public-playlists.js";
@@ -72,7 +74,7 @@ function fixture() {
     const scheduler = new UpstreamScheduler(database, clock);
     const result = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, clock); modules.push(result); return result;
   }
-  return { database, adapter, roomId, module, authorizationId, vault, dbPath, keyPath };
+  return { database, adapter, eventStream, roomId, module, authorizationId, vault, dbPath, keyPath };
 }
 
 it("每请求公平让出、真实账号串行间隔 1 秒且全站最多两个在途请求", async () => {
@@ -804,9 +806,283 @@ it("删房事务收敛在途操作、生成最小清理任务并在调度器中�
   service.dispatchCleanup(cleanupId!);
   await service.settle();
 
-  const updatedCleanup = f.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId!)).get()!;
-  expect(updatedCleanup.status).toBe("succeeded");
-  expect(f.adapter.inputs.some(i => i.operation === "playlistDelete")).toBe(true);
+  expect(service.readCleanups("owner").cleanups).toEqual([]);
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistDelete")).toHaveLength(1);
+  service.dispatchCleanup(cleanupId!);
+  await service.settle();
+  expect(f.adapter.inputs.filter(i => i.operation === "playlistDelete")).toHaveLength(1);
+});
+
+it.each(["404", "tombstone"] as const)("清理核验确认清单无目标且详情%s后移除任务，不重发删除", async evidence => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "deleted-playlist"));
+  f.database.update(publicPlaylistCleanup).set({ status: "awaitingConfirmation", hasSent: true })
+    .where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+  const existingDetail = f.adapter.detail;
+  f.adapter.detail = async input => {
+    if (evidence === "404") return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed", businessCode: 404 } };
+    const result = await existingDetail(input);
+    if (result.ok) result.data.playlist.status = 10;
+    return result;
+  };
+
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+
+  expect(service.readCleanups("owner").cleanups).toEqual([]);
+  service.checkCleanupStatus(cleanupId);
+  service.dispatchCleanup(cleanupId);
+  await vi.runAllTimersAsync();
+  await service.settle();
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "playlistDetail"]);
+});
+
+it("启动移除遗留成功清理任务，读取保持只读且未完成任务保留", async () => {
+  const f = fixture();
+  const service = f.module();
+  const succeededId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "old-success"));
+  const pendingId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "pending"));
+  f.database.update(publicPlaylistCleanup).set({ status: "succeeded", hasSent: true })
+    .where(eq(publicPlaylistCleanup.id, succeededId)).run();
+  f.database.update(publicPlaylistCleanup).set({ status: "awaitingConfirmation", hasSent: true, checkRound: 1 })
+    .where(eq(publicPlaylistCleanup.id, pendingId)).run();
+  const beforeStart = service.readCleanups("owner");
+  expect(beforeStart.cleanups).toHaveLength(2);
+  expect(service.readCleanups("owner")).toEqual(beforeStart);
+
+  service.start();
+  await service.settle();
+
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: pendingId, playlistId: "pending", status: "awaitingConfirmation" })
+  ]);
+  expect(f.adapter.inputs).toEqual([]);
+});
+
+it("同目标遗留成功任务不会阻塞新的最小清理任务", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const previousId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "same-target"));
+  f.database.update(publicPlaylistCleanup).set({ status: "succeeded", hasSent: true })
+    .where(eq(publicPlaylistCleanup.id, previousId)).run();
+
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "same-target"));
+
+  expect(cleanupId).not.toBe(previousId);
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, playlistId: "same-target", status: "ready" })
+  ]);
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+  expect(service.readCleanups("owner").cleanups).toEqual([]);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["playlistDelete"]);
+});
+
+it("错误创建响应复用其他房间公共ID时，删房清理不得删除仍被绑定的目标", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const otherRoom = extraRoom(f);
+  service.create("owner", f.roomId, { idempotencyKey: v7() });
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+  service.create("owner", otherRoom, { idempotencyKey: v7() });
+  await vi.runAllTimersAsync();
+  await service.settle();
+  expect(service.read("owner", otherRoom).operation).toMatchObject({ status: "needsAdministrator", errorCode: "TARGET_PERMISSION" });
+
+  const { cleanupId } = f.database.transaction(tx => service.terminateRoomInTx(tx, otherRoom, "owner"));
+  service.dispatchCleanup(cleanupId!);
+  await vi.runAllTimersAsync();
+  await service.settle();
+
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistDelete")).toEqual([]);
+  expect(service.read("owner", f.roomId).playlist?.id).toBe("cloud-playlist");
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, status: "needsAdministrator", lastErrorCode: "TARGET_PERMISSION" })
+  ]);
+});
+
+function bindCleanupTarget(f: ReturnType<typeof fixture>, kind: "public" | "personal", playlistId: string) {
+  const target = { roomId: f.roomId, accountId: "cloud-owner", playlistId, name: "仍使用中的歌单", creationOperationId: v7() };
+  if (kind === "public") {
+    f.database.insert(publicPlaylistBinding).values(target).run();
+  } else {
+    const member = f.database.select().from(roomMembership).where(eq(roomMembership.userId, "member")).get()!;
+    f.database.insert(personalPlaylistBinding).values({ ...target, id: v7(), memberId: member.id, createdAt: Date.now(), updatedAt: Date.now() }).run();
+  }
+}
+
+it.each(["public", "personal"] as const)("核验开始前已被%s绑定引用的清理目标保持阻断，不误报已删除", async kind => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "protected-target"));
+  f.database.update(publicPlaylistCleanup).set({ status: "awaitingConfirmation", hasSent: true })
+    .where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+  bindCleanupTarget(f, kind, "protected-target");
+  f.adapter.detail = async () => ({ ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed", businessCode: 404 } });
+
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, status: "needsAdministrator", lastErrorCode: "TARGET_PERMISSION" })
+  ]);
+  service.dispatchCleanup(cleanupId);
+  await vi.runAllTimersAsync();
+  await service.settle();
+  expect(f.adapter.inputs).toEqual([]);
+});
+
+it.each(["public", "personal"] as const)("核验期间新建%s绑定后不能用404证据移除清理任务", async kind => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "rebound-target"));
+  f.database.update(publicPlaylistCleanup).set({ status: "awaitingConfirmation", hasSent: true })
+    .where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+  f.adapter.detail = async () => {
+    bindCleanupTarget(f, kind, "rebound-target");
+    return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed", businessCode: 404 } };
+  };
+
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, status: "needsAdministrator", lastErrorCode: "TARGET_PERMISSION" })
+  ]);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "playlistDetail"]);
+});
+
+it.each(["public", "personal"] as const)("排队后出现%s绑定时仍阻断已授权retry的删除发送", async kind => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "new-member-target"));
+  f.database.update(publicPlaylistCleanup).set({ hasSent: true, retryAuthorized: true })
+    .where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+  service.start();
+  service.dispatchCleanup(cleanupId);
+  bindCleanupTarget(f, kind, "new-member-target");
+
+  await vi.runAllTimersAsync();
+  await service.settle();
+
+  expect(f.adapter.inputs).toEqual([]);
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, status: "needsAdministrator", lastErrorCode: "TARGET_PERMISSION" })
+  ]);
+  service.dispatchCleanup(cleanupId);
+  await vi.runAllTimersAsync();
+  await service.settle();
+  expect(f.adapter.inputs).toEqual([]);
+});
+
+it.each(["acknowledged", "404", "tombstone"] as const)("%s确认删除移除任务后仍向账号SSE客户端发失效通知", async evidence => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "sse-target"));
+  if (evidence !== "acknowledged") {
+    f.database.update(publicPlaylistCleanup).set({ status: "awaitingConfirmation", hasSent: true })
+      .where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+  }
+  const existingDetail = f.adapter.detail;
+  f.adapter.detail = async input => {
+    if (evidence === "404") return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed", httpStatus: 404 } };
+    const result = await existingDetail(input);
+    if (result.ok) result.data.playlist.status = 10;
+    return result;
+  };
+  const observations: Array<{ message: unknown; view: ReturnType<PublicPlaylists["readCleanups"]> }> = [];
+  const socket = new EventEmitter();
+  await f.eventStream.subscribe("owner", "session", {
+    raw: socket,
+    sse: { isConnected: true, keepAlive() {}, async send(message: { event: string; data: unknown }) {
+      if (message.event === "invalidation") observations.push({ message, view: service.readCleanups("owner") });
+    } }
+  } as unknown as FastifyReply);
+
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+
+  expect(observations.at(-1)).toEqual({
+    message: { event: "invalidation", data: { type: "cleanup", resourceId: cleanupId, version: evidence === "acknowledged" ? 3 : 2 } },
+    view: { cleanups: [] }
+  });
+  socket.emit("close");
+});
+
+it.each([
+  ["TARGET_PERMISSION", "needsAdministrator"],
+  ["NETWORK_ERROR", "awaitingConfirmation"],
+  ["AUTH_UNAVAILABLE", "waitingAuthorization"]
+] as const)("删除返回%s仍保留最小任务且dispatch和重启不重发", async (code, status) => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const service = f.module();
+  const cleanupId = f.database.transaction(tx => service.ensureCleanupInTx(tx, "owner", "cloud-owner", "unfinished-target"));
+  f.adapter.delete = async () => ({ ok: false, error: { code, outcome: code === "NETWORK_ERROR" ? "unknown" : "failed" } });
+  service.start();
+  await vi.runAllTimersAsync();
+  await service.settle();
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, accountId: "cloud-owner", playlistId: "unfinished-target", status })
+  ]);
+  service.dispatchCleanup(cleanupId);
+  await vi.runAllTimersAsync();
+  await service.settle();
+  service.stop();
+  await service.settle();
+  const restarted = f.module();
+  restarted.start();
+  await vi.runAllTimersAsync();
+  await restarted.settle();
+  expect(restarted.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupId, status })
+  ]);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistDelete")).toHaveLength(1);
+});
+
+it.each([true, false])("删房按账号隔离同ID快照，其他账号当前绑定=%s", foreignBound => {
+  const f = fixture();
+  const service = f.module();
+  const otherRoom = extraRoom(f, "其他账号房间");
+  const reboundRoom = extraRoom(f, "原账号新房间");
+  const playlistId = "same-cloud-id";
+  const bind = (roomId: string, accountId: string) => f.database.insert(publicPlaylistBinding).values({
+    roomId, accountId, playlistId, name: "同ID歌单", creationOperationId: v7()
+  }).run();
+  for (const [accountId, songId] of [["cloud-owner", "owner-song"], ["cloud-other", "other-song"]] as const) {
+    f.database.insert(playlistSnapshot).values({ accountId, playlistId, snapshotVersion: 7, syncedAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now() }).run();
+    f.database.insert(playlistTrack).values({ accountId, playlistId, songId, position: 0, name: songId, artists: "[]", album: "专辑" }).run();
+  }
+  bind(f.roomId, "cloud-owner");
+  if (foreignBound) bind(otherRoom, "cloud-other");
+
+  f.database.transaction(tx => service.terminateRoomInTx(tx, f.roomId, "owner"));
+
+  if (!foreignBound) bind(otherRoom, "cloud-other");
+  bind(reboundRoom, "cloud-owner");
+  expect(service.read("owner", otherRoom).snapshot).toMatchObject({
+    version: 7, trackCount: 1, tracks: [expect.objectContaining({ songId: "other-song" })]
+  });
+  expect(service.read("owner", reboundRoom).snapshot).toEqual({ version: 0, syncedAt: null, trackCount: 0, tracks: [] });
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ accountId: "cloud-owner", playlistId, status: "ready" })
+  ]);
+  expect(f.adapter.inputs).toEqual([]);
 });
 
 it("无公共歌单删房时不产生虚假清理任务", async () => {
@@ -937,3 +1213,33 @@ it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知�
 });
 
 
+
+
+it.each(["member", "room"] as const)("%s 终止时已获ID未绑定的个人创建转最小清理并使用真实房主授权", async scope => {
+  const f = fixture();
+  const service = f.module();
+  const member = f.database.select().from(roomMembership).where(eq(roomMembership.userId, "member")).get()!;
+  const opId = v7();
+  f.database.insert(operation).values({ id: opId, kind: "createPersonalPlaylist", userId: "member",
+    roomId: f.roomId, accountId: "cloud-owner", authorizationId: f.authorizationId, generation: 1,
+    status: "needsAdministrator", createdAt: Date.now(), updatedAt: Date.now() }).run();
+  f.database.insert(personalPlaylistCreation).values({ operationId: opId, ownerUserId: "owner",
+    memberId: member.id, name: "songroom-宿舍-member", step: "confirming", playlistId: "personal-unbound" }).run();
+
+  const cleanupIds = f.database.transaction(tx => scope === "member"
+    ? service.terminateMemberInTx(tx, f.roomId, "member")
+    : service.terminateRoomInTx(tx, f.roomId, "owner").cleanupIds);
+  expect(cleanupIds).toHaveLength(1);
+  expect(service.readCleanups("owner").cleanups).toEqual([
+    expect.objectContaining({ id: cleanupIds[0], playlistId: "personal-unbound", accountId: "cloud-owner", status: "ready" })
+  ]);
+  expect(service.readCleanups("member").cleanups).toEqual([]);
+  service.start();
+  for (const cleanupId of cleanupIds) service.dispatchCleanup(cleanupId);
+  await service.settle();
+  expect(service.readCleanups("owner").cleanups).toEqual([]);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toEqual([]);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistDelete")).toEqual([
+    { operation: "playlistDelete", cookie: "MUSIC_U=owner", playlistId: "personal-unbound" }
+  ]);
+});

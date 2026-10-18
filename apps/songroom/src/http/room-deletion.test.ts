@@ -8,6 +8,7 @@ import { initializeDatabase } from "../db/database.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import type { AppConfig } from "../config.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
+import { redactPlaylistEvidence } from "../operations/personal-playlist-lifecycle.js";
 
 const origins = new WeakMap<SongRoomApp, string>();
 const testCleanups: (() => Promise<void>)[] = [];
@@ -145,6 +146,27 @@ function createSseReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
     }
   };
 }
+
+it.each(["unknown", "confirming"] as const)("删房影响区分个人创建 %s 的可能资源与已知目标", async step => {
+  const { app, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "在途创建影响", adapter);
+  if (step === "confirming") {
+    app.database.$client.exec("CREATE TRIGGER fail_personal_binding BEFORE INSERT ON personal_playlist_binding BEGIN SELECT RAISE(ABORT, 'binding unavailable'); END");
+  }
+  adapter.playlistCreate = () => step === "unknown"
+    ? { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } }
+    : { ok: true, data: { playlistId: "unbound-personal-target" } };
+  expect((await request(app, `/api/rooms/${roomId}/personal-playlist/create`, owner, { idempotencyKey: v7() })).statusCode).toBe(202);
+  await app.playlists.settle();
+  const impact = await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET");
+  expect(impact.statusCode).toBe(200);
+  expect(impact.json()).toMatchObject({
+    publicPlaylist: null,
+    personalPlaylistCount: step === "confirming" ? 1 : 0,
+    pendingPersonalPlaylistCount: step === "unknown" ? 1 : 0
+  });
+});
 
 it("权限控制：仅房主可查看影响范围并提交删房，室友/非成员/待审批申请人/其他房主/管理员拒绝，房主不可退出替代删房", async () => {
   const { app, adapter } = await fixture();
@@ -287,6 +309,7 @@ it("无公共歌单删房：本地事务立即删除，不产生虚假清理任�
 
   const viewRes = await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET");
   expect(viewRes.json().publicPlaylist).toBeNull();
+  expect(viewRes.json().personalPlaylistCount).toBe(0);
 
   const delRes = await request(app, `/api/rooms/${roomId}/delete`, owner, {
     idempotencyKey: v7(),
@@ -347,7 +370,7 @@ it("正常删除：公开创建公共歌单后删房，本地立即清除且调�
   const replayResult = replayRes.json();
   expect(replayResult.ok).toBe(true);
   expect(replayResult.roomId).toBe(roomId);
-  expect(replayResult.cleanup?.id).toBe(delResult.cleanup?.id);
+  if (replayResult.cleanup) expect(replayResult.cleanup.id).toBe(delResult.cleanup.id);
 
   // 房间已不可见
   expect((await request(app, `/api/rooms/${roomId}`, owner, undefined, "GET")).statusCode).toBe(404);
@@ -364,9 +387,7 @@ it("正常删除：公开创建公共歌单后删房，本地立即清除且调�
   const cleanupsRes = await request(app, `/api/cleanups/public-playlists`, owner, undefined, "GET");
   expect(cleanupsRes.statusCode).toBe(200);
   const cleanups = cleanupsRes.json().cleanups;
-  expect(cleanups).toHaveLength(1);
-  expect(cleanups[0].playlistId).toBe("cloud-pl-normal-del");
-  expect(cleanups[0].status).toBe("succeeded");
+  expect(cleanups).toEqual([]);
 });
 
 it("无授权删房：授权退出后本地事务完成并保留待清理状态，不调用上游删除", async () => {
@@ -446,9 +467,9 @@ it("在途公共歌单创建已获具体 ID 时删房转为清理任务（在途
   const cleanupsRes = await request(app, `/api/cleanups/public-playlists`, owner, undefined, "GET");
   expect(cleanupsRes.statusCode).toBe(200);
   const cleanups = cleanupsRes.json().cleanups;
-  expect(cleanups).toHaveLength(1);
-  expect(cleanups[0].playlistId).toBe("cloud-in-flight-id");
-  expect(cleanups[0].status).toBe("succeeded");
+  expect(cleanups).toEqual([]);
+  expect(adapter.inputs.filter(input => input.operation === "playlistDelete"))
+    .toEqual([expect.objectContaining({ playlistId: "cloud-in-flight-id" })]);
 });
 
 it("在途公共歌单创建 ID 未知时删房不产生虚假清理任务", async () => {
@@ -631,9 +652,9 @@ it("服务重启恢复：持久化的待清理任务在服务重启后自动调�
   const cleanupsRes = await request(restartedApp, `/api/cleanups/public-playlists`, owner, undefined, "GET");
   expect(cleanupsRes.statusCode).toBe(200);
   const cleanups = cleanupsRes.json().cleanups;
-  expect(cleanups).toHaveLength(1);
-  expect(cleanups[0].playlistId).toBe("cloud-pl-restart");
-  expect(cleanups[0].status).toBe("succeeded");
+  expect(cleanups).toEqual([]);
+  expect(newAdapter.inputs.filter(input => input.operation === "playlistDelete"))
+    .toEqual([expect.objectContaining({ playlistId: "cloud-pl-restart" })]);
 });
 
 it("授权退出与重新授权：删房待清理任务在重新授权同一账号后自动调度恢复执行", async () => {
@@ -666,5 +687,210 @@ it("授权退出与重新授权：删房待清理任务在重新授权同一账�
 
   // 清理任务自动唤醒并执行完成
   const cleanupsAfter = await request(app, `/api/cleanups/public-playlists`, owner, undefined, "GET");
-  expect(cleanupsAfter.json().cleanups[0].status).toBe("succeeded");
+  expect(cleanupsAfter.json().cleanups).toEqual([]);
+  expect(adapter.inputs.filter(input => input.operation === "playlistDelete"))
+    .toEqual([expect.objectContaining({ playlistId: "cloud-pl-reauth" })]);
+});
+
+
+it("室友退出立即清除个人绑定并由房主原账号执行专用歌单清理，重放不重复删除", async () => {
+  const { app, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roommate = await signUp(app, "roommate@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "个人清理宿舍", adapter);
+  await addRoommateViaHttp(app, owner, roommate, roomId);
+  adapter.playlistCreate = () => ({ ok: true, data: { playlistId: "personal-leave" } });
+  const created = await request(app, `/api/rooms/${roomId}/personal-playlist/create`, roommate, { idempotencyKey: v7() });
+  expect(created.statusCode).toBe(202);
+  await app.playlists.settle();
+  expect((await request(app, `/api/rooms/${roomId}/personal-playlist`, roommate, undefined, "GET")).json().playlist.id).toBe("personal-leave");
+
+  const command = { idempotencyKey: v7() };
+  expect((await request(app, `/api/rooms/${roomId}/leave`, roommate, command)).statusCode).toBe(200);
+  expect((await request(app, `/api/rooms/${roomId}/leave`, roommate, command)).statusCode).toBe(200);
+  expect((await request(app, `/api/rooms/${roomId}`, roommate, undefined, "GET")).statusCode).toBe(404);
+  await app.playlists.settle();
+  const ownerCleanups = (await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET")).json().cleanups;
+  expect(ownerCleanups).toEqual([]);
+  expect((await request(app, "/api/cleanups/public-playlists", roommate, undefined, "GET")).json().cleanups).toEqual([]);
+  expect(adapter.inputs.filter(i => i.operation === "playlistDelete")).toEqual([
+    expect.objectContaining({ playlistId: "personal-leave" })
+  ]);
+});
+
+
+it("只有个人歌单删房包含房主及室友目标并反馈实际清理，不影响其他房间", async () => {
+  const { app, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roommate = await signUp(app, "roommate@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "全部专用清理", adapter);
+  await addRoommateViaHttp(app, owner, roommate, roomId);
+  const createView = (await request(app, "/api/rooms/create-view", owner, undefined, "GET")).json();
+  const otherCreated = await request(app, "/api/rooms", owner, { idempotencyKey: v7(),
+    authorizationId: createView.authorization.id, name: "保留房间", nickname: "房主" });
+  expect(otherCreated.statusCode).toBe(200);
+  const otherRoomId = otherCreated.json().id as string;
+  let nextPlaylist = "personal-owner-deleted";
+  adapter.playlistCreate = () => ({ ok: true, data: { playlistId: nextPlaylist } });
+  for (const [room, cookie, target] of [
+    [roomId, owner, "personal-owner-deleted"],
+    [roomId, roommate, "personal-roommate-deleted"],
+    [otherRoomId, owner, "personal-other-kept"]
+  ] as const) {
+    nextPlaylist = target;
+    expect((await request(app, `/api/rooms/${room}/personal-playlist/create`, cookie, { idempotencyKey: v7() })).statusCode).toBe(202);
+    await app.playlists.settle();
+    expect((await request(app, `/api/rooms/${room}/personal-playlist`, cookie, undefined, "GET")).json().playlist?.id).toBe(target);
+  }
+  const view = (await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET")).json();
+  expect(view).toMatchObject({ publicPlaylist: null, personalPlaylistCount: 2 });
+  const command = { idempotencyKey: v7(), version: view.version };
+  const deleted = await request(app, `/api/rooms/${roomId}/delete`, owner, command);
+  expect(deleted.statusCode).toBe(200);
+  expect(deleted.json().cleanup).toMatchObject({ id: expect.any(String) });
+  expect((await request(app, `/api/rooms/${roomId}/delete`, owner, command)).json()).toMatchObject({ ok: true, roomId });
+  await app.playlists.settle();
+  const cleanups = (await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET")).json().cleanups;
+  expect(cleanups).toEqual([]);
+  expect(adapter.inputs.filter(i => i.operation === "playlistDelete").map(i => i.playlistId).sort())
+    .toEqual(["personal-owner-deleted", "personal-roommate-deleted"]);
+  expect((await request(app, `/api/rooms/${otherRoomId}/personal-playlist`, owner, undefined, "GET")).json().playlist.id).toBe("personal-other-kept");
+});
+
+
+it("移除室友后个人清理等待房主原账号重授权，室友授权不能处理房主目标", async () => {
+  const { app, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roommate = await signUp(app, "roommate@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "移除重授权", adapter);
+  await addRoommateViaHttp(app, owner, roommate, roomId);
+  adapter.playlistCreate = () => ({ ok: true, data: { playlistId: "personal-removed" } });
+  expect((await request(app, `/api/rooms/${roomId}/personal-playlist/create`, roommate, { idempotencyKey: v7() })).statusCode).toBe(202);
+  await app.playlists.settle();
+  expect((await request(app, "/api/netease/binding/revoke", owner, { idempotencyKey: v7() })).statusCode).toBe(200);
+  const members = (await request(app, `/api/rooms/${roomId}/members`, owner, undefined, "GET")).json();
+  const roommateMember = members.members.find((member: { role: string }) => member.role === "roommate");
+  const command = { idempotencyKey: v7(), version: members.version };
+  const remove = await request(app, `/api/rooms/${roomId}/members/${roommateMember.id}/remove`, owner, command);
+  expect(remove.statusCode).toBe(200);
+  expect((await request(app, `/api/rooms/${roomId}/members/${roommateMember.id}/remove`, owner, command)).statusCode).toBe(200);
+  await app.playlists.settle();
+  const before = (await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET")).json().cleanups;
+  expect(before).toEqual([expect.objectContaining({ playlistId: "personal-removed", status: "waitingAuthorization" })]);
+  await bindNetease(app, roommate, adapter);
+  await app.playlists.settle();
+  expect(adapter.inputs.filter(i => i.operation === "playlistDelete")).toEqual([]);
+  await bindNetease(app, owner, adapter);
+  await app.playlists.settle();
+  const after = (await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET")).json().cleanups;
+  expect(after).toEqual([]);
+  expect(adapter.inputs.filter(i => i.operation === "playlistDelete")).toEqual([expect.objectContaining({ playlistId: "personal-removed" })]);
+});
+
+
+it.each(["leave", "delete"] as const)("个人创建 sending 时 %s，晚到具体ID仅由房主清理且不恢复成员或房间", async action => {
+  const { app, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roommate = await signUp(app, "roommate@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "个人晚到清理", adapter);
+  await addRoommateViaHttp(app, owner, roommate, roomId);
+  let started!: () => void;
+  const sending = new Promise<void>(resolve => { started = resolve; });
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  adapter.playlistCreate = async () => {
+    started();
+    await gate;
+    return { ok: true, data: { playlistId: "personal-late-result" } };
+  };
+  expect((await request(app, `/api/rooms/${roomId}/personal-playlist/create`, roommate, { idempotencyKey: v7() })).statusCode).toBe(202);
+  await sending;
+  try {
+    if (action === "leave") {
+      expect((await request(app, `/api/rooms/${roomId}/leave`, roommate, { idempotencyKey: v7() })).statusCode).toBe(200);
+    } else {
+      const view = (await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET")).json();
+      expect(view.personalPlaylistCount).toBe(0);
+      expect((await request(app, `/api/rooms/${roomId}/delete`, owner, { idempotencyKey: v7(), version: view.version })).statusCode).toBe(200);
+    }
+  } finally { finish(); }
+  await app.playlists.settle();
+  expect((await request(app, `/api/rooms/${roomId}`, roommate, undefined, "GET")).statusCode).toBe(404);
+  expect((await request(app, "/api/cleanups/public-playlists", owner, undefined, "GET")).json().cleanups)
+    .toEqual([]);
+  expect((await request(app, "/api/cleanups/public-playlists", roommate, undefined, "GET")).json().cleanups).toEqual([]);
+  expect(adapter.inputs.filter(i => i.operation === "playlistCreate")).toHaveLength(1);
+  expect(adapter.inputs.filter(i => i.operation === "playlistDelete")).toEqual([expect.objectContaining({ playlistId: "personal-late-result" })]);
+});
+
+
+it("未知个人创建退出并重入后可新建，重启保留旧ID证据且旧目标清理不影响新歌单", async () => {
+  const { app, config, adapter } = await fixture();
+  const owner = await signUp(app, "owner@example.com");
+  const roommate = await signUp(app, "roommate@example.com");
+  const roomId = await createRoomViaHttp(app, owner, "未知创建宿舍", adapter);
+  await addRoommateViaHttp(app, owner, roommate, roomId);
+  let created = false;
+  adapter.userPlaylists = () => ({ ok: true, data: { playlists: [
+    { id: "existing-id", name: "旧资源名称", creatorId: adapter.identityAccount!, subscribed: false, status: 0 },
+    ...(created ? [{ id: "unknown-personal-id", name: "songroom-未知创建宿舍-室友", creatorId: adapter.identityAccount!, subscribed: false, status: 0 }] : [])
+  ], more: false } });
+  adapter.playlistCreate = () => {
+    created = true;
+    return { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } };
+  };
+  const accepted = await request(app, `/api/rooms/${roomId}/personal-playlist/create`, roommate, { idempotencyKey: v7() });
+  expect(accepted.statusCode).toBe(202);
+  const operationId = accepted.json().operation.id as string;
+  await app.playlists.settle();
+  expect(app.abnormalService.getAbnormalOperation(operationId)).toMatchObject({ candidatePlaylistId: "unknown-personal-id", candidatePlaylistName: "songroom-未知创建宿舍-室友" });
+  expect((await request(app, `/api/rooms/${roomId}/leave`, roommate, { idempotencyKey: v7() })).statusCode).toBe(200);
+  expect(app.abnormalService.getAbnormalOperation(operationId)).toMatchObject({ candidatePlaylistsCount: 1, candidatePlaylistId: "unknown-personal-id", candidatePlaylistName: "" });
+  await addRoommateViaHttp(app, owner, roommate, roomId);
+  expect((await request(app, `/api/rooms/${roomId}/personal-playlist`, roommate, undefined, "GET")).json().playlist).toBeNull();
+  await app.close();
+  const restartedAdapter = new ScriptedNeteaseAdapter();
+  const restarted = await createApp(config, { neteaseAdapter: restartedAdapter });
+  origins.set(restarted, config.baseUrl);
+  testCleanups.push(() => restarted.close());
+  await restarted.listen();
+  await restarted.playlists.settle();
+  expect(restarted.abnormalService.getAbnormalOperation(operationId)).toMatchObject({ status: "needsAdministrator", candidatePlaylistId: "unknown-personal-id", candidatePlaylistName: "" });
+  expect(restartedAdapter.inputs.filter(i => i.operation === "playlistCreate" || i.operation === "playlistDelete")).toEqual([]);
+  expect((await request(restarted, `/api/rooms/${roomId}/personal-playlist`, roommate, undefined, "GET")).json().playlist).toBeNull();
+
+  restartedAdapter.identityAccount = userAccounts.get(owner)!;
+  restartedAdapter.playlistCreate = () => ({ ok: true, data: { playlistId: "rejoined-personal-id" } });
+  const newCreate = await request(restarted, `/api/rooms/${roomId}/personal-playlist/create`, roommate, { idempotencyKey: v7() });
+  expect(newCreate.statusCode).toBe(202);
+  await restarted.playlists.settle();
+  expect((await request(restarted, `/api/rooms/${roomId}/personal-playlist`, roommate, undefined, "GET")).json().playlist?.id).toBe("rejoined-personal-id");
+  const oldCreation = restarted.abnormalService.getAbnormalOperation(operationId);
+  expect(oldCreation).toMatchObject({ status: "needsAdministrator", candidatePlaylistId: "unknown-personal-id", candidatePlaylistName: "" });
+
+  const session = await request(restarted, "/api/auth/get-session", owner, undefined, "GET");
+  expect(session.statusCode).toBe(200);
+  expect(restarted.abnormalService.resolvePlaylistCreate(session.json().user.id, operationId, {
+    reason: "核实退出成员原创建ID，清理原目标", expectedVersion: oldCreation.version!
+  })).toMatchObject({ conclusion: "transferred_to_cleanup" });
+  await restarted.playlists.settle();
+  expect((await request(restarted, "/api/cleanups/public-playlists", owner, undefined, "GET")).json().cleanups)
+    .toEqual([]);
+  expect(restartedAdapter.inputs.filter(input => input.operation === "playlistCreate")).toHaveLength(1);
+  expect(restartedAdapter.inputs.filter(input => input.operation === "playlistDelete"))
+    .toEqual([expect.objectContaining({ playlistId: "unknown-personal-id" })]);
+  expect((await request(restarted, `/api/rooms/${roomId}/personal-playlist`, roommate, undefined, "GET")).json().playlist.id).toBe("rejoined-personal-id");
+});
+
+
+it("清理证据只保留ID及空名称，格式损坏统一舍弃", () => {
+  expect(redactPlaylistEvidence(null)).toBeNull();
+  expect(redactPlaylistEvidence(JSON.stringify([
+    { id: "old-id", name: "旧昵称歌单", creatorId: "owner", songs: ["private-song"] },
+    { id: "new-id", name: "新昵称歌单" }
+  ]))).toBe('[{"id":"old-id","name":""},{"id":"new-id","name":""}]');
+  expect(redactPlaylistEvidence("[]")).toBe("[]");
+  for (const malformed of ["", "not-json", "null", "{}", "[null]", "[{}]", '[{"id":123}]']) {
+    expect(redactPlaylistEvidence(malformed)).toBeNull();
+  }
 });

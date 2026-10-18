@@ -97,6 +97,7 @@ export const roomMembership = sqliteTable("room_membership", {
   userId: text("user_id").notNull().references(() => user.id),
   nickname: text("nickname").notNull()
 }, table => [
+  uniqueIndex("room_membership_room_id_unique").on(table.roomId, table.id),
   uniqueIndex("room_membership_user_unique").on(table.roomId, table.userId),
   uniqueIndex("room_membership_nickname_unique").on(table.roomId, table.nickname),
   check("room_membership_nickname_valid", sql`length(${table.nickname}) BETWEEN 1 AND 12`)
@@ -208,24 +209,28 @@ export const retiredPublicPlaylistBinding = sqliteTable("retired_public_playlist
   check("retired_public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
 ]);
 
+// Migration 0024 enforces public/personal target exclusivity in both insert/update directions.
 export const personalPlaylistBinding = sqliteTable("personal_playlist_binding", {
   id: text("id").primaryKey(),
   roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
-  memberId: text("member_id").notNull().references(() => roomMembership.id, { onDelete: "cascade" }),
+  memberId: text("member_id").notNull(),
   accountId: text("account_id").notNull(),
   playlistId: text("playlist_id").notNull(),
   name: text("name").notNull(),
-  type: text("type", { enum: ["ownerCreated", "ownerSubscribed", "roommateDedicated"] }).notNull(),
-  writeable: integer("writeable", { mode: "boolean" }).notNull(),
   generation: integer("generation").notNull().default(1),
-  creationOperationId: text("creation_operation_id"),
+  // Durable creation provenance survives expiration of the operation envelope.
+  creationOperationId: text("creation_operation_id").notNull(),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
+  foreignKey({
+    columns: [table.roomId, table.memberId],
+    foreignColumns: [roomMembership.roomId, roomMembership.id]
+  }).onDelete("cascade"),
   uniqueIndex("personal_playlist_binding_room_member_unique").on(table.roomId, table.memberId),
-  index("personal_playlist_binding_target_index").on(table.accountId, table.playlistId),
-  check("personal_playlist_binding_type_valid", sql`${table.type} IN ('ownerCreated', 'ownerSubscribed', 'roommateDedicated')`),
-  check("personal_playlist_binding_writeable_valid", sql`${table.writeable} IN (0, 1)`),
+  uniqueIndex("personal_playlist_binding_target_unique").on(table.accountId, table.playlistId),
+  uniqueIndex("personal_playlist_binding_creation_unique").on(table.creationOperationId),
+  check("personal_playlist_binding_creation_valid", sql`length(${table.creationOperationId}) > 0`),
   check("personal_playlist_binding_generation_valid", sql`${table.generation} > 0`),
   check("personal_playlist_binding_fields_valid", sql`length(${table.playlistId}) > 0 AND length(${table.accountId}) > 0 AND length(${table.name}) > 0`)
 ]);
@@ -255,7 +260,7 @@ export const upstreamAccount = sqliteTable("upstream_account", {
   pauseReason: text("pause_reason")
 }, table => [check("upstream_account_next_start_valid", sql`${table.nextStartAt} >= 0`)]);
 
-// 规范化云端歌单权威快照元数据；跨房间绑定共享同一记录。
+// 按真实账号与具体云端歌单保存权威快照元数据，不推断独立歌曲顺序。
 export const playlistSnapshot = sqliteTable("playlist_snapshot", {
   accountId: text("account_id").notNull(),
   playlistId: text("playlist_id").notNull(),

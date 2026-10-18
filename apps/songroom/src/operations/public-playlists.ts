@@ -1,10 +1,11 @@
 import { v7 } from "uuid";
+import { terminatePersonalPlaylistsInTx } from "./personal-playlist-lifecycle.js";
 import { PublicPlayback } from "./public-playback.js";
 import { PublicPlayNext } from "./public-play-next.js";
 import type { PlayNextCommand, PlayNextResponse, PlayNextOperationView, PlaybackView } from "../shared/public-playlist-contracts.js";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, publicPlaylistReplacement, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, publicPlaylistReplacement, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
@@ -968,6 +969,7 @@ export class PublicPlaylists {
   }
 
   #prune(): void {
+    this.database.delete(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.status, "succeeded")).run();
     this.database.delete(operation).where(sql`${operation.status} IN ('succeeded', 'failed', 'stopped') AND ${operation.updatedAt} <= ${this.now() - TERMINAL_RETENTION_MS}`).run();
     this.database.delete(commandReceipt).where(sql`${commandReceipt.expiresAt} <= ${this.now()}`).run();
   }
@@ -1973,12 +1975,17 @@ export class PublicPlaylists {
     }
   }
 
-  terminateMemberInTx(tx: any, roomId: string, userId: string): void {
+  terminateMemberInTx(tx: any, roomId: string, userId: string): string[] {
+    const currentRoom = tx.select({ ownerUserId: room.ownerUserId }).from(room).where(eq(room.id, roomId)).get();
+    const member = tx.select({ id: roomMembership.id }).from(roomMembership)
+      .where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, userId))).get();
+    const cleanupIds = currentRoom && member ? terminatePersonalPlaylistsInTx(tx, roomId, currentRoom.ownerUserId, member.id,
+      (accountId, playlistId, creationId) => this.ensureCleanupInTx(tx, currentRoom.ownerUserId, accountId, playlistId, creationId), this.now()) : [];
     this.replacementService?.terminateMemberInTx(tx, roomId, userId);
     const ops = tx.select().from(operation)
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
     for (const op of ops) {
-      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist") continue;
+      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist" || op.kind === "createPersonalPlaylist") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
@@ -1998,6 +2005,7 @@ export class PublicPlaylists {
         }
       }
     }
+    return cleanupIds;
   }
 
   readPublicPlaylistTarget(roomId: string): { id: string | null; name: string } | null {
@@ -2094,7 +2102,11 @@ export class PublicPlaylists {
     const existing = tx.select().from(publicPlaylistCleanup)
       .where(and(eq(publicPlaylistCleanup.accountId, accountId), eq(publicPlaylistCleanup.playlistId, playlistId)))
       .get();
-    if (existing) return existing.id;
+    if (existing?.status === "succeeded") {
+      tx.delete(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, existing.id)).run();
+    } else if (existing) {
+      return existing.id;
+    }
 
     const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, userId)).get();
     const isAuthActive = auth && auth.status === "active" && auth.accountId === accountId;
@@ -2131,7 +2143,9 @@ export class PublicPlaylists {
     return id;
   }
 
-  terminateRoomInTx(tx: any, roomId: string, ownerUserId: string): { cleanupId: string | null } {
+  terminateRoomInTx(tx: any, roomId: string, ownerUserId: string): { cleanupId: string | null; cleanupIds: string[] } {
+    const personalCleanupIds = terminatePersonalPlaylistsInTx(tx, roomId, ownerUserId, undefined,
+      (accountId, playlistId, creationId) => this.ensureCleanupInTx(tx, ownerUserId, accountId, playlistId, creationId), this.now());
     this.playNextService.terminateRoomInTx(tx, roomId);
     this.replacementService?.terminateRoomInTx(tx, roomId);
     let target: { accountId: string; playlistId: string; creationOperationId: string } | null = null;
@@ -2146,6 +2160,7 @@ export class PublicPlaylists {
 
     const ops = tx.select().from(operation).where(eq(operation.roomId, roomId)).all();
     for (const op of ops) {
+      if (op.kind === "createPersonalPlaylist") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
@@ -2198,10 +2213,10 @@ export class PublicPlaylists {
       cleanupId = this.ensureCleanupInTx(tx, ownerUserId, target.accountId, target.playlistId, target.creationOperationId);
 
       const otherRoomUsingPlaylist = tx.select({ roomId: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
-        .where(and(eq(publicPlaylistBinding.playlistId, target.playlistId), ne(publicPlaylistBinding.roomId, roomId))).get();
+        .where(and(eq(publicPlaylistBinding.accountId, target.accountId), eq(publicPlaylistBinding.playlistId, target.playlistId), ne(publicPlaylistBinding.roomId, roomId))).get();
       if (!otherRoomUsingPlaylist) {
-        tx.delete(playlistTrack).where(eq(playlistTrack.playlistId, target.playlistId)).run();
-        tx.delete(playlistSnapshot).where(eq(playlistSnapshot.playlistId, target.playlistId)).run();
+        tx.delete(playlistTrack).where(and(eq(playlistTrack.accountId, target.accountId), eq(playlistTrack.playlistId, target.playlistId))).run();
+        tx.delete(playlistSnapshot).where(and(eq(playlistSnapshot.accountId, target.accountId), eq(playlistSnapshot.playlistId, target.playlistId))).run();
       }
     }
 
@@ -2209,7 +2224,8 @@ export class PublicPlaylists {
     tx.delete(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).run();
     tx.delete(retiredPublicPlaylistBinding).where(eq(retiredPublicPlaylistBinding.roomId, roomId)).run();
 
-    return { cleanupId };
+    const cleanupIds = [...new Set([...(cleanupId ? [cleanupId] : []), ...personalCleanupIds])];
+    return { cleanupId: cleanupIds[0] ?? null, cleanupIds };
   }
 
   #handleCleanupTaskError(cleanupId: string, row: typeof publicPlaylistCleanup.$inferSelect, err: unknown): void {
@@ -2232,6 +2248,26 @@ export class PublicPlaylists {
     return await this.scheduler.executeMemoryTask(accountId, async (): Promise<AdapterResult<T["operation"]>> => {
       return await this.adapter.call(input);
     });
+  }
+
+  #blockReferencedCleanup(current: typeof publicPlaylistCleanup.$inferSelect): boolean {
+    const publicReference = this.database.select({ id: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
+      .where(and(eq(publicPlaylistBinding.accountId, current.accountId), eq(publicPlaylistBinding.playlistId, current.playlistId))).get();
+    const personalReference = this.database.select({ id: personalPlaylistBinding.id }).from(personalPlaylistBinding)
+      .where(and(eq(personalPlaylistBinding.accountId, current.accountId), eq(personalPlaylistBinding.playlistId, current.playlistId))).get();
+    if (!publicReference && !personalReference) return false;
+
+    const v = current.version + 1;
+    this.database.update(publicPlaylistCleanup).set({
+      status: "needsAdministrator",
+      lastErrorCode: "TARGET_PERMISSION",
+      checkFact: "target_in_use",
+      retryAuthorized: false,
+      version: v,
+      updatedAt: this.now()
+    }).where(eq(publicPlaylistCleanup.id, current.id)).run();
+    this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: current.id, version: v });
+    return true;
   }
 
   dispatchCleanup(cleanupId: string): void {
@@ -2277,6 +2313,9 @@ export class PublicPlaylists {
           return;
         }
 
+        // 创建响应可能返回其他房间正在使用的 ID；调度等待期间也可能建立新绑定。
+        if (this.#blockReferencedCleanup(current)) return;
+
         // 请求发出前持久记录发送意图，进入发送中后视为可能已发；单次重试授权在此被立即持久消费
         const sendingVersion = current.version + 1;
         this.database.update(publicPlaylistCleanup).set({
@@ -2299,13 +2338,7 @@ export class PublicPlaylists {
           const finalVersion = sendingVersion + 1;
           if (res.ok) {
             // 明确业务成功，直接完成清理，不强制等待详情变为 404
-            this.database.update(publicPlaylistCleanup).set({
-              status: "succeeded",
-              lastErrorCode: null,
-              checkFact: "deleted_confirmed",
-              version: finalVersion,
-              updatedAt: this.now()
-            }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+            this.database.delete(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
             this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: finalVersion });
           } else {
             if (res.error.code === "RATE_LIMITED") {
@@ -2380,6 +2413,7 @@ export class PublicPlaylists {
     void (async () => {
       const current = this.database.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get();
       if (!current || current.status !== "awaitingConfirmation") return;
+      if (this.#blockReferencedCleanup(current)) return;
 
       const currentAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.userId)).get();
       if (!currentAuth || currentAuth.status !== "active" || !currentAuth.credentials || currentAuth.accountId !== current.accountId) {
@@ -2554,6 +2588,8 @@ export class PublicPlaylists {
         return;
       }
 
+      // 远端核验期间可能建立新绑定，应用删除证据前再次保护当前引用。
+      if (this.#blockReferencedCleanup(current)) return;
       const v = current.version + 1;
 
       if (!detailRes.ok && detailRes.error.code === "RATE_LIMITED") {
@@ -2574,14 +2610,7 @@ export class PublicPlaylists {
       const isTombstone = detailRes.ok && detailRes.data.playlist.status === 10;
 
       if (!inPlaylists && (is404 || isTombstone)) {
-        this.database.update(publicPlaylistCleanup).set({
-          status: "succeeded",
-          lastErrorCode: null,
-          checkFact: is404 ? "not_found_confirmed" : "tombstone_confirmed_deleted",
-          checkRound: nextRound,
-          version: v,
-          updatedAt: this.now()
-        }).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
+        this.database.delete(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).run();
         this.eventStream.notifyUser(current.userId, { type: "cleanup", resourceId: cleanupId, version: v });
         return;
       }

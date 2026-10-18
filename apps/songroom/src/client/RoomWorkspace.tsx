@@ -66,11 +66,14 @@ function DeleteRoomDialog({
   });
 
   const deletion = deletionQuery.data;
+  const hasCloudCleanup = !!deletion && (
+    !!deletion.publicPlaylist || deletion.personalPlaylistCount > 0 || deletion.pendingPersonalPlaylistCount > 0
+  );
 
   const badges: DestructiveBadge[] = [
     { label: "不可撤销", variant: "danger" },
     { label: "立即生效", variant: "danger" },
-    ...(deletion?.publicPlaylist ? [{ label: "云端歌单清理", variant: "danger" as const }] : [])
+    ...(hasCloudCleanup ? [{ label: "云端歌单清理", variant: "danger" as const }] : [])
   ];
 
   return (
@@ -96,10 +99,27 @@ function DeleteRoomDialog({
         <p role="status">正在读取最新影响范围…</p>
       ) : deletionQuery.isError ? (
         <p className="form-message" role="alert">读取影响范围失败，请稍后重试。</p>
-      ) : deletion?.publicPlaylist ? (
-        <p className="destructive-dialog-note">
-          专用公共歌单“{deletion.publicPlaylist.name}”将启动网易云删除清理。
-        </p>
+      ) : deletion && hasCloudCleanup ? (
+        <>
+          {deletion.publicPlaylist && (
+            <p className="destructive-dialog-note">
+              专用公共歌单“{deletion.publicPlaylist.name}”将启动网易云删除清理。
+            </p>
+          )}
+          {deletion.personalPlaylistCount > 0 && (
+            <p className="destructive-dialog-note">
+              全部成员的 {deletion.personalPlaylistCount} 份专用个人歌单（包含房主）将启动网易云删除清理。
+            </p>
+          )}
+          {deletion.pendingPersonalPlaylistCount > 0 && (
+            <p className="destructive-dialog-note">
+              另有 {deletion.pendingPersonalPlaylistCount} 个在途个人歌单创建可能产生云端资源，晚到结果确认后会继续清理。
+            </p>
+          )}
+          <p className="destructive-dialog-note">
+            本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。
+          </p>
+        </>
       ) : null}
     </DestructiveConfirmDialog>
   );
@@ -313,7 +333,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                   <div className="danger-action-row">
                     <div className="danger-action-info">
                       <strong>删除房间</strong>
-                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动专用公共歌单清理。</p>
+                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动公共歌单及全部成员专用个人歌单清理。</p>
                     </div>
                     <div className="danger-action-trigger">
                       <DeleteRoomDialog

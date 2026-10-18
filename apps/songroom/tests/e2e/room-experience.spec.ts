@@ -74,11 +74,14 @@ for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 820 });
     await setup(page);
     const requesters = ["这是一个比较长的室友昵称", "VeryLongRequesterNameWithoutSpaces", "小林"];
-    await page.route(`**${root}/public-playlist`, route => route.fulfill({ json: {
+    const multiRequesterView: PublicPlaylistView = {
       ...view,
       snapshot: { ...view.snapshot!, tracks: [{ ...tracks[0], name: "这是一首名字很长需要省略展示的歌曲", requesters }, ...tracks.slice(1)] }
-    } }));
+    };
+    await page.route(`**${root}/public-playlist`, route => route.fulfill({ json: multiRequesterView }));
+    await page.route(`**${root}/public-playlist/refresh`, route => route.fulfill({ json: multiRequesterView }));
     await page.goto(`/rooms/${roomId}`);
+    await expect(page.getByRole("status").filter({ hasText: "歌单已同步" })).toBeVisible();
     const track = page.locator('[data-song-id="1"]');
     await expect(track.locator(".requester-capsule")).toHaveText(requesters);
     const info = await track.locator(".track-info").boundingBox();

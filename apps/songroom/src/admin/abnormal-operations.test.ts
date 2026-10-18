@@ -586,7 +586,7 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
     }
   });
 
-  it("室友专用个人歌单创建证据唯一且业务有效：恢复绑定为 roommateDedicated", async () => {
+  it("成员专用个人歌单创建证据唯一且业务有效：恢复统一专用绑定", async () => {
     const env = await setupTestApp();
 
     const adminRegRes = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
@@ -689,12 +689,76 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
 
       const binding = verifyDb.select().from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).get()!;
       expect(binding.playlistId).toBe(newPlaylistId);
-      expect(binding.type).toBe("roommateDedicated");
-      expect(binding.writeable).toBe(true);
       expect(binding.creationOperationId).toBe(opId);
     } finally {
       verifyDb.$client.close();
     }
+  });
+
+  it.each(["房间已删除", "同账号重新加入"] as const)("%s后核实个人创建：清理归属原房主，不恢复旧成员关联", async scenario => {
+    const env = await setupTestApp();
+    const registered = await env.trustedFetch(`${env.config.baseUrl}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { origin: env.config.baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "admin-password-123" })
+    });
+    const adminUserId = ((await registered.json()) as { user: { id: string } }).user.id;
+    await env.restartApp([adminUserId]);
+
+    const ownerId = v7();
+    const roommateId = v7();
+    const operationId = v7();
+    const roomId = v7();
+    const authorizationId = v7();
+    const accountId = "original-owner-account";
+    const playlistId = "orphan-personal-playlist";
+    env.app.database.insert(user).values([
+      { id: ownerId, name: "Owner", email: "owner@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() },
+      { id: roommateId, name: "Roommate", email: "roommate@example.com", emailVerified: false, createdAt: new Date(), updatedAt: new Date() }
+    ]).run();
+    env.app.database.insert(operation).values({
+      id: operationId, kind: "createPersonalPlaylist", userId: roommateId, roomId,
+      accountId, authorizationId, generation: 1, status: "needsAdministrator", errorCode: "DEADLINE",
+      version: 1, createdAt: Date.now() - 5_000, updatedAt: Date.now() - 1_000
+    }).run();
+    env.app.database.insert(personalPlaylistCreation).values({
+      operationId, ownerUserId: ownerId, memberId: v7(), name: "songroom-已删房间-室友",
+      step: "unknown", beforePlaylists: "[]",
+      afterPlaylists: JSON.stringify([{ id: playlistId, name: "songroom-已删房间-室友" }])
+    }).run();
+    if (scenario === "同账号重新加入") {
+      env.app.database.insert(room).values({ id: roomId, name: "保留的房间", ownerUserId: ownerId }).run();
+      env.app.database.insert(roomMembership).values([
+        { id: v7(), roomId, userId: ownerId, nickname: "房主" },
+        { id: v7(), roomId, userId: roommateId, nickname: "重新加入" }
+      ]).run();
+      env.app.database.insert(neteaseAuthorization).values({
+        id: authorizationId, userId: ownerId, accountId, nickname: "房主音乐账号", status: "active", generation: 1,
+        credentials: new CredentialVault(env.config.credentialKeyPath).encrypt("owner-cookie", { authorizationId, accountId, generation: 1 })
+      }).run();
+      env.app.scheduler.pause(accountId);
+    }
+
+    const result = await runAdminAbnormalAction(env.config, "resolve-create", operationId, {
+      isTTY: true,
+      fetch: env.trustedFetch,
+      prompts: {
+        adminEmail: async () => "admin@example.com",
+        adminPassword: async () => "admin-password-123",
+        reason: async () => "原房间已删除，依据原房主创建证据完成清理归属",
+        confirm: async () => true
+      }
+    });
+
+    expect(result.result?.conclusion).toBe("transferred_to_cleanup");
+    expect(env.app.playlists.readCleanups(ownerId).cleanups).toEqual([
+      expect.objectContaining({ accountId, playlistId,
+        status: scenario === "房间已删除" ? "waitingAuthorization" : "needsAdministrator" })
+    ]);
+    expect(env.app.playlists.readCleanups(roommateId).cleanups).toEqual([]);
+    expect(() => env.app.abnormalService.getAbnormalOperation(operationId)).toThrowError(
+      expect.objectContaining({ code: "NOT_FOUND" })
+    );
   });
 
   it("创建证据唯一但原业务已结束：原房间已删除时转公共清理任务并终结操作", async () => {
@@ -856,21 +920,12 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
     expect(actionResult.ok).toBe(true);
     expect(actionResult.result?.conclusion).toBe("retry_authorized");
 
-    // 验证数据库：此时 retryAuthorized 应为 false (因为在 dispatchCleanup 认领进入 sending 时已原子消费)，状态最终为 succeeded
-    const verifyDb = openDatabase(env.dbPath);
-    try {
-      const cleanup = verifyDb.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get()!;
-      expect(cleanup.status).toBe("succeeded");
-      expect(cleanup.hasSent).toBe(true);
-      expect(cleanup.retryAuthorized).toBe(false); // 必须被消费重置
-      expect(deleteCallCount).toBe(1);
-
-      // 防重复消费验证：如果再手动调用 dispatchCleanup，由于 retryAuthorized 为 false 且 hasSent 为 true，绝不再次调用删除
-      // 保持 deleteCallCount 仍为 1
-      expect(deleteCallCount).toBe(1);
-    } finally {
-      verifyDb.$client.close();
-    }
+    // 单次授权被消费，确认删除后立即移除清理任务；旧任务 ID 不会再次发出删除。
+    await expect.poll(() => env.app.playlists.readCleanups(userId).cleanups, { timeout: 5_000 }).toEqual([]);
+    expect(deleteCallCount).toBe(1);
+    env.app.playlists.dispatchCleanup(cleanupId);
+    await env.app.playlists.settle();
+    expect(deleteCallCount).toBe(1);
   });
 
   it("手工清理核验：记录房主已在官方客户端手工处理，触发服务端只读核验并成功收敛", async () => {
@@ -966,22 +1021,11 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
     expect(actionResult.ok).toBe(true);
     expect(actionResult.result?.conclusion).toBe("manual_verification_triggered");
 
-    // 服务端只读核验触发并异步执行，等待收敛
-    const verifyDb = openDatabase(env.dbPath);
-    try {
-      let cleanup: any;
-      for (let i = 0; i < 50; i++) {
-        cleanup = verifyDb.select().from(publicPlaylistCleanup).where(eq(publicPlaylistCleanup.id, cleanupId)).get()!;
-        if (cleanup.status === "succeeded") break;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      expect(cleanup.status).toBe("succeeded");
-      expect(cleanup.checkFact).toBe("not_found_confirmed");
-      expect(identityCallCount).toBeGreaterThanOrEqual(1);
-      expect(userPlaylistsCallCount).toBeGreaterThanOrEqual(1);
-    } finally {
-      verifyDb.$client.close();
-    }
+    // 服务端通过列表和目标详情确认消失后，移除任务；整个流程只读核验。
+    await expect.poll(() => env.app.playlists.readCleanups(userId).cleanups, { timeout: 5_000 }).toEqual([]);
+    expect(identityCallCount).toBeGreaterThanOrEqual(1);
+    expect(userPlaylistsCallCount).toBeGreaterThanOrEqual(1);
+    expect(detailCallCount).toBeGreaterThanOrEqual(1);
   });
 
   it("风控恢复：核验当前真实账号与有效授权后解除暂停，重启无法隐式恢复", async () => {

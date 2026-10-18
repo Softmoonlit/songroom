@@ -8,7 +8,7 @@ import { readMigrationFiles, type MigrationMeta } from "drizzle-orm/migrator";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 
-export const CURRENT_SCHEMA_VERSION = 24;
+export const CURRENT_SCHEMA_VERSION = 25;
 
 const migrationsFolder = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
 
@@ -116,7 +116,29 @@ export function checkDatabase(filePath: string): DatabaseCheck {
 
 function runMigrations(client: Database.Database): void {
   const database = drizzle(client, { schema }) as AppDatabase;
-  migrate(database, { migrationsFolder });
+  const hasHistory = client.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'").get();
+  if (!hasHistory) {
+    migrate(database, { migrationsFolder });
+    return;
+  }
+  if ((client.pragma("foreign_key_check") as unknown[]).length !== 0) {
+    throw new Error("database foreign key check failed before migration");
+  }
+  // Drizzle owns the transaction. SQLite cannot toggle foreign_keys inside it,
+  // and rebuilding a referenced table would otherwise cascade-delete recovery
+  // evidence. Validate before each migration receipt so violations roll back
+  // with the migration, then restore enforcement before returning the connection.
+  client.exec(`CREATE TEMP TRIGGER songroom_migration_foreign_key_check
+    BEFORE INSERT ON main.__drizzle_migrations
+    WHEN EXISTS (SELECT 1 FROM pragma_foreign_key_check)
+    BEGIN SELECT RAISE(ABORT, 'database migration foreign key check failed'); END`);
+  client.pragma("foreign_keys = OFF");
+  try {
+    migrate(database, { migrationsFolder });
+  } finally {
+    client.pragma("foreign_keys = ON");
+    client.exec("DROP TRIGGER temp.songroom_migration_foreign_key_check");
+  }
 }
 
 function configureWritableSqlite(client: Database.Database): void {

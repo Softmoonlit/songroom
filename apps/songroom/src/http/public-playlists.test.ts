@@ -292,8 +292,7 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
     accountId: "test",
     playlistId: "owner-personal-1",
     name: "房主个人歌单",
-    type: "ownerCreated",
-    writeable: true,
+    creationOperationId: v7(),
     generation: 1,
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -366,8 +365,7 @@ it("随机换歌确认与操作轮询路由鉴权、幂等受理与操作读取"
     accountId: "test",
     playlistId: "owner-personal-replace-http",
     name: "房主个人歌单",
-    type: "ownerCreated",
-    writeable: true,
+    creationOperationId: v7(),
     generation: 1,
     createdAt: Date.now(),
     updatedAt: Date.now()

@@ -525,7 +525,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
           playlist: null,
           snapshot: null,
           lastRefreshError: null,
-          allowedActions: ["bindPersonalPlaylist"],
+          allowedActions: ["createPersonalPlaylist"],
           disabledReason: null,
           version: 1
         }

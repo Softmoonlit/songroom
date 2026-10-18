@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag, retiredRoomInvite, publicPlaylistCleanup } from "../db/schema.js";
+import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag, retiredRoomInvite, publicPlaylistCleanup, personalPlaylistBinding, personalPlaylistCreation, operation } from "../db/schema.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
@@ -208,17 +208,18 @@ export class Rooms {
   }
 
   #terminateMemberInTx(tx: any, roomId: string, targetMember: { id: string; userId: string; nickname: string }) {
+    // Capture personal targets before deleting membership cascades and bindings.
+    const cleanupIds = this.publicPlaylists?.terminateMemberInTx(tx, roomId, targetMember.userId) ?? [];
+
     // 1. 硬删除当前成员关系，释放昵称
     tx.delete(roomMembership).where(eq(roomMembership.id, targetMember.id)).run();
 
     // 2. 删除该成员在当前公共绑定上的全部点歌人标签
     tx.delete(requesterTag).where(eq(requesterTag.memberId, targetMember.id)).run();
 
-    // 3. 委派操作模块处理点歌操作终止清理
-    this.publicPlaylists?.terminateMemberInTx(tx, roomId, targetMember.userId);
-
     // 4. 递增房间版本
     tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
+    return cleanupIds;
   }
 
   #notifyMemberTermination(roomId: string, targetUserId: string, version: number) {
@@ -243,14 +244,15 @@ export class Rooms {
       if (!member) {
         throw new BusinessError(404, "ROOM_UNAVAILABLE", "房间不存在或你已不是当前成员");
       }
-      this.#terminateMemberInTx(tx, roomId, member);
+      const cleanupIds = this.#terminateMemberInTx(tx, roomId, member);
       recordCommandResource(tx, prepared, roomId, this.now());
       const nextVersion = tx.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()!.version;
-      return { kind: "terminated" as const, roomId, targetUserId: userId, version: nextVersion };
+      return { kind: "terminated" as const, roomId, targetUserId: userId, cleanupIds, version: nextVersion };
     }, { behavior: "immediate" });
 
     if (outcome.kind === "terminated") {
       this.#notifyMemberTermination(outcome.roomId, outcome.targetUserId, outcome.version);
+      for (const id of outcome.cleanupIds) this.#requirePublicPlaylists().dispatchCleanup(id);
     }
     return { ok: true, roomId: outcome.roomId };
   }
@@ -278,14 +280,15 @@ export class Rooms {
         throw new BusinessError(409, "CANNOT_REMOVE_OWNER", "不能移除房主本人");
       }
 
-      this.#terminateMemberInTx(tx, roomId, targetMember);
+      const cleanupIds = this.#terminateMemberInTx(tx, roomId, targetMember);
       recordCommandResource(tx, prepared, roomId, this.now());
       const updatedMembers = this.readMembers(userId, roomId);
-      return { kind: "terminated" as const, members: updatedMembers, targetUserId: targetMember.userId, version: updatedMembers.version };
+      return { kind: "terminated" as const, members: updatedMembers, targetUserId: targetMember.userId, cleanupIds, version: updatedMembers.version };
     }, { behavior: "immediate" });
 
     if (outcome.kind === "terminated") {
       this.#notifyMemberTermination(roomId, outcome.targetUserId, outcome.version);
+      for (const id of outcome.cleanupIds) this.#requirePublicPlaylists().dispatchCleanup(id);
     }
     return outcome.members;
   }
@@ -311,11 +314,32 @@ export class Rooms {
       name: target.name
     } : null;
 
+    const personalBindings = this.database.select().from(personalPlaylistBinding)
+      .where(eq(personalPlaylistBinding.roomId, roomId)).all();
+    const personalTargets = new Set(personalBindings.map(binding => JSON.stringify([binding.accountId, binding.playlistId])));
+    const personalCreations = this.database.select({
+      accountId: operation.accountId,
+      playlistId: personalPlaylistCreation.playlistId,
+      step: personalPlaylistCreation.step
+    }).from(operation).innerJoin(personalPlaylistCreation, eq(personalPlaylistCreation.operationId, operation.id))
+      .where(and(eq(operation.roomId, roomId), eq(operation.kind, "createPersonalPlaylist"),
+        sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).all();
+    let pendingPersonalPlaylistCount = 0;
+    for (const creation of personalCreations) {
+      if (creation.accountId && creation.playlistId) {
+        personalTargets.add(JSON.stringify([creation.accountId, creation.playlistId]));
+      } else if (["sending", "unknown"].includes(creation.step)) {
+        pendingPersonalPlaylistCount += 1;
+      }
+    }
+
     return {
       room: { id: shell.room.id, name: shell.room.name },
       version: shell.version,
       memberCount,
       pendingApplicationCount,
+      personalPlaylistCount: personalTargets.size,
+      pendingPersonalPlaylistCount,
       publicPlaylist,
       allowedActions: ["deleteRoom"],
       disabledReasons: {}
@@ -347,7 +371,7 @@ export class Rooms {
       const members = tx.select({ userId: roomMembership.userId }).from(roomMembership).where(eq(roomMembership.roomId, roomId)).all();
       const memberUserIds = members.map(m => m.userId);
 
-      const { cleanupId } = this.#requirePublicPlaylists().terminateRoomInTx(tx, roomId, userId);
+      const { cleanupId, cleanupIds } = this.#requirePublicPlaylists().terminateRoomInTx(tx, roomId, userId);
 
       tx.delete(joinApplication).where(eq(joinApplication.roomId, roomId)).run();
       tx.delete(roomInvite).where(eq(roomInvite.roomId, roomId)).run();
@@ -362,6 +386,7 @@ export class Rooms {
         kind: "deleted" as const,
         roomId,
         cleanupId,
+        cleanupIds,
         memberUserIds,
         version: current.version + 1
       };
@@ -375,8 +400,8 @@ export class Rooms {
         this.eventStream?.notifyUser(mId, { type: "permission", resourceId: outcome.roomId, version: outcome.version });
       }
 
-      if (outcome.cleanupId) {
-        this.#requirePublicPlaylists().dispatchCleanup(outcome.cleanupId);
+      for (const id of outcome.cleanupIds) {
+        this.#requirePublicPlaylists().dispatchCleanup(id);
       }
     }
 
