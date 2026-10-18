@@ -99,11 +99,10 @@ function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]
   }, [active]);
 
   return (
-    <div className="playlist-tracks-wrapper" ref={listRef}>
+    <div className="playlist-tracks-wrapper">
       <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
         <span className="tracks-header-col col-index">#</span>
         <span className="tracks-header-col col-title">歌曲与歌手</span>
-        <span className="tracks-header-col col-requester">专辑</span>
       </div>
       {tracks.length === 0 ? (
         <div className="playlist-tracks-empty" role="status">
@@ -111,7 +110,10 @@ function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]
         </div>
       ) : (
         <div
-          className="playlist-tracks-virtual-container"
+          ref={listRef}
+          className="playlist-tracks-container"
+          role="list"
+          aria-label="歌曲列表"
           style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
         >
           {virtualizer.getVirtualItems().map(virtualRow => {
@@ -119,25 +121,33 @@ function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]
             return (
               <div
                 key={virtualRow.key}
-                className="playlist-track-row"
+                ref={virtualizer.measureElement}
+                data-index={virtualRow.index}
+                role="listitem"
+                tabIndex={0}
+                className="track-item"
                 style={{
                   position: "absolute",
                   top: 0,
                   left: 0,
                   width: "100%",
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`
+                  transform: `translateY(${virtualRow.start - scrollMargin}px)`
                 }}
               >
-                <div className="track-col col-index" aria-label={`序号 ${track.position + 1}`}>
+                <span className="track-index" aria-hidden="true">
                   {track.position + 1}
-                </div>
-                <div className="track-col col-title">
-                  <span className="track-name">{track.name}</span>
-                  <span className="track-artists">{track.artists.join(" / ")}</span>
-                </div>
-                <div className="track-col col-requester">
-                  <span className="track-album-name">{track.album || "—"}</span>
+                </span>
+                <div className="track-info">
+                  <span className="track-name" title={track.name}>
+                    {track.name}
+                  </span>
+                  <span
+                    className="track-artists-album"
+                    title={`${track.artists.join(" / ")}${track.album ? ` · ${track.album}` : ""}`}
+                  >
+                    {track.artists.join(" / ")}
+                    {track.album && <span className="track-album"> · {track.album}</span>}
+                  </span>
                 </div>
               </div>
             );
