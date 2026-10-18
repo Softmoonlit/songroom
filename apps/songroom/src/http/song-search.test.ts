@@ -262,21 +262,20 @@ it("新关键词取消已完成旧轮及正在执行的旧分页，晚到结果�
   expect((await request(app, `/api/rooms/${roomId}/search/${secondId}/more`, member.cookie)).statusCode).toBe(404);
 });
 
-it.each(["membership", "authorization", "binding"] as const)("分页受理时重新检查%s", async change => {
+it.each(["membership", "authorization"] as const)("分页受理时重新检查%s", async change => {
   const { app, adapter, member, owner, roomId } = await fixture();
   scriptSearch(adapter, () => ({ ok: true, data: { songs: songs(0), songCount: 40 } }));
   const searchId = await startSearch(app, roomId, member.cookie);
   await completedSearch(app, roomId, member.cookie, searchId);
   if (change === "membership") app.database.delete(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, member.userId))).run();
   if (change === "authorization") app.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.userId, owner.userId)).run();
-  if (change === "binding") app.database.update(publicPlaylistBinding).set({ generation: 2 }).where(eq(publicPlaylistBinding.roomId, roomId)).run();
   const response = await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie);
   expect(response.statusCode).toBe(change === "membership" ? 404 : 409);
-  expect(response.json().error.code).toBe(change === "membership" ? "ROOM_UNAVAILABLE" : change === "authorization" ? "NETEASE_AUTH_REQUIRED" : "PUBLIC_PLAYLIST_CHANGED");
+  expect(response.json().error.code).toBe(change === "membership" ? "ROOM_UNAVAILABLE" : "NETEASE_AUTH_REQUIRED");
   expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(1);
 });
 
-it.each(["membership", "authorization", "binding"] as const)("已排队的搜索执行前重新检查%s，不使用排队前凭据发送", async change => {
+it.each(["membership", "authorization"] as const)("已排队的搜索执行前重新检查%s，不使用排队前凭据发送", async change => {
   const { app, adapter, member, owner, roomId } = await fixture();
   scriptSearch(adapter, () => ({ ok: true, data: { songs: songs(0), songCount: 40 } }));
   let release!: () => void;
@@ -291,11 +290,51 @@ it.each(["membership", "authorization", "binding"] as const)("已排队的搜索
   await startSearch(app, roomId, member.cookie);
   if (change === "membership") app.database.delete(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, member.userId))).run();
   if (change === "authorization") app.database.update(neteaseAuthorization).set({ status: "waitingAuthorization" }).where(eq(neteaseAuthorization.userId, owner.userId)).run();
-  if (change === "binding") app.database.update(publicPlaylistBinding).set({ generation: 2 }).where(eq(publicPlaylistBinding.roomId, roomId)).run();
   release();
   await blocked;
   await app.scheduler.settle();
   expect(adapter.inputs.filter(input => input.operation === "search")).toHaveLength(0);
+});
+
+it("无公共歌单且无个人歌单时仍可正常搜索与分页", async () => {
+  const { app, adapter, member, roomId } = await fixture();
+  // 清理 fixture 中插入的公共歌单绑定，确保当前房间无公共配置且无个人配置
+  app.database.delete(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).run();
+
+  scriptSearch(adapter, input => {
+    const offset = input.offset ?? 0;
+    return { ok: true, data: { songs: songs(offset), songCount: 40 } };
+  });
+
+  const searchId = await startSearch(app, roomId, member.cookie, "测试歌曲");
+  const firstPage = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(firstPage.status).toBe("completed");
+  expect(firstPage.songs).toHaveLength(20);
+  expect(firstPage.hasMore).toBe(true);
+
+  await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie);
+  const secondPage = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(secondPage.songs).toHaveLength(40);
+  expect(secondPage.hasMore).toBe(false);
+});
+
+it("公共歌单绑定变化不影响搜索与分页", async () => {
+  const { app, adapter, member, roomId } = await fixture();
+  scriptSearch(adapter, input => {
+    const offset = input.offset ?? 0;
+    return { ok: true, data: { songs: songs(offset), songCount: 40 } };
+  });
+
+  const searchId = await startSearch(app, roomId, member.cookie, "测试歌曲");
+  await completedSearch(app, roomId, member.cookie, searchId);
+
+  // 模拟公共歌单绑定代次变化或删除
+  app.database.update(publicPlaylistBinding).set({ generation: 2 }).where(eq(publicPlaylistBinding.roomId, roomId)).run();
+
+  const response = await request(app, `/api/rooms/${roomId}/search/${searchId}/more`, member.cookie);
+  expect(response.statusCode).toBe(202);
+  const secondPage = await completedSearch(app, roomId, member.cookie, searchId);
+  expect(secondPage.songs).toHaveLength(40);
 });
 
 it("上游返回前授权失效时不发布候选，恢复同一授权后能读到明确失败状态", async () => {

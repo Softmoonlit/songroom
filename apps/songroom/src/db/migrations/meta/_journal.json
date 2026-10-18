@@ -176,6 +176,13 @@
       "when": 1791900000000,
       "tag": "0024_dedicated_personal_playlists",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792000000000,
+      "tag": "0025_personal_song_addition",
+      "breakpoints": true
     }
   ]
 }

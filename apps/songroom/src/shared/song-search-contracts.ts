@@ -27,7 +27,7 @@ export type SearchStatus = z.infer<typeof searchStatus>;
 
 export const searchErrorCode = z.union([
   adapterErrorCodeSchema,
-  z.enum(["ACCOUNT_PAUSED", "UPSTREAM_QUEUE_FULL", "APP_DRAINING", "ROOM_UNAVAILABLE", "NETEASE_AUTH_REQUIRED", "AUTHORIZATION_CHANGED", "PUBLIC_PLAYLIST_NOT_FOUND", "PUBLIC_PLAYLIST_CHANGED"])
+  z.enum(["ACCOUNT_PAUSED", "UPSTREAM_QUEUE_FULL", "APP_DRAINING", "ROOM_UNAVAILABLE", "NETEASE_AUTH_REQUIRED", "AUTHORIZATION_CHANGED"])
 ]);
 
 export const searchView = z.strictObject({

@@ -1,7 +1,7 @@
 import { v7 } from "uuid";
 import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { neteaseAuthorization, publicPlaylistBinding, room, roomMembership } from "../db/schema.js";
+import { neteaseAuthorization, room, roomMembership } from "../db/schema.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { NeteaseAdapter } from "../netease/protocol.js";
@@ -14,9 +14,6 @@ interface SearchScope {
   authorizationId: string;
   accountId: string;
   authorizationGeneration: number;
-  playlistId: string;
-  bindingGeneration: number;
-  creationOperationId: string;
 }
 
 interface SearchSession {
@@ -60,11 +57,8 @@ export class SongSearchService {
 
   #context(userId: string, roomId: string) {
     const { current, member } = this.#member(userId, roomId);
-    const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
-    if (!binding) throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单，无法搜索");
     const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.ownerUserId)).get();
     if (!auth || auth.status !== "active" || !auth.credentials) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
-    if (binding.accountId !== auth.accountId) throw new BusinessError(409, "AUTHORIZATION_CHANGED", "网易云授权已变化，请重新搜索");
     let cookie: string;
     try {
       cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
@@ -75,10 +69,7 @@ export class SongSearchService {
       membershipId: member.id,
       authorizationId: auth.id,
       accountId: auth.accountId,
-      authorizationGeneration: auth.generation,
-      playlistId: binding.playlistId,
-      bindingGeneration: binding.generation,
-      creationOperationId: binding.creationOperationId
+      authorizationGeneration: auth.generation
     };
     return { scope, cookie };
   }
@@ -89,9 +80,6 @@ export class SongSearchService {
     }
     if (session.scope.accountId !== scope.accountId || session.scope.authorizationId !== scope.authorizationId || session.scope.authorizationGeneration !== scope.authorizationGeneration) {
       throw new BusinessError(409, "AUTHORIZATION_CHANGED", "网易云授权已变化，请重新搜索");
-    }
-    if (session.scope.playlistId !== scope.playlistId || session.scope.bindingGeneration !== scope.bindingGeneration || session.scope.creationOperationId !== scope.creationOperationId) {
-      throw new BusinessError(409, "PUBLIC_PLAYLIST_CHANGED", "公共歌单已变化，请重新搜索");
     }
   }
 

@@ -3,7 +3,10 @@ import type { SongRoomAuth } from "../auth.js";
 import type { PersonalPlaylists } from "../operations/personal-playlists.js";
 import {
   personalPlaylistCreateCommand,
-  personalPlaylistView
+  personalPlaylistView,
+  personalSongAddCommand,
+  personalSongAddResponse,
+  personalSongOperationView
 } from "../shared/personal-playlist-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
 import { uuidv7 } from "../shared/contracts.js";
@@ -12,6 +15,10 @@ import type { ZodProvider } from "./zod.js";
 
 const memberPersonalPlaylistParams = roomParams.extend({
   memberId: uuidv7
+});
+
+const personalSongOperationParams = roomParams.extend({
+  operationId: uuidv7
 });
 
 export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongRoomAuth, playlists: PersonalPlaylists): void {
@@ -40,6 +47,34 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
   }, async (request, reply) => {
     const principal = await requireSession(auth, request, reply);
     return playlists.refresh(principal.userId, request.params.roomId);
+  });
+
+  typed.post("/api/rooms/:roomId/personal-playlist/songs", {
+    schema: {
+      params: roomParams,
+      body: personalSongAddCommand,
+      response: {
+        200: personalSongAddResponse,
+        202: personalSongAddResponse
+      }
+    }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const result = playlists.addSong(principal.userId, request.params.roomId, request.body);
+    const statusCode = result.replay || result.operation.status === "succeeded" ? 200 : 202;
+    return reply.code(statusCode).send(result);
+  });
+
+  typed.get("/api/rooms/:roomId/personal-playlist/songs/:operationId", {
+    schema: {
+      params: personalSongOperationParams,
+      response: {
+        200: personalSongOperationView
+      }
+    }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    return playlists.readSongAdditionOperation(principal.userId, request.params.roomId, request.params.operationId);
   });
 
   typed.get("/api/rooms/:roomId/members/:memberId/personal-playlist", {

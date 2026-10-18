@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, operation, personalPlaylistBinding, personalPlaylistCreation, playlistSnapshot, playlistTrack, publicPlaylistBinding } from "../db/schema.js";
+import { commandReceipt, operation, personalPlaylistBinding, personalPlaylistCreation, personalSongAddition, playlistSnapshot, playlistTrack, publicPlaylistBinding } from "../db/schema.js";
 
 type DatabaseTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
@@ -67,5 +67,23 @@ export function terminatePersonalPlaylistsInTx(
       tx.delete(operation).where(eq(operation.id, op.id)).run();
     }
   }
+
+  const additions = tx.select({ op: operation, detail: personalSongAddition }).from(operation)
+    .innerJoin(personalSongAddition, eq(personalSongAddition.operationId, operation.id))
+    .where(and(eq(operation.roomId, roomId), eq(operation.kind, "addPersonalSong"),
+      memberId ? eq(personalSongAddition.memberId, memberId) : undefined)).all();
+  for (const { op, detail } of additions) {
+    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
+    if (["succeeded", "failed", "stopped"].includes(op.status) || ["ready", "verified"].includes(detail.step)) {
+      tx.delete(operation).where(eq(operation.id, op.id)).run();
+    } else {
+      const anonymousId = v7();
+      tx.update(personalSongAddition).set({ memberId: anonymousId })
+        .where(eq(personalSongAddition.operationId, op.id)).run();
+      tx.update(operation).set({ userId: anonymousId, updatedAt: now, version: op.version + 1 })
+        .where(eq(operation.id, op.id)).run();
+    }
+  }
+
   return [...cleanupIds];
 }

@@ -75,6 +75,7 @@ describe("database lifecycle", () => {
       "operation",
       "personal_playlist_binding",
       "personal_playlist_creation",
+      "personal_song_addition",
       "playlist_snapshot",
       "playlist_track",
       "public_play_next",
@@ -166,7 +167,7 @@ describe("database lifecycle", () => {
       expect(current.$client.prepare("SELECT id, version FROM room ORDER BY id").all()).toEqual([
         { id: "room-a", version: 2 }, { id: "room-b", version: 2 }, { id: "untouched", version: 1 }
       ]);
-      expect(checkDatabase(filePath).schemaVersion).toBe(25);
+      expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     } finally { current.$client.close(); }
   });
 
@@ -341,6 +342,35 @@ describe("database lifecycle", () => {
       { id: "cl-sending", has_sent: 1 },
       { id: "cl-waiting", has_sent: 1 }
     ]);
+    current.$client.close();
+  });
+
+  it("从版本 25 升级保留既有操作并在新库中支持个人歌曲添加表与枚举", () => {
+    const filePath = temporaryDatabasePath();
+    createOldDatabase(filePath, 25);
+    const old = new Database(filePath);
+    old.pragma("foreign_keys = ON");
+    const now = Date.now();
+    old.prepare("INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("u-1", "用户", "u1@example.com", 0, now, now);
+    old.prepare("INSERT INTO room (id, name, owner_user_id) VALUES (?, ?, ?)").run("r-1", "房间", "u-1");
+    old.prepare("INSERT INTO room_membership (id, room_id, user_id, nickname) VALUES (?, ?, ?, ?)").run("m-1", "r-1", "u-1", "房主");
+    old.prepare("INSERT INTO operation (id, kind, user_id, room_id, status, last_granted, version, created_at, updated_at) VALUES (?, 'createPublicPlaylist', ?, ?, 'succeeded', 0, 1, ?, ?)").run("op-prev", "u-1", "r-1", now, now);
+    old.close();
+
+    migrateDatabase(filePath);
+
+    const current = openDatabase(filePath);
+    expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    const op = current.$client.prepare("SELECT * FROM operation WHERE id = 'op-prev'").get() as { id: string; kind: string };
+    expect(op.kind).toBe("createPublicPlaylist");
+
+    // 验证新 operation.kind 允许 addPersonalSong 并能插入 personal_song_addition
+    current.$client.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, last_granted, version, created_at, updated_at) VALUES (?, 'addPersonalSong', ?, ?, 'acc', 'auth', 1, 'queued', 0, 1, ?, ?)").run("op-add", "u-1", "r-1", now, now);
+    current.$client.prepare("INSERT INTO personal_song_addition (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("op-add", "m-1", "pl-1", 1, "s-1", "歌", "[]", "专", "ready");
+    const addition = current.$client.prepare("SELECT * FROM personal_song_addition WHERE operation_id = 'op-add'").get() as { song_id: string; step: string };
+    expect(addition.song_id).toBe("s-1");
+    expect(addition.step).toBe("ready");
+    expect(current.$client.pragma("foreign_key_check")).toEqual([]);
     current.$client.close();
   });
 

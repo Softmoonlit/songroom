@@ -1985,7 +1985,7 @@ export class PublicPlaylists {
     const ops = tx.select().from(operation)
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
     for (const op of ops) {
-      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist" || op.kind === "createPersonalPlaylist") continue;
+      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist" || op.kind === "createPersonalPlaylist" || op.kind === "addPersonalSong") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
@@ -2160,7 +2160,7 @@ export class PublicPlaylists {
 
     const ops = tx.select().from(operation).where(eq(operation.roomId, roomId)).all();
     for (const op of ops) {
-      if (op.kind === "createPersonalPlaylist") continue;
+      if (op.kind === "createPersonalPlaylist" || op.kind === "addPersonalSong") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {

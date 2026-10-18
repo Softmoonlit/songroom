@@ -141,7 +141,7 @@ export const joinApplication = sqliteTable("join_application", {
 // 封闭业务操作信封；原始归属不用级联外键，可能已发的创建证据不能随实体删除。
 export const operation = sqliteTable("operation", {
   id: text("id").primaryKey(),
-  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong", "playNext", "createPersonalPlaylist", "replacePublicPlaylist"] }).notNull(),
+  kind: text("kind", { enum: ["createPublicPlaylist", "requestPublicSong", "playNext", "createPersonalPlaylist", "replacePublicPlaylist", "addPersonalSong"] }).notNull(),
   userId: text("user_id").notNull(),
   roomId: text("room_id").notNull(),
   accountId: text("account_id"),
@@ -155,7 +155,7 @@ export const operation = sqliteTable("operation", {
   updatedAt: integer("updated_at").notNull()
 }, table => [
   check("operation_version_valid", sql`${table.version} > 0`),
-  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong', 'playNext', 'createPersonalPlaylist', 'replacePublicPlaylist')`),
+  check("operation_kind_valid", sql`${table.kind} IN ('createPublicPlaylist', 'requestPublicSong', 'playNext', 'createPersonalPlaylist', 'replacePublicPlaylist', 'addPersonalSong')`),
   check("operation_status_valid", sql`${table.status} IN ('queued', 'processing', 'awaitingConfirmation', 'waitingAuthorization', 'needsAdministrator', 'succeeded', 'failed', 'stopped')`),
   check("operation_recovery_scope_valid", sql`(${table.status} IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NULL AND ${table.authorizationId} IS NULL AND ${table.generation} IS NULL) OR (${table.status} NOT IN ('succeeded', 'failed', 'stopped') AND ${table.accountId} IS NOT NULL AND ${table.authorizationId} IS NOT NULL AND ${table.generation} IS NOT NULL AND ${table.generation} > 0)`),
   uniqueIndex("operation_pending_public_room_unique").on(table.roomId).where(sql`${table.kind} = 'createPublicPlaylist' AND ${table.status} NOT IN ('succeeded', 'failed', 'stopped')`),
@@ -249,6 +249,29 @@ export const personalPlaylistCreation = sqliteTable("personal_playlist_creation"
 }, table => [
   check("personal_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
   check("personal_playlist_creation_name_len", sql`length(${table.name}) >= 1 AND length(${table.name}) <= 100`)
+]);
+
+export const personalSongAddition = sqliteTable("personal_song_addition", {
+  operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
+  memberId: text("member_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  bindingGeneration: integer("binding_generation").notNull(),
+  songId: text("song_id").notNull(),
+  name: text("name").notNull(),
+  artists: text("artists").notNull(),
+  album: text("album").notNull(),
+  step: text("step", { enum: ["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
+  checkRound: integer("check_round").notNull().default(0),
+  nextCheckAt: integer("next_check_at")
+}, table => [
+  index("personal_song_addition_target_index").on(table.playlistId),
+  index("personal_song_addition_member_index").on(table.memberId),
+  check("personal_song_addition_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
+  check("personal_song_addition_song_id_valid", sql`length(${table.songId}) > 0`),
+  check("personal_song_addition_name_valid", sql`length(${table.name}) > 0`),
+  check("personal_song_addition_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
+  check("personal_song_addition_binding_generation_valid", sql`${table.bindingGeneration} > 0`),
+  check("personal_song_addition_check_round_valid", sql`${table.checkRound} >= 0 AND ${table.checkRound} <= 3`)
 ]);
 
 // 真实账号请求启动预算与风控暂停持久化；执行权在发送前短事务中认领。

@@ -246,6 +246,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       state = "draining";
       scheduler.stop();
       playlists.stop();
+      personalPlaylists.stop();
       eventStream.close();
       binding.clear();
       fastify.log.info({ state }, "application lifecycle");
