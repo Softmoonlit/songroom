@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { playbackView, playNextCommand, playNextResponse, playNextOperationView, randomReplacementPreviewCommand, randomReplacementPreviewView } from "../shared/public-playlist-contracts.js";
+import { playbackView, playNextCommand, playNextResponse, playNextOperationView, randomReplacementPreviewCommand, randomReplacementPreviewView, randomReplacementConfirmCommand, randomReplacementOperationView, randomReplacementResponse } from "../shared/public-playlist-contracts.js";
 import type { SongRoomAuth } from "../auth.js";
 import type { PublicPlaylists } from "../operations/public-playlists.js";
 import type { PublicRandomPreview } from "../operations/public-random-preview.js";
@@ -73,5 +73,14 @@ export function registerPublicPlaylistRoutes(app: FastifyInstance, auth: SongRoo
       throw new BusinessError(404, "PREVIEW_NOT_FOUND", "换歌预览不存在或已失效");
     }
     return reply.code(200).send(view);
+  });
+  typed.post("/api/rooms/:roomId/public-playlist/random-replacement", { schema: { params: roomParams, body: randomReplacementConfirmCommand, response: { 200: randomReplacementResponse, 202: randomReplacementResponse } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const accepted = playlists.replacePublicPlaylist(principal.userId, request.params.roomId, request.body);
+    return reply.code(accepted.replay ? 200 : 202).send(accepted);
+  });
+  typed.get("/api/rooms/:roomId/public-playlist/random-replacement/:operationId", { schema: { params: operationParams, response: { 200: randomReplacementOperationView } } }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    return playlists.readRandomReplacementOperation(principal.userId, request.params.roomId, request.params.operationId);
   });
 }

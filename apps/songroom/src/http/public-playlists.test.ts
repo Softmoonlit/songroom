@@ -341,3 +341,95 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
   expect(memberGetRes.statusCode).toBe(403);
 });
 
+it("随机换歌确认与操作轮询路由鉴权、幂等受理与操作读取", async () => {
+  const { app, adapter, owner, member, outsider, url } = await fixture();
+  const roomId = url.split("/")[3];
+  const previewUrl = `/api/rooms/${roomId}/public-playlist/random-preview`;
+  const replacementUrl = `/api/rooms/${roomId}/public-playlist/random-replacement`;
+
+  // 1. 设置公共歌单与个人歌单数据
+  const publicPlId = "cloud-pub-replace-http";
+  app.database.insert(publicPlaylistBinding).values({
+    roomId,
+    accountId: "test",
+    playlistId: publicPlId,
+    name: "公共歌单",
+    generation: 1,
+    creationOperationId: v7()
+  }).run();
+
+  const memberRow = app.database.select().from(roomMembership).where(eq(roomMembership.userId, owner.userId)).get()!;
+  app.database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: memberRow.id,
+    accountId: "test",
+    playlistId: "owner-personal-replace-http",
+    name: "房主个人歌单",
+    type: "ownerCreated",
+    writeable: true,
+    generation: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
+
+  adapter.playlistDetail = async (input) => {
+    if (input.playlistId === publicPlId) {
+      return {
+        ok: true,
+        data: {
+          playlist: { id: publicPlId, name: "公共歌单", creatorId: "test", subscribed: false, status: 0 },
+          songIds: ["old-song-http"],
+          songs: [{ id: "old-song-http", name: "旧歌", artists: ["歌手"], album: "专辑" }]
+        }
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        playlist: { id: "owner-personal-replace-http", name: "房主个人歌单", creatorId: "test", subscribed: false, status: 0 },
+        songIds: ["new-song-http"],
+        songs: [{ id: "new-song-http", name: "新歌", artists: ["歌手"], album: "专辑" }]
+      }
+    };
+  };
+
+  const previewRes = await request(app, previewUrl, owner.cookie, { count: 10 });
+  expect(previewRes.statusCode).toBe(200);
+  const preview = randomReplacementPreviewView.parse(previewRes.json());
+
+  // 2. 未登录 401
+  expect((await request(app, replacementUrl, undefined, { idempotencyKey: v7(), previewId: preview.previewId })).statusCode).toBe(401);
+
+  // 3. 普通成员调用 403 OWNER_ONLY
+  const memberRes = await request(app, replacementUrl, member.cookie, { idempotencyKey: v7(), previewId: preview.previewId });
+  expect(memberRes.statusCode).toBe(403);
+
+  // 4. 房主成功受理 202
+  const key = v7();
+  const acceptRes = await request(app, replacementUrl, owner.cookie, { idempotencyKey: key, previewId: preview.previewId });
+  expect(acceptRes.statusCode).toBe(202);
+  const acceptedBody = acceptRes.json();
+  expect(acceptedBody.replay).toBe(false);
+  expect(acceptedBody.operation.status).toBe("queued");
+  expect(acceptedBody.operation.targetCount).toBe(preview.actualCount);
+
+  // 5. 幂等重放 200
+  const replayRes = await request(app, replacementUrl, owner.cookie, { idempotencyKey: key, previewId: preview.previewId });
+  expect(replayRes.statusCode).toBe(200);
+  const replayBody = replayRes.json();
+  expect(replayBody.replay).toBe(true);
+  expect(replayBody.operation.id).toBe(acceptedBody.operation.id);
+
+  // 6. GET 轮询操作详情 200
+  const opUrl = `${replacementUrl}/${acceptedBody.operation.id}`;
+  const opRes = await request(app, opUrl, owner.cookie);
+  expect(opRes.statusCode).toBe(200);
+  const opBody = opRes.json();
+  expect(opBody.id).toBe(acceptedBody.operation.id);
+  expect(opBody.roomId).toBe(roomId);
+
+  // 7. 房间外人员读操作 404
+  expect((await request(app, opUrl, outsider.cookie)).statusCode).toBe(404);
+});
+

@@ -10,6 +10,7 @@ import { BusinessError } from "../shared/errors.js";
 import { playNextCommand, type PlayNextCommand, type PlayNextOperationView, type PlayNextResponse } from "../shared/public-playlist-contracts.js";
 import type { EventStreamService } from "../events/event-stream.js";
 import type { UpstreamScheduler, Operation } from "./upstream-scheduling.js";
+import type { PublicPlaylistReplacement } from "./public-playlist-replacement.js";
 
 type Detail = typeof publicPlayNext.$inferSelect;
 type Authorization = typeof neteaseAuthorization.$inferSelect;
@@ -22,6 +23,7 @@ const CONFIRMATION_DELAYS_MS = [5_000, 30_000, 120_000];
 /** A closed move-after-anchor intent. Each claimed step performs at most one upstream request. */
 export class PublicPlayNext {
   readonly #timers = new Map<string, NodeJS.Timeout>();
+  replacementService?: PublicPlaylistReplacement;
   constructor(
     readonly database: AppDatabase,
     readonly adapter: NeteaseAdapter,
@@ -37,6 +39,10 @@ export class PublicPlayNext {
       execute: row => this.#execute(row),
       recover: () => this.#recover()
     });
+  }
+
+  setReplacementService(service: PublicPlaylistReplacement): void {
+    this.replacementService = service;
   }
 
   #member(userId: string, roomId: string) {
@@ -78,8 +84,9 @@ export class PublicPlayNext {
       const pendingMember = tx.select().from(operation).where(and(eq(operation.roomId, roomId), eq(operation.userId, userId), sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).get();
       if (pendingMember) throw new BusinessError(409, "CONCURRENT_OPERATION_LIMIT_EXCEEDED", "你在该房间已有未完成的写操作");
       const pendingSongs = tx.select({ id: operation.id }).from(operation).innerJoin(publicSongRequest, eq(publicSongRequest.operationId, operation.id)).where(and(eq(operation.accountId, binding.accountId), eq(publicSongRequest.playlistId, binding.playlistId), sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).get();
+      const pendingReplacements = this.replacementService?.hasTargetLock(binding.accountId, binding.playlistId);
       const snapshot = tx.select().from(playlistSnapshot).where(and(eq(playlistSnapshot.accountId, binding.accountId), eq(playlistSnapshot.playlistId, binding.playlistId))).get();
-      if (pendingSongs || this.hasTargetLock(binding.accountId, binding.playlistId) || snapshot?.lastErrorCode === "TARGET_PERMISSION") throw new BusinessError(409, "TARGET_BLOCKED", "公共歌单有冲突操作待处理");
+      if (pendingSongs || pendingReplacements || this.hasTargetLock(binding.accountId, binding.playlistId) || snapshot?.lastErrorCode === "TARGET_PERMISSION") throw new BusinessError(409, "TARGET_BLOCKED", "公共歌单有冲突操作待处理");
       if (!snapshot?.syncedAt || snapshot.snapshotVersion !== command.snapshotVersion) throw new BusinessError(409, "PLAYLIST_CONFLICT", "歌单已变化，请同步后重新操作");
       const ids = tx.select().from(playlistTrack).where(and(eq(playlistTrack.accountId, binding.accountId), eq(playlistTrack.playlistId, binding.playlistId))).orderBy(playlistTrack.position).all().map(track => track.songId);
       if (!ids.includes(command.anchorSongId) || !ids.includes(command.songId)) throw new BusinessError(409, "PLAYLIST_CONFLICT", "歌曲或播放锚点已不在歌单中");

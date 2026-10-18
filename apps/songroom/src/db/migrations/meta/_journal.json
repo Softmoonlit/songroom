@@ -162,6 +162,13 @@
       "when": 1791700000000,
       "tag": "0022_roommate_personal_playlist",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1791800000000,
+      "tag": "0023_public_playlist_replacement",
+      "breakpoints": true
     }
   ]
 }

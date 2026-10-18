@@ -4,16 +4,18 @@ import { PublicPlayNext } from "./public-play-next.js";
 import type { PlayNextCommand, PlayNextResponse, PlayNextOperationView, PlaybackView } from "../shared/public-playlist-contracts.js";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, publicPlaylistReplacement, publicSongRequest, requesterTag, retiredPublicPlaylistBinding, room, roomMembership } from "../db/schema.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterErrorCode, AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { BusinessError } from "../shared/errors.js";
-import { publicPlaylistCreateCommand, type PublicPlaylistCreateCommand, type PublicPlaylistView, publicSongRequestCommand, type PublicSongRequestCommand, type SongRequestOperationView } from "../shared/public-playlist-contracts.js";
+import { publicPlaylistCreateCommand, type PublicPlaylistCreateCommand, type PublicPlaylistView, publicSongRequestCommand, type PublicSongRequestCommand, type SongRequestOperationView, type RandomReplacementConfirmCommand, type RandomReplacementOperationView, type RandomReplacementResponse } from "../shared/public-playlist-contracts.js";
 import type { PublicPlaylistCleanupList } from "../shared/room-contracts.js";
 import { EventStreamService } from "../events/event-stream.js";
+import { PublicPlaylistReplacement } from "./public-playlist-replacement.js";
+import type { PublicRandomPreview } from "./public-random-preview.js";
 
 type Operation = typeof operation.$inferSelect;
 type Status = Operation["status"];
@@ -27,6 +29,7 @@ export class PublicPlaylists {
   readonly #checkTimers = new Map<string, NodeJS.Timeout>();
   readonly playback: PublicPlayback;
   readonly playNextService: PublicPlayNext;
+  replacementService?: PublicPlaylistReplacement;
   #readClock = 0;
 
   #beginRead(): number {
@@ -38,6 +41,34 @@ export class PublicPlaylists {
   readPlayback(userId: string, roomId: string, force = false): Promise<PlaybackView> { return this.playback.read(userId, roomId, force); }
   playNext(userId: string, roomId: string, input: PlayNextCommand): PlayNextResponse { return this.playNextService.accept(userId, roomId, input); }
   readPlayNextOperation(userId: string, roomId: string, id: string): PlayNextOperationView { return this.playNextService.read(userId, roomId, id); }
+
+  initReplacement(randomPreview: PublicRandomPreview): PublicPlaylistReplacement {
+    this.replacementService = new PublicPlaylistReplacement(
+      this.database,
+      this.adapter,
+      this.vault,
+      this.scheduler,
+      this.eventStream,
+      randomPreview,
+      this.now,
+      () => this.#beginRead(),
+      (accountId, playlistId, generation, data, startedAt, authScope) =>
+        this.#commitSnapshot(accountId, playlistId, generation, data, startedAt, authScope)
+    );
+    this.replacementService.setPlayNextService(this.playNextService);
+    this.playNextService.setReplacementService(this.replacementService);
+    return this.replacementService;
+  }
+
+  replacePublicPlaylist(userId: string, roomId: string, input: RandomReplacementConfirmCommand): RandomReplacementResponse {
+    if (!this.replacementService) throw new BusinessError(500, "MODULE_ERROR", "随机换歌服务未初始化");
+    return this.replacementService.accept(userId, roomId, input);
+  }
+
+  readRandomReplacementOperation(userId: string, roomId: string, id: string): RandomReplacementOperationView {
+    if (!this.replacementService) throw new BusinessError(500, "MODULE_ERROR", "随机换歌服务未初始化");
+    return this.replacementService.read(userId, roomId, id);
+  }
 
   constructor(
     readonly database: AppDatabase,
@@ -194,6 +225,9 @@ export class PublicPlaylists {
       const creationDetail = currentOperation.kind === "createPublicPlaylist"
         ? this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, currentOperation.id)).get()
         : null;
+      const replacementDetail = currentOperation.kind === "replacePublicPlaylist"
+        ? this.database.select().from(publicPlaylistReplacement).where(eq(publicPlaylistReplacement.operationId, currentOperation.id)).get()
+        : null;
       opView = {
         id: currentOperation.id,
         status: currentOperation.status,
@@ -203,6 +237,10 @@ export class PublicPlaylists {
           step: creationDetail.step,
           playlistId: creationDetail.playlistId ?? null,
           recovered: Boolean(creationDetail.recovered)
+        } : {}),
+        ...(replacementDetail ? {
+          step: replacementDetail.step,
+          playlistId: replacementDetail.playlistId ?? null
         } : {})
       };
     }
@@ -626,6 +664,7 @@ export class PublicPlaylists {
   onOwnerRevoked(userId: string): void {
     this.playback.invalidate(userId);
     this.playNextService.onOwnerRevoked(userId);
+    this.replacementService?.onOwnerRevoked(userId);
     const notifyRooms: Array<{ roomId: string; version: number }> = [];
     const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
 
@@ -679,6 +718,7 @@ export class PublicPlaylists {
   onReauthorized(userId: string, authId: string, accountId: string, generation: number): void {
     this.playback.invalidate(userId);
     this.playNextService.onReauthorized(userId, authId, accountId, generation);
+    this.replacementService?.onReauthorized(userId, authId, accountId, generation);
     const notifyRooms: Array<{ roomId: string; version: number }> = [];
     const notifyOps: Array<{ roomId: string; opId: string; version: number }> = [];
     const checksToSchedule: Array<{ opId: string; delayMs: number }> = [];
@@ -951,6 +991,7 @@ export class PublicPlaylists {
   }
   stop(): void {
     this.playNextService.stop();
+    this.replacementService?.stop();
     for (const timer of this.#checkTimers.values()) clearTimeout(timer);
     this.#checkTimers.clear();
     this.scheduler.stop();
@@ -959,6 +1000,7 @@ export class PublicPlaylists {
 
   triggerDueChecks(): void {
     this.playNextService.triggerDueChecks();
+    this.replacementService?.triggerDueChecks();
     const rows = this.database.select().from(publicSongRequest)
       .where(and(
         eq(publicSongRequest.step, "unknown"),
@@ -1500,6 +1542,7 @@ export class PublicPlaylists {
 
   #hasTargetConflict(accountId: string, playlistId: string): boolean {
     if (this.playNextService.hasTargetLock(accountId, playlistId)) return true;
+    if (this.replacementService?.hasTargetLock(accountId, playlistId)) return true;
     const snap = this.database.select({ code: playlistSnapshot.lastErrorCode })
       .from(playlistSnapshot)
       .where(and(eq(playlistSnapshot.accountId, accountId), eq(playlistSnapshot.playlistId, playlistId)))
@@ -1925,10 +1968,11 @@ export class PublicPlaylists {
   }
 
   terminateMemberInTx(tx: any, roomId: string, userId: string): void {
+    this.replacementService?.terminateMemberInTx(tx, roomId, userId);
     const ops = tx.select().from(operation)
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
     for (const op of ops) {
-      if (op.kind === "playNext") continue;
+      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
@@ -2083,6 +2127,7 @@ export class PublicPlaylists {
 
   terminateRoomInTx(tx: any, roomId: string, ownerUserId: string): { cleanupId: string | null } {
     this.playNextService.terminateRoomInTx(tx, roomId);
+    this.replacementService?.terminateRoomInTx(tx, roomId);
     let target: { accountId: string; playlistId: string; creationOperationId: string } | null = null;
     const binding = tx.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
     if (binding) {

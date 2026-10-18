@@ -81,6 +81,7 @@ describe("database lifecycle", () => {
       "public_playlist_binding",
       "public_playlist_cleanup",
       "public_playlist_creation",
+      "public_playlist_replacement",
       "public_song_request",
       "requester_tag",
       "retired_public_playlist_binding",

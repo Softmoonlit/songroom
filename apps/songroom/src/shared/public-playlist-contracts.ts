@@ -25,7 +25,7 @@ export const publicPlaylistOperation = z.strictObject({
   id: uuidv7,
   errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP"])]).nullable(),
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
-  step: z.enum(["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
+  step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
   playlistId: z.string().nullable().optional(),
   recovered: z.boolean().optional(),
   version: z.number().int().positive()
@@ -152,4 +152,36 @@ export const randomReplacementPreviewView = z.strictObject({
   expiresAt: z.number().int().positive()
 });
 export type RandomReplacementPreviewView = z.infer<typeof randomReplacementPreviewView>;
+
+export const randomReplacementConfirmCommand = z.strictObject({
+  idempotencyKey: uuidv7,
+  previewId: uuidv7
+});
+export type RandomReplacementConfirmCommand = z.infer<typeof randomReplacementConfirmCommand>;
+
+export const randomReplacementOperationView = z.strictObject({
+  id: uuidv7,
+  roomId: uuidv7,
+  status: publicPlaylistOperation.shape.status,
+  step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"]),
+  targetCount: z.number().int().nonnegative(),
+  targetSongIds: z.array(z.string()),
+  addedSongIds: z.array(z.string()),
+  removedSongIds: z.array(z.string()),
+  tagConfirmed: z.boolean(),
+  currentAction: z.enum(["add", "remove"]).nullable().optional(),
+  currentSongId: z.string().nullable().optional(),
+  errorCode: z.union([adapterErrorCodeSchema, z.enum([
+    "ACCOUNT_PAUSED", "PLAYLIST_CONFLICT", "CONCURRENT_OPERATION_LIMIT_EXCEEDED"
+  ])]).nullable(),
+  version: z.number().int().positive()
+});
+export type RandomReplacementOperationView = z.infer<typeof randomReplacementOperationView>;
+
+export const randomReplacementResponse = z.strictObject({
+  replay: z.boolean(),
+  operation: randomReplacementOperationView
+});
+export type RandomReplacementResponse = z.infer<typeof randomReplacementResponse>;
+
 

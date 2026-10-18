@@ -87,6 +87,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, dependencies.now);
   const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, dependencies.now);
+  playlists.initReplacement(randomPreview);
   const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, adapter, vault, eventStream, personalPlaylists, dependencies.now);
   binding.onRevoke = userId => playlists.onOwnerRevoked(userId);
