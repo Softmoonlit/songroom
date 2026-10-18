@@ -587,3 +587,81 @@ it("房主重新授权：唤醒 waitingAuthorization 状态的添加操作", asy
   expect(op.status).toBe("succeeded");
   expect(op.songConfirmed).toBe(true);
 });
+
+it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并安排首轮补查，绝不重新发送 trackAdd", async () => {
+  const { root, database, roomId, advanceTime } = fixture();
+
+  // 模拟进程崩溃前遗留的一个处于 processing + sending 的操作
+  const crashOpId = v7();
+  const nowTime = Date.now();
+  database.insert(operation).values({
+    id: crashOpId,
+    kind: "addPersonalSong",
+    userId: "roommate",
+    roomId,
+    accountId: "acc-owner",
+    authorizationId: (database.select().from(neteaseAuthorization).get()!).id,
+    generation: 1,
+    status: "processing",
+    lastGranted: nowTime,
+    version: 1,
+    createdAt: nowTime,
+    updatedAt: nowTime
+  }).run();
+
+  const roommateMember = database.select().from(roomMembership).where(eq(roomMembership.userId, "roommate")).get()!;
+  database.insert(personalSongAddition).values({
+    operationId: crashOpId,
+    memberId: roommateMember.id,
+    playlistId: "pl-roommate",
+    bindingGeneration: 1,
+    songId: "song-crashed",
+    name: "崩溃恢复歌曲",
+    artists: "[]",
+    album: "专辑",
+    step: "sending",
+    checkRound: 0,
+    nextCheckAt: null
+  }).run();
+
+  // 模拟服务重启：创建全新实例
+  const newAdapter = new ScriptedNeteaseAdapter();
+  let trackAddCalled = false;
+  newAdapter.trackAdd = () => {
+    trackAddCalled = true;
+    return { ok: true, data: { acknowledged: true } };
+  };
+  newAdapter.playlistDetail = () => {
+    return { ok: true, data: mockDetailWithSongs("pl-roommate", ["song-crashed"]) };
+  };
+
+  const keyPath = path.join(root, "netease.key");
+  const vault = new CredentialVault(keyPath);
+  let timeOffset = 0;
+  const now = () => Date.now() + timeOffset;
+  const newScheduler = new UpstreamScheduler(database, now);
+  const newEventStream = new EventStreamService();
+  const newPublicPlaylists = new PublicPlaylists(database, newAdapter, vault, newScheduler, newEventStream, now);
+  const newPlaylists = new PersonalPlaylists(database, vault, newAdapter, newScheduler, newEventStream, newPublicPlaylists, now);
+
+  newScheduler.start();
+  // 恢复后操作进入 awaitingConfirmation
+  const opBefore = newPlaylists.readSongAdditionOperation("roommate", roomId, crashOpId);
+  expect(opBefore.status).toBe("awaitingConfirmation");
+  expect(opBefore.step).toBe("unknown");
+
+  // 推进时间执行补查
+  timeOffset += 5000;
+  newPlaylists.triggerDueChecks();
+  await newScheduler.settle();
+
+  // 绝不重发 trackAdd，仅通过读回完成确认
+  expect(trackAddCalled).toBe(false);
+  const opAfter = newPlaylists.readSongAdditionOperation("roommate", roomId, crashOpId);
+  expect(opAfter.status).toBe("succeeded");
+  expect(opAfter.songConfirmed).toBe(true);
+
+  newPlaylists.stop();
+  newScheduler.stop();
+  await newScheduler.settle();
+});

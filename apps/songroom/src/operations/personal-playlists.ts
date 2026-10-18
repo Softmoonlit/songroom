@@ -1375,25 +1375,13 @@ export class PersonalPlaylists {
     }
 
     const data = detailResult.data;
-    if (data.playlist.id !== detail.playlistId || data.playlist.status !== 0) {
-      this.#recordRefreshError(row.accountId!, detail.playlistId, "TARGET_PERMISSION", readStartedAt);
-      await this.#transitionToAwaitingConfirmationForSongAddition(row, detail, "TARGET_PERMISSION", cookie);
+    if (!this.#validatePlaylistDetail(data, detail.playlistId, row.accountId!)) {
+      const errCode = (data?.playlist?.id !== detail.playlistId || data?.playlist?.status !== 0 || data?.playlist?.creatorId !== row.accountId)
+        ? "TARGET_PERMISSION"
+        : "PARSE_ERROR";
+      this.#recordRefreshError(row.accountId!, detail.playlistId, errCode, readStartedAt);
+      await this.#transitionToAwaitingConfirmationForSongAddition(row, detail, errCode, cookie);
       return;
-    }
-
-    if (data.songIds.length !== data.songs.length) {
-      this.#recordRefreshError(row.accountId!, detail.playlistId, "PARSE_ERROR", readStartedAt);
-      await this.#transitionToAwaitingConfirmationForSongAddition(row, detail, "PARSE_ERROR", cookie);
-      return;
-    }
-
-    for (let i = 0; i < data.songIds.length; i++) {
-      const song = data.songs[i];
-      if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || typeof song.album !== "string") {
-        this.#recordRefreshError(row.accountId!, detail.playlistId, "PARSE_ERROR", readStartedAt);
-        await this.#transitionToAwaitingConfirmationForSongAddition(row, detail, "PARSE_ERROR", cookie);
-        return;
-      }
     }
 
     this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt);
@@ -1456,21 +1444,11 @@ export class PersonalPlaylists {
 
     if (immediateDetail && immediateDetail.ok) {
       const data = immediateDetail.data;
-      if (data.playlist.id === detail.playlistId && data.playlist.status === 0 && data.songIds.length === data.songs.length) {
-        let validSongs = true;
-        for (let i = 0; i < data.songIds.length; i++) {
-          const song = data.songs[i];
-          if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || typeof song.album !== "string") {
-            validSongs = false;
-            break;
-          }
-        }
-        if (validSongs) {
-          this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt);
-          if (data.songIds.includes(detail.songId)) {
-            this.#finishSongAdditionSuccess(row);
-            return;
-          }
+      if (this.#validatePlaylistDetail(data, detail.playlistId, row.accountId!)) {
+        this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt);
+        if (data.songIds.includes(detail.songId)) {
+          this.#finishSongAdditionSuccess(row);
+          return;
         }
       }
     }
@@ -1562,22 +1540,17 @@ export class PersonalPlaylists {
 
     if (detailResult && detailResult.ok) {
       const data = detailResult.data;
-      if (data.playlist.id === detail.playlistId && data.playlist.status === 0 && data.songIds.length === data.songs.length) {
-        let validSongs = true;
-        for (let i = 0; i < data.songIds.length; i++) {
-          const song = data.songs[i];
-          if (!song || song.id !== data.songIds[i] || !song.name || song.name.length === 0 || typeof song.album !== "string") {
-            validSongs = false;
-            break;
-          }
+      if (this.#validatePlaylistDetail(data, detail.playlistId, row.accountId!)) {
+        this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt);
+        if (data.songIds.includes(detail.songId)) {
+          this.#finishSongAdditionSuccess(row);
+          return;
         }
-        if (validSongs) {
-          this.#commitSnapshot(row.accountId!, detail.playlistId, detail.bindingGeneration, data, readStartedAt);
-          if (data.songIds.includes(detail.songId)) {
-            this.#finishSongAdditionSuccess(row);
-            return;
-          }
-        }
+      } else {
+        const errCode = (data?.playlist?.id !== detail.playlistId || data?.playlist?.status !== 0 || data?.playlist?.creatorId !== row.accountId)
+          ? "TARGET_PERMISSION"
+          : "PARSE_ERROR";
+        this.#recordRefreshError(row.accountId!, detail.playlistId, errCode, readStartedAt);
       }
     } else if (detailResult && !detailResult.ok) {
       if (detailResult.error.code === "RATE_LIMITED") {
@@ -1617,20 +1590,48 @@ export class PersonalPlaylists {
   }
 
   #recoverSongAdditions(): void {
-    const awaiting = this.database.select().from(operation)
+    const rows = this.database.select().from(operation)
       .innerJoin(personalSongAddition, eq(operation.id, personalSongAddition.operationId))
       .where(and(
         eq(operation.kind, "addPersonalSong"),
-        eq(operation.status, "awaitingConfirmation"),
-        eq(personalSongAddition.step, "unknown")
+        sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`
       )).all();
 
-    for (const { operation: op, personal_song_addition: detail } of awaiting) {
-      if (detail.checkRound < 3) {
-        const delay = detail.nextCheckAt ? Math.max(0, detail.nextCheckAt - this.now()) : 0;
-        this.#scheduleSongAdditionConfirmationCheck(op.id, delay);
+    for (const { operation: op, personal_song_addition: detail } of rows) {
+      if (op.status === "waitingAuthorization" || op.status === "needsAdministrator") continue;
+
+      if (["sending", "confirming", "unknown"].includes(detail.step)) {
+        const nextCheckAt = detail.nextCheckAt !== null && detail.nextCheckAt > this.now()
+          ? detail.nextCheckAt
+          : this.now() + 5000;
+        this.database.transaction(tx => {
+          tx.update(personalSongAddition).set({ step: "unknown", checkRound: detail.checkRound, nextCheckAt }).where(eq(personalSongAddition.operationId, op.id)).run();
+          tx.update(operation).set({ status: "awaitingConfirmation", updatedAt: this.now() }).where(eq(operation.id, op.id)).run();
+        });
+
+        if (detail.checkRound < 3) {
+          this.#scheduleSongAdditionConfirmationCheck(op.id, Math.max(0, nextCheckAt - this.now()));
+        }
+      } else if (op.status === "processing") {
+        this.#status(op.id, "queued");
       }
     }
+  }
+
+  #validatePlaylistDetail(data: any, expectedPlaylistId: string, expectedCreatorId: string): boolean {
+    if (!data || !data.playlist || data.playlist.id !== expectedPlaylistId || data.playlist.status !== 0 || data.playlist.creatorId !== expectedCreatorId) {
+      return false;
+    }
+    if (!Array.isArray(data.songIds) || !Array.isArray(data.songs) || data.songIds.length !== data.songs.length) {
+      return false;
+    }
+    for (let i = 0; i < data.songIds.length; i++) {
+      const song = data.songs[i];
+      if (!song || song.id !== data.songIds[i] || typeof song.name !== "string" || song.name.length === 0 || typeof song.album !== "string") {
+        return false;
+      }
+    }
+    return true;
   }
 
   #conditionsForSongAddition(row: Operation): "valid" | "stopped" | "waitingAuthorization" {
