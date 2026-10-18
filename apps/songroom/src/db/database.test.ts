@@ -73,6 +73,7 @@ describe("database lifecycle", () => {
       "join_application",
       "netease_authorization",
       "operation",
+      "personal_playlist_binding",
       "playlist_snapshot",
       "playlist_track",
       "public_play_next",

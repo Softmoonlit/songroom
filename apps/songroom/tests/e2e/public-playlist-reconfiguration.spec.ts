@@ -79,20 +79,21 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       await page.goto(`/rooms/${roomId}`);
 
       // 验证失效状态文案清晰展示
-      await expect(page.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
-      await expect(page.getByText(/已从网易云删除.*已确认失效/)).toBeVisible();
-      await expect(page.getByRole("button", { name: "重新创建公共歌单" })).toBeVisible();
+      const invalidCard = page.getByRole("region", { name: "公共歌单失效状态" });
+      await expect(invalidCard.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
+      await expect(invalidCard.getByText(/已从网易云删除.*已确认失效/)).toBeVisible();
+      await expect(invalidCard.getByRole("button", { name: "重新创建公共歌单" })).toBeVisible();
 
       // 不出现个人歌单、导入或换号入口
-      await expect(page.getByText("个人歌单")).toHaveCount(0);
-      await expect(page.getByText("导入歌单")).toHaveCount(0);
-      await expect(page.getByText("更换网易云账号")).toHaveCount(0);
+      await expect(invalidCard.getByText("个人歌单")).toHaveCount(0);
+      await expect(invalidCard.getByText("导入歌单")).toHaveCount(0);
+      await expect(invalidCard.getByText("更换网易云账号")).toHaveCount(0);
 
       // 无横向溢出
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
       // 房主点击重新创建
-      await page.getByRole("button", { name: "重新创建公共歌单" }).click();
+      await invalidCard.getByRole("button", { name: "重新创建公共歌单" }).click();
       await expect(page.getByRole("status")).toContainText("已排队，等待创建公共歌单。");
     });
 

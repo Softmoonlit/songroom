@@ -208,6 +208,27 @@ export const retiredPublicPlaylistBinding = sqliteTable("retired_public_playlist
   check("retired_public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
 ]);
 
+export const personalPlaylistBinding = sqliteTable("personal_playlist_binding", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
+  memberId: text("member_id").notNull().references(() => roomMembership.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull(),
+  playlistId: text("playlist_id").notNull(),
+  name: text("name").notNull(),
+  type: text("type", { enum: ["ownerCreated", "ownerSubscribed"] }).notNull(),
+  writeable: integer("writeable", { mode: "boolean" }).notNull(),
+  generation: integer("generation").notNull().default(1),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, table => [
+  uniqueIndex("personal_playlist_binding_room_member_unique").on(table.roomId, table.memberId),
+  index("personal_playlist_binding_target_index").on(table.accountId, table.playlistId),
+  check("personal_playlist_binding_type_valid", sql`${table.type} IN ('ownerCreated', 'ownerSubscribed')`),
+  check("personal_playlist_binding_writeable_valid", sql`${table.writeable} IN (0, 1)`),
+  check("personal_playlist_binding_generation_valid", sql`${table.generation} > 0`),
+  check("personal_playlist_binding_fields_valid", sql`length(${table.playlistId}) > 0 AND length(${table.accountId}) > 0 AND length(${table.name}) > 0`)
+]);
+
 // 真实账号请求启动预算与风控暂停持久化；执行权在发送前短事务中认领。
 export const upstreamAccount = sqliteTable("upstream_account", {
   accountId: text("account_id").primaryKey(),
@@ -357,7 +378,7 @@ export const adminAuditLog = sqliteTable("admin_audit_log", {
 ]);
 
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, requesterTag, publicPlaylistCleanup, adminAuditLog };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, personalPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, requesterTag, publicPlaylistCleanup, adminAuditLog };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

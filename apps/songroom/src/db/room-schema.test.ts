@@ -5,7 +5,7 @@ import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "./database.js";
 import { sql } from "drizzle-orm";
-import { neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistCleanup, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
+import { neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistCleanup, publicSongRequest, requesterTag, room, roomInvite, roomMembership, user } from "./schema.js";
 import { roomNickname } from "../shared/room-contracts.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase }> = [];
@@ -261,4 +261,101 @@ it("公共歌单清理任务维护账号与歌单目标唯一性、状态约束�
   database.delete(user).where(sql`${user.id} = ${tempUser}`).run();
   expect(database.select().from(publicPlaylistCleanup).where(sql`${publicPlaylistCleanup.userId} = ${tempUser}`).all()).toHaveLength(0);
 });
+
+it("个人歌单绑定在同一房间每成员唯一，允许跨房间绑定同一云端目标，随成员或房间级联清理", () => {
+  const { database, roomId } = fixture();
+  const ownerMemberId = v7();
+  database.insert(roomMembership).values({ id: ownerMemberId, roomId, userId: "owner", nickname: "房主" }).run();
+
+  const now = Date.now();
+  database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: ownerMemberId,
+    accountId: "cloud-owner",
+    playlistId: "pl-fav-1",
+    name: "房主自建歌单",
+    type: "ownerCreated",
+    writeable: true,
+    generation: 1,
+    createdAt: now,
+    updatedAt: now
+  }).run();
+
+  // 同一房间同一成员不能重复绑定个人歌单
+  expect(() => database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: ownerMemberId,
+    accountId: "cloud-owner",
+    playlistId: "pl-fav-2",
+    name: "另一歌单",
+    type: "ownerSubscribed",
+    writeable: false,
+    generation: 1,
+    createdAt: now,
+    updatedAt: now
+  }).run()).toThrow();
+
+  // 跨房间可以绑定同一个云端歌单目标
+  const anotherRoomId = v7();
+  database.insert(room).values({ id: anotherRoomId, ownerUserId: "owner", name: "第二宿舍" }).run();
+  const anotherMemberId = v7();
+  database.insert(roomMembership).values({ id: anotherMemberId, roomId: anotherRoomId, userId: "owner", nickname: "房主" }).run();
+
+  expect(() => database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId: anotherRoomId,
+    memberId: anotherMemberId,
+    accountId: "cloud-owner",
+    playlistId: "pl-fav-1",
+    name: "房主自建歌单",
+    type: "ownerCreated",
+    writeable: true,
+    generation: 1,
+    createdAt: now,
+    updatedAt: now
+  }).run()).not.toThrow();
+
+  // 非法类型与代次约束校验
+  expect(() => database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: v7(),
+    accountId: "cloud-owner",
+    playlistId: "pl-invalid",
+    name: "非法歌单",
+    type: "invalidType" as any,
+    writeable: true,
+    generation: 1,
+    createdAt: now,
+    updatedAt: now
+  }).run()).toThrow();
+
+  expect(() => database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: v7(),
+    accountId: "cloud-owner",
+    playlistId: "pl-invalid",
+    name: "非法歌单",
+    type: "ownerCreated",
+    writeable: true,
+    generation: 0,
+    createdAt: now,
+    updatedAt: now
+  }).run()).toThrow();
+
+  // 成员移除级联删除个人歌单绑定
+  database.delete(roomMembership).where(sql`${roomMembership.id} = ${ownerMemberId}`).run();
+  expect(database.select().from(personalPlaylistBinding).where(sql`${personalPlaylistBinding.memberId} = ${ownerMemberId}`).all()).toHaveLength(0);
+
+  // 第二房间绑定不受影响
+  expect(database.select().from(personalPlaylistBinding).where(sql`${personalPlaylistBinding.roomId} = ${anotherRoomId}`).all()).toHaveLength(1);
+
+  // 房间删除级联清理个人歌单绑定
+  database.delete(room).where(sql`${room.id} = ${anotherRoomId}`).run();
+  expect(database.select().from(personalPlaylistBinding).where(sql`${personalPlaylistBinding.roomId} = ${anotherRoomId}`).all()).toHaveLength(0);
+});
+
 

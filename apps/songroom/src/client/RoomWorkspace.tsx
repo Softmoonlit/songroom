@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Bell, Music2, Settings, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, Bell, ListMusic, Music2, Settings, UserPlus, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { v7 } from "uuid";
 import { publicPlaylistView } from "../shared/public-playlist-contracts";
@@ -13,6 +13,7 @@ import { IdentityForm } from "./IdentityForm";
 import { ApplicationsDrawer } from "./ApplicationsDrawer";
 import { InviteDialog } from "./InviteDialog";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
+import { MemberPersonalPlaylistSection, PersonalPlaylistPane } from "./PersonalPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
 import { getMusicPlatform } from "./music-platforms";
 
@@ -114,14 +115,14 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     queryFn: ({ signal }) => request(`/${roomId}`, roomShellView, signal),
     ...queryOptions
   });
-  type RoomTab = "public" | "members" | "settings";
+  type RoomTab = "public" | "personal" | "members" | "settings";
   const [active, setActive] = useState<RoomTab>("public");
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const scrollPositions = useRef<Record<RoomTab, number>>({ public: 0, members: 0, settings: 0 });
+  const scrollPositions = useRef<Record<RoomTab, number>>({ public: 0, personal: 0, members: 0, settings: 0 });
   const keyboardOpen = useVirtualKeyboard();
 
   const leaveMutation = useMutation({
@@ -190,6 +191,14 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           </button>
           <button
             type="button"
+            aria-current={active === "personal" ? "page" : undefined}
+            onClick={() => selectTab("personal")}
+          >
+            <ListMusic size={18} aria-hidden="true" />
+            我的歌单
+          </button>
+          <button
+            type="button"
             aria-label="房间成员"
             aria-current={active === "members" ? "page" : undefined}
             onClick={() => selectTab("members")}
@@ -211,6 +220,9 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
       <div className="room-page-content">
         <section hidden={active !== "public"} aria-label="公共歌单">
           <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
+        </section>
+        <section hidden={active !== "personal"} aria-label="我的歌单">
+          <PersonalPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "personal"} />
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
           <MembersPane
@@ -398,6 +410,12 @@ function MembersPane({
             <dd>{roleLabels[selected.role]}</dd>
           </div>
         </dl>
+        <MemberPersonalPlaylistSection
+          sessionId={sessionId}
+          roomId={roomId}
+          memberId={selected.id}
+          active={active}
+        />
         {selected.allowedActions.includes("removeMember") && (
           <div className="member-remove-action">
             <DestructiveConfirmDialog

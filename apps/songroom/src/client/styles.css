@@ -1950,7 +1950,7 @@ h1 {
     bottom: 0;
     left: 0;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0;
     margin: 0;
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
@@ -2336,7 +2336,69 @@ h1 {
   font-weight: 500;
 }
 
-/* 邀请弹窗 (InviteDialog) */
+/* 个人歌单候选列表与弹窗 */
+.candidate-playlist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.candidate-playlist-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.candidate-playlist-item:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-hover);
+}
+
+.candidate-playlist-item.selected {
+  background: var(--primary-light);
+  border-color: var(--primary-border);
+}
+
+.candidate-playlist-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.candidate-playlist-name {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.candidate-playlist-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.candidate-playlist-note {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.member-playlist-tracks-preview {
+  margin-top: 16px;
+}
+
 .invite-modal {
   position: fixed;
   z-index: 101;

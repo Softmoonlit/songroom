@@ -90,15 +90,15 @@ test("确认本地网易云身份后建房，进入公共歌单而不创建云�
   await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "房间导航" }).getByRole("button")).toHaveText([
     "公共歌单",
+    "我的歌单",
     "房间成员",
     "房间设置"
   ]);
   await expect(page.getByRole("button", { name: /点歌|新建歌单|搜索|排序|清空/ })).toHaveCount(0);
-  await expect(page.getByText("我的歌单", { exact: true })).toHaveCount(0);
 });
 
 for (const width of [320, 900, 1440]) {
-  test(`${width}px 三入口保持独立成员详情和滚动，重按回顶，离开房间清除状态`, async ({ page }) => {
+  test(`${width}px 四入口保持独立成员详情和滚动，重按回顶，离开房间清除状态`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
     await signedIn(page);
     const members = Array.from({ length: 10 }, (_, index) => ({
@@ -114,7 +114,7 @@ for (const width of [320, 900, 1440]) {
     await expect(page.getByText(`房间：${room.name}`, { exact: true })).toBeVisible();
     await expect(page.getByText("房主", { exact: true })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "房间导航" });
-    await expect(nav.getByRole("button")).toHaveText(["公共歌单", "房间成员", "房间设置"]);
+    await expect(nav.getByRole("button")).toHaveText(["公共歌单", "我的歌单", "房间成员", "房间设置"]);
     await expect(nav.getByRole("button", { name: "公共歌单" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("button", { name: "房间成员" }).click();
     await expect(page.getByRole("button", { name: "查看成员：室友1", exact: true })).toBeVisible();
