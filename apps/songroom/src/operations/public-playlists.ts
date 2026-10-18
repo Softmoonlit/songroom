@@ -1461,8 +1461,9 @@ export class PublicPlaylists {
     if (!accepted.replay) {
       this.scheduler.kick();
     }
+    const currentOp = this.database.select({ version: operation.version }).from(operation).where(eq(operation.id, accepted.opId)).get();
     const currentRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get();
-    this.eventStream.notifyRoom(this.database, roomId, { type: "operation", resourceId: accepted.opId, version: 1 });
+    this.eventStream.notifyRoom(this.database, roomId, { type: "operation", resourceId: accepted.opId, version: currentOp?.version ?? 1 });
     if (currentRoom) {
       this.eventStream.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: currentRoom.version });
     }
@@ -1918,7 +1919,11 @@ export class PublicPlaylists {
         }
 
         const sourceData = sourceResult.data;
-        if (sourceData.playlist.id !== detail.sourcePlaylistId || sourceData.playlist.status !== 0) {
+        if (
+          sourceData.playlist.id !== detail.sourcePlaylistId ||
+          sourceData.playlist.status !== 0 ||
+          sourceData.playlist.creatorId !== row.accountId
+        ) {
           this.#status(row.id, "stopped", "SOURCE_PLAYLIST_UNAVAILABLE");
           return;
         }
@@ -1928,21 +1933,71 @@ export class PublicPlaylists {
           return;
         }
 
-        // 来源歌单确认歌曲仍在！检查公共歌单当前快照中是否已有该歌曲
-        const snap = this.database.select().from(playlistTrack).where(and(
-          eq(playlistTrack.accountId, binding.accountId),
-          eq(playlistTrack.playlistId, binding.playlistId),
-          eq(playlistTrack.songId, detail.songId)
-        )).get();
+        // 来源歌单确认歌曲仍在！在事务中原子核验操作有效性并推进至 sending 或确认已存在歌曲
+        const preCheck = this.database.transaction(tx => {
+          const currentOp = tx.select().from(operation).where(eq(operation.id, row.id)).get();
+          if (!currentOp || currentOp.status !== "processing") return { valid: false as const };
 
-        if (snap) {
+          const currentDetail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get();
+          if (!currentDetail) return { valid: false as const };
+
+          const currentMember = tx.select().from(roomMembership).where(and(
+            eq(roomMembership.roomId, row.roomId),
+            eq(roomMembership.id, currentDetail.sourceMemberId ?? "")
+          )).get();
+          if (!currentMember || currentMember.userId !== currentOp.userId) return { valid: false as const };
+
+          const currentPersonal = tx.select().from(personalPlaylistBinding).where(and(
+            eq(personalPlaylistBinding.roomId, row.roomId),
+            eq(personalPlaylistBinding.memberId, currentMember.id)
+          )).get();
+          if (
+            !currentPersonal ||
+            currentPersonal.playlistId !== currentDetail.sourcePlaylistId ||
+            currentPersonal.generation !== currentDetail.sourceBindingGeneration ||
+            currentPersonal.accountId !== currentOp.accountId
+          ) {
+            return { valid: false as const };
+          }
+
+          const currentPublic = tx.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, row.roomId)).get();
+          if (
+            !currentPublic ||
+            currentPublic.playlistId !== currentDetail.playlistId ||
+            currentPublic.generation !== currentDetail.bindingGeneration ||
+            currentPublic.accountId !== currentOp.accountId
+          ) {
+            return { valid: false as const };
+          }
+
+          // 检查公共歌单当前快照中是否已有该歌曲
+          const snap = tx.select().from(playlistTrack).where(and(
+            eq(playlistTrack.accountId, currentPublic.accountId),
+            eq(playlistTrack.playlistId, currentPublic.playlistId),
+            eq(playlistTrack.songId, currentDetail.songId)
+          )).get();
+
+          if (snap) {
+            return { valid: true as const, existing: true as const };
+          }
+
+          // 公共尚无歌曲：原子推进到 step = sending，版本自增并加时间戳，杜绝 TOCTOU 竞态
+          tx.update(publicSongRequest).set({ step: "sending" }).where(eq(publicSongRequest.operationId, row.id)).run();
+          tx.update(operation).set({ version: sql`${operation.version} + 1`, updatedAt: this.now() }).where(eq(operation.id, row.id)).run();
+          return { valid: true as const, existing: false as const };
+        });
+
+        if (!preCheck.valid) {
+          // 异步等待期间成员已撤权、操作已取消或绑定已失效，绝不调用 trackAdd！
+          return;
+        }
+
+        if (preCheck.existing) {
           // 公共已有歌曲：直接确认歌曲并提交标签
           this.#confirmSongAndCommitTag(row, detail);
           return;
         }
 
-        // 公共尚无歌曲：更新 step 为 sending，立即在同一次执行中发送 trackAdd，杜绝 TOCTOU 竞态
-        this.database.update(publicSongRequest).set({ step: "sending" }).where(eq(publicSongRequest.operationId, row.id)).run();
         detail.step = "sending";
       }
 

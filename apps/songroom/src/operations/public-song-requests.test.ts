@@ -135,7 +135,7 @@ function fixture() {
     };
   };
 
-  return { root, database, scheduler, adapter, playlists, roomId, now, advanceTime: (ms: number) => { timeOffset += ms; } };
+  return { root, database, scheduler, adapter, playlists, roomId, now, eventStream, advanceTime: (ms: number) => { timeOffset += ms; } };
 }
 
 it("公共已有歌曲时不调用增加接口，只写入去重标签；不同成员分别留标签，重复点歌不累计", async () => {
@@ -1183,4 +1183,132 @@ it("调度阶段实时核验：上游返回的歌单 ID 与来源歌单不匹配
   expect(op.step).toBe("stopped");
   expect(op.errorCode).toBe("SOURCE_PLAYLIST_UNAVAILABLE");
   f.playlists.stop();
+});
+
+it("调度阶段实时核验：来源歌单创建者账号与房主网易云账号不匹配时停止并标记 SOURCE_PLAYLIST_UNAVAILABLE", async () => {
+  const f = fixture();
+  f.playlists.start();
+
+  f.adapter.call = (async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    if (input.operation === "identity") return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
+    if (input.operation === "playlistDetail") {
+      if (input.playlistId === "pl-roommate1") {
+        return {
+          ok: true,
+          data: {
+            playlist: { id: "pl-roommate1", name: "个人歌单", creatorId: "acc-other-intruder", subscribed: false, status: 0 },
+            songIds: ["s-101"],
+            songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+          }
+        } as any;
+      }
+      return defaultSourceDetail(input.playlistId) as any;
+    }
+    return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
+  }) as any;
+
+  const res = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+
+  f.advanceTime(1500);
+  f.scheduler.kick();
+  await f.scheduler.settle();
+
+  const op = f.playlists.readOperation("roommate1", f.roomId, res.operation.id);
+  expect(op.status).toBe("stopped");
+  expect(op.step).toBe("stopped");
+  expect(op.errorCode).toBe("SOURCE_PLAYLIST_UNAVAILABLE");
+  f.playlists.stop();
+});
+
+it("撤权竞态：调度执行开始读取来源后成员退出，来源读取返回后绝不调用 trackAdd，且不产生未受跟踪的写入", async () => {
+  const f = fixture();
+  f.playlists.start();
+
+  let trackAddCalled = false;
+  let resolveSourceDetail!: (value: any) => void;
+  const sourceDetailPromise = new Promise(resolve => {
+    resolveSourceDetail = resolve;
+  });
+
+  f.adapter.call = (async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    if (input.operation === "identity") return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
+    if (input.operation === "trackAdd") {
+      trackAddCalled = true;
+      return { ok: true, data: { acknowledged: true } } as any;
+    }
+    if (input.operation === "playlistDetail") {
+      if (input.playlistId === "pl-roommate1") {
+        // 挂起来源读取，等待模拟成员撤权
+        await sourceDetailPromise;
+        return {
+          ok: true,
+          data: {
+            playlist: { id: "pl-roommate1", name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            songIds: ["s-101"],
+            songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+          }
+        } as any;
+      }
+      return defaultSourceDetail(input.playlistId) as any;
+    }
+    return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
+  }) as any;
+
+  const res = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+
+  f.advanceTime(1500);
+  f.scheduler.kick();
+
+  // 等待调度器进入执行并挂在来源读取上
+  await new Promise(r => setTimeout(r, 50));
+
+  // 此时模拟室友甲退出房间：删除成员记录及个人歌单绑定
+  f.database.transaction(tx => {
+    tx.delete(roomMembership).where(and(eq(roomMembership.roomId, f.roomId), eq(roomMembership.userId, "roommate1"))).run();
+    tx.delete(personalPlaylistBinding).where(and(eq(personalPlaylistBinding.roomId, f.roomId), eq(personalPlaylistBinding.playlistId, "pl-roommate1"))).run();
+    // 模拟撤权时删除未发送操作
+    tx.delete(operation).where(eq(operation.id, res.operation.id)).run();
+  });
+
+  // 放行来源歌单响应
+  resolveSourceDetail(null);
+  await f.scheduler.settle();
+
+  // 验证：即使来源读取成功返回，由于成员与操作已在异步期间撤权，绝不能调用 trackAdd！
+  expect(trackAddCalled).toBe(false);
+  f.playlists.stop();
+});
+
+it("幂等重放通知：使用相同幂等键再次请求时，通知的版本号为当前操作真实版本号，不倒退回 1", () => {
+  const f = fixture();
+  const notifiedVersions: number[] = [];
+  const originalNotify = f.eventStream.notifyRoom.bind(f.eventStream);
+  f.eventStream.notifyRoom = (db, roomId, event) => {
+    if (event.type === "operation") {
+      notifiedVersions.push(event.version);
+    }
+    originalNotify(db, roomId, event);
+  };
+
+  const key = v7();
+  const res1 = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: key, sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+  expect(notifiedVersions).toContain(1);
+
+  // 模拟操作版本因调度推进自增到 5
+  f.database.update(operation).set({ version: 5 }).where(eq(operation.id, res1.operation.id)).run();
+
+  // 使用相同幂等键再次请求（幂等重放）
+  notifiedVersions.length = 0;
+  const resReplay = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: key, sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+  expect(resReplay.replay).toBe(true);
+  // 验证通知的版本为真实递增的当前版本 5，而不是倒退回 1
+  expect(notifiedVersions).toEqual([5]);
 });

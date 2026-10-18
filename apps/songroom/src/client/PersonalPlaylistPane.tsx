@@ -1,17 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, ListMusic, Plus, RotateCw } from "lucide-react";
+import { AlertCircle, CheckCircle2, Info, ListMusic, Plus, RotateCw } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   personalPlaylistView,
   type PersonalPlaylistTrack,
   type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
-import { songRequestResponse } from "../shared/public-playlist-contracts.js";
+import {
+  publicPlaylistView,
+  songRequestOperationView,
+  songRequestResponse
+} from "../shared/public-playlist-contracts.js";
 import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http.js";
 import { QueryError } from "./RoomQueryError.js";
-import { getFriendlySongRequestErrorMessage } from "./song-request-messages.js";
+import { getFriendlyOperationStatusMessage, getFriendlySongRequestErrorMessage } from "./song-request-messages.js";
 import { Toast, type ToastData } from "./Toast.js";
 
 function getRefreshErrorMessage(code: string): string {
@@ -73,12 +77,14 @@ function PersonalTrackList({
   tracks,
   active,
   onRequestSong,
-  requestingSongId
+  requestingSongId,
+  songRequestDisabledReason
 }: {
   tracks: PersonalPlaylistTrack[];
   active: boolean;
   onRequestSong?: (track: PersonalPlaylistTrack) => void;
   requestingSongId?: string | null;
+  songRequestDisabledReason?: string | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -105,6 +111,8 @@ function PersonalTrackList({
     };
   }, [active]);
 
+  const isRequestDisabled = Boolean(requestingSongId || songRequestDisabledReason);
+
   return (
     <div className="playlist-tracks-wrapper">
       <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
@@ -126,6 +134,7 @@ function PersonalTrackList({
         >
           {virtualizer.getVirtualItems().map(virtualRow => {
             const track = tracks[virtualRow.index];
+            const isThisTrackRequesting = requestingSongId === track.songId;
             return (
               <div
                 key={virtualRow.key}
@@ -162,13 +171,13 @@ function PersonalTrackList({
                     <button
                       type="button"
                       className="secondary-button request-song-btn"
-                      disabled={Boolean(requestingSongId)}
+                      disabled={isRequestDisabled}
                       onClick={() => onRequestSong(track)}
                       aria-label={`点播《${track.name}》到公共歌单`}
-                      title="点歌到公共歌单"
+                      title={songRequestDisabledReason ?? "点歌到公共歌单"}
                     >
                       <Plus size={14} aria-hidden="true" />
-                      <span>{requestingSongId === track.songId ? "点歌中…" : "点歌"}</span>
+                      <span>{isThisTrackRequesting ? "点歌中…" : "点歌"}</span>
                     </button>
                   </div>
                 )}
@@ -195,6 +204,8 @@ export function PersonalPlaylistPane({
   const queryClient = useQueryClient();
   const [createError, setCreateError] = useState("");
   const [requestingSongId, setRequestingSongId] = useState<string | null>(null);
+  const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
+  const [operationBanner, setOperationBanner] = useState<{ message: string; type: "info" | "warning" } | null>(null);
   const [toast, setToast] = useState<ToastData | null>(null);
   const [requestError, setRequestError] = useState("");
 
@@ -208,6 +219,77 @@ export function PersonalPlaylistPane({
     },
     ...queryOptions
   });
+
+  const publicQuery = useQuery({
+    queryKey: ["room-public-playlist", sessionId, roomId],
+    queryFn: ({ signal }) => request(`/${roomId}/public-playlist`, publicPlaylistView, signal),
+    enabled: active,
+    ...queryOptions
+  });
+
+  const hasPublicPlaylist = Boolean(publicQuery.data?.playlist);
+  const publicDisabledReason = publicQuery.data?.disabledReason;
+
+  // 轮询并监听异步点歌操作
+  const operationQuery = useQuery({
+    queryKey: ["song-request-operation", activeOperationId],
+    queryFn: ({ signal }) => request(`/${roomId}/song-requests/${activeOperationId}`, songRequestOperationView, signal),
+    enabled: Boolean(activeOperationId && active),
+    refetchInterval: q => (q.state.data?.status && ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status) ? 2500 : false),
+    ...queryOptions
+  });
+
+  useEffect(() => {
+    if (!operationQuery.data) return;
+    const op = operationQuery.data;
+    switch (op.status) {
+      case "succeeded":
+        setActiveOperationId(null);
+        setOperationBanner(null);
+        setToast({
+          id: uuidv7(),
+          message: op.songConfirmed && !op.tagConfirmed
+            ? `《${op.name}》网易云已确认，但点歌人标签待补记。`
+            : `《${op.name}》点歌成功！已加入公共歌单并记录你的标签。`,
+          type: "success"
+        });
+        void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
+        break;
+      case "awaitingConfirmation":
+        setOperationBanner({
+          message: op.songConfirmed && !op.tagConfirmed
+            ? `《${op.name}》网易云已确认，但点歌人标签待补记。`
+            : `《${op.name}》已发送至网易云，正在等待云端确认，请稍后刷新查看。`,
+          type: "warning"
+        });
+        void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
+        break;
+      case "waitingAuthorization":
+        setOperationBanner({
+          message: "房主的网易云授权需要重新确认，正在等待房主恢复授权…",
+          type: "warning"
+        });
+        break;
+      case "needsAdministrator":
+        setActiveOperationId(null);
+        setOperationBanner(null);
+        setRequestError("点歌操作需要管理员协助处理，请联系房主或管理员。");
+        break;
+      case "failed":
+      case "stopped":
+        setActiveOperationId(null);
+        setOperationBanner(null);
+        setRequestError(getFriendlySongRequestErrorMessage(op.errorCode));
+        break;
+      case "queued":
+      case "processing":
+        setOperationBanner({
+          message: getFriendlyOperationStatusMessage(op.status, op.name),
+          type: "info"
+        });
+        break;
+    }
+  }, [operationQuery.data, queryClient, sessionId, roomId]);
 
   const createMutation = useMutation({
     mutationFn: () => {
@@ -257,14 +339,18 @@ export function PersonalPlaylistPane({
           message: `《${track.name}》已成功加入公共歌单并记录你的标签！`,
           type: "success"
         });
+        void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
+      } else if (res.operation.status === "failed" || res.operation.status === "stopped") {
+        setActiveOperationId(null);
+        setOperationBanner(null);
+        setRequestError(getFriendlySongRequestErrorMessage(res.operation.errorCode));
       } else {
-        setToast({
-          id: uuidv7(),
-          message: `《${track.name}》已提交点歌，正在排队处理…`,
+        setActiveOperationId(res.operation.id);
+        setOperationBanner({
+          message: getFriendlyOperationStatusMessage(res.operation.status, res.operation.name),
           type: "info"
         });
       }
-      void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
     },
     onError: failure => {
       setRequestingSongId(null);
@@ -411,6 +497,24 @@ export function PersonalPlaylistPane({
           </div>
         )}
 
+        {!hasPublicPlaylist && (
+          <div className="info-banner" role="status" style={{ marginTop: "0.5rem" }}>
+            <Info size={16} aria-hidden="true" />
+            <span>房间尚未创建公共歌单，无法发起点歌。可在房主创建公共歌单后点歌。</span>
+          </div>
+        )}
+
+        {operationBanner && (
+          <div
+            className={`operation-status-banner ${operationBanner.type}`}
+            role="status"
+            style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.5rem" }}
+          >
+            <RotateCw className="spin-icon" size={16} aria-hidden="true" />
+            <span>{operationBanner.message}</span>
+          </div>
+        )}
+
         {requestError && (
           <div className="error-banner" role="alert">
             <AlertCircle size={16} aria-hidden="true" />
@@ -424,6 +528,17 @@ export function PersonalPlaylistPane({
         active={active}
         onRequestSong={track => requestSongMutation.mutate(track)}
         requestingSongId={requestingSongId}
+        songRequestDisabledReason={
+          !hasPublicPlaylist
+            ? "房间尚未创建公共歌单，无法发起点歌"
+            : publicDisabledReason === "ACCOUNT_PAUSED"
+              ? "网易云账号已暂停，暂时无法点歌"
+              : publicDisabledReason === "TARGET_BLOCKED"
+                ? "公共歌单待确认，暂时无法点歌"
+                : activeOperationId
+                  ? "已有正在处理中的点歌操作，请稍候"
+                  : null
+        }
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>

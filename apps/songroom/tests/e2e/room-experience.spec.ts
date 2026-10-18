@@ -12,7 +12,7 @@ const view: PublicPlaylistView = {
   playlist: { id: "playlist-1", name: "云端新名称" },
   snapshot: { version: 7, syncedAt: 1700000000000, trackCount: tracks.length, tracks },
   operation: null, lastRefreshError: null, version: 1,
-  allowedActions: ["refreshPublicPlaylist", "requestSong"], disabledReason: "PUBLIC_PLAYLIST_EXISTS"
+  allowedActions: ["refreshPublicPlaylist", "replacePublicPlaylist"], disabledReason: "PUBLIC_PLAYLIST_EXISTS"
 };
 async function setup(page: Page, playbackSong: string | null = "401") {
   await page.route("**/api/auth/get-session", route => route.fulfill({ json: {
@@ -120,7 +120,7 @@ test("不展示下一首按钮，已有未确认命令仍可同键查询和恢�
   await page.goto(`/rooms/${roomId}`);
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "查询下一首播放结果" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "+ 点歌", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "随机换一组" })).toBeDisabled();
   await page.getByRole("button", { name: "查询下一首播放结果" }).click();
   await expect(page.getByText(/提交结果待确认/)).toBeVisible();
   await page.getByRole("button", { name: "查询下一首播放结果" }).click();
@@ -131,7 +131,7 @@ test("不展示下一首按钮，已有未确认命令仍可同键查询和恢�
   await page.reload();
   await expect(page.getByText(/下一首播放结果待确认/)).toBeVisible();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "+ 点歌", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "随机换一组" })).toBeDisabled();
   expect(commands).toHaveLength(2);
 });
 
