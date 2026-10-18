@@ -1101,7 +1101,7 @@ it("调度阶段实时核验：来源歌单读取失败时停止，并记录错�
   const op = f.playlists.readOperation("roommate1", f.roomId, res.operation.id);
   expect(op.status).toBe("stopped");
   expect(op.step).toBe("stopped");
-  expect(op.errorCode).toBe("NETWORK_ERROR");
+  expect(op.errorCode).toBe("SOURCE_PLAYLIST_UNAVAILABLE");
   f.playlists.stop();
 });
 
@@ -1144,5 +1144,43 @@ it("调度阶段实时核验：来源歌单中歌曲已被移除时停止操作�
   const op = f.playlists.readOperation("roommate1", f.roomId, res.operation.id);
   expect(op.status).toBe("stopped");
   expect(op.step).toBe("stopped");
+  expect(op.errorCode).toBe("SOURCE_SONG_REMOVED");
+  f.playlists.stop();
+});
+
+it("调度阶段实时核验：上游返回的歌单 ID 与来源歌单不匹配时停止并标记 SOURCE_PLAYLIST_UNAVAILABLE", async () => {
+  const f = fixture();
+  f.playlists.start();
+
+  f.adapter.call = (async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    if (input.operation === "identity") return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
+    if (input.operation === "playlistDetail") {
+      if (input.playlistId === "pl-roommate1") {
+        return {
+          ok: true,
+          data: {
+            playlist: { id: "pl-mismatched-other", name: "其他歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            songIds: ["s-101"],
+            songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+          }
+        } as any;
+      }
+      return defaultSourceDetail(input.playlistId) as any;
+    }
+    return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
+  }) as any;
+
+  const res = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+
+  f.advanceTime(1500);
+  f.scheduler.kick();
+  await f.scheduler.settle();
+
+  const op = f.playlists.readOperation("roommate1", f.roomId, res.operation.id);
+  expect(op.status).toBe("stopped");
+  expect(op.step).toBe("stopped");
+  expect(op.errorCode).toBe("SOURCE_PLAYLIST_UNAVAILABLE");
   f.playlists.stop();
 });

@@ -24,7 +24,7 @@ export type PublicPlaylistSnapshot = z.infer<typeof publicPlaylistSnapshot>;
 export const publicPlaylistOperation = z.strictObject({
   id: uuidv7,
   kind: z.enum(["createPublicPlaylist", "requestPublicSong", "replacePublicPlaylist", "playNext"]).optional(),
-  errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP", "CONCURRENT_OPERATION_LIMIT_EXCEEDED"])]).nullable(),
+  errorCode: z.union([adapterErrorCodeSchema, z.enum(["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP", "CONCURRENT_OPERATION_LIMIT_EXCEEDED", "SOURCE_SONG_REMOVED", "SOURCE_PLAYLIST_UNAVAILABLE"])]).nullable(),
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
   step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"]).nullable().optional(),
   playlistId: z.string().nullable().optional(),
@@ -77,7 +77,13 @@ export const songRequestOperationView = z.strictObject({
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
   songConfirmed: z.boolean(),
   tagConfirmed: z.boolean(),
-  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED")]).nullable(),
+  errorCode: z.union([
+    adapterErrorCodeSchema,
+    z.literal("ACCOUNT_PAUSED"),
+    z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED"),
+    z.literal("SOURCE_SONG_REMOVED"),
+    z.literal("SOURCE_PLAYLIST_UNAVAILABLE")
+  ]).nullable(),
   step: z.enum(["ready", "verified", "sending", "confirming", "tagging", "succeeded", "rejected", "unknown", "stopped"]),
   version: z.number().int().positive()
 });

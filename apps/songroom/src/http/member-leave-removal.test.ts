@@ -361,7 +361,7 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
 });
 
 it("在途写入晚到响应可更新公共歌单快照，但绝不补回已离开成员的标签，旧操作不可查看", async () => {
-  const { app, adapter, owner, roommate1, roomId } = await fixture();
+  const { app, adapter, owner, roommate1, roomId, rm1MemberId } = await fixture();
 
   // 构造一个正在发送中的公共点歌操作（step 为 sending）
   const opId = v7();
@@ -379,6 +379,9 @@ it("在途写入晚到响应可更新公共歌单快照，但绝不补回已离�
   }).run();
   app.database.insert(publicSongRequest).values({
     operationId: opId,
+    sourcePlaylistId: "pl-rm1",
+    sourceBindingGeneration: 1,
+    sourceMemberId: rm1MemberId,
     songId: "in-flight-song",
     name: "夜曲",
     artists: JSON.stringify(["周杰伦"]),
@@ -398,6 +401,12 @@ it("在途写入晚到响应可更新公共歌单快照，但绝不补回已离�
     version: membersRes.json().version
   });
   expect(removeRes.statusCode).toBe(200);
+
+  // 验证最小留存：进入匿名确认状态后，已清空全部来源字段
+  const reqRecord = app.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, opId)).get()!;
+  expect(reqRecord.sourcePlaylistId).toBeNull();
+  expect(reqRecord.sourceBindingGeneration).toBeNull();
+  expect(reqRecord.sourceMemberId).toBeNull();
 
   // 模拟 adapter 晚到的 playlistDetail 返回了这首新歌
   adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {

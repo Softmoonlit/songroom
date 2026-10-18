@@ -32,6 +32,10 @@ export function getFriendlySongRequestErrorMessage(code?: string | null): string
       return "尚未配置个人歌单，无法发起点歌。";
     case "SOURCE_PLAYLIST_FORBIDDEN":
       return "只能从自己的专用个人歌单发起点歌。";
+    case "SOURCE_SONG_REMOVED":
+      return "该歌曲已从你的个人歌单中移除，无法发起点歌。";
+    case "SOURCE_PLAYLIST_UNAVAILABLE":
+      return "来源个人歌单暂时无法访问，请核对个人歌单状态。";
     default:
       return errorMessageForCode(code);
   }

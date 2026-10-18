@@ -148,7 +148,7 @@ export const operation = sqliteTable("operation", {
   authorizationId: text("authorization_id"),
   generation: integer("generation"),
   status: text("status", { enum: ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"] }).notNull(),
-  errorCode: text("error_code", { enum: ["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP", ...adapterErrorCodeSchema.options] }),
+  errorCode: text("error_code", { enum: ["ACCOUNT_PAUSED", "PLAYBACK_CONFLICT", "PLAYLIST_CONFLICT", "PLAY_NEXT_NOOP", "SOURCE_SONG_REMOVED", "SOURCE_PLAYLIST_UNAVAILABLE", ...adapterErrorCodeSchema.options] }),
   lastGranted: integer("last_granted").notNull().default(0),
   version: integer("version").notNull().default(1),
   createdAt: integer("created_at").notNull(),

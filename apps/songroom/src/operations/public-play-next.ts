@@ -57,7 +57,7 @@ export class PublicPlayNext {
     const row = this.database.select().from(operation).where(and(eq(operation.id, id), eq(operation.roomId, roomId), eq(operation.userId, userId), eq(operation.kind, "playNext"))).get();
     const detail = this.database.select().from(publicPlayNext).where(eq(publicPlayNext.operationId, id)).get();
     if (!row || !detail || (isTerminalOperation(row) && row.updatedAt <= this.now() - 86_400_000)) throw new BusinessError(404, "OPERATION_UNAVAILABLE", "操作不存在或已过期");
-    return { id, roomId, songId: detail.songId, anchorSongId: detail.anchorSongId, status: row.status, step: detail.step, errorCode: row.errorCode, version: row.version };
+    return { id, roomId, songId: detail.songId, anchorSongId: detail.anchorSongId, status: row.status, step: detail.step, errorCode: row.errorCode as PlayNextOperationView["errorCode"], version: row.version };
   }
 
   hasTargetLock(accountId: string, playlistId: string): boolean {

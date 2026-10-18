@@ -45,6 +45,12 @@ describe("song-request-messages", () => {
       expect(getFriendlySongRequestErrorMessage("SOURCE_PLAYLIST_FORBIDDEN")).toBe(
         "只能从自己的专用个人歌单发起点歌。"
       );
+      expect(getFriendlySongRequestErrorMessage("SOURCE_SONG_REMOVED")).toBe(
+        "该歌曲已从你的个人歌单中移除，无法发起点歌。"
+      );
+      expect(getFriendlySongRequestErrorMessage("SOURCE_PLAYLIST_UNAVAILABLE")).toBe(
+        "来源个人歌单暂时无法访问，请核对个人歌单状态。"
+      );
     });
 
     it("空或未识别错误码返回温和托底提示", () => {

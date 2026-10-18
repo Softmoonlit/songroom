@@ -1,26 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { LocateFixed, Music2, Plus, RotateCw, Search, Shuffle, X } from "lucide-react";
+import { LocateFixed, Music2, RotateCw, Search, Shuffle, X } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   publicPlaylistView,
   randomReplacementOperationView,
-  songRequestOperationView,
-  songRequestResponse,
   type PublicPlaylistCreateCommand,
   type PublicPlaylistTrack,
   type PublicPlaylistView,
   type RandomReplacementOperationView
 } from "../shared/public-playlist-contracts.js";
-import type { SongCandidate } from "../shared/song-search-contracts.js";
 import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http.js";
 import { QueryError } from "./RoomQueryError.js";
-import { SongRequestDrawer } from "./SongRequestDrawer.js";
 import { RandomReplacementDialog } from "./RandomReplacementDialog.js";
 import { usePublicPlayback } from "./usePublicPlayback.js";
 import { Toast, type ToastData } from "./Toast.js";
-import { getFriendlySongRequestErrorMessage, getFriendlyOperationStatusMessage } from "./song-request-messages.js";
 import {
   getFriendlyReplacementErrorMessage,
   getFriendlyReplacementOperationStatus
@@ -165,14 +160,9 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const controller = useRef<AbortController | null>(null);
   const refreshController = useRef<AbortController | null>(null);
 
-  // 点歌抽屉与正反馈交互状态
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  // 正反馈与高亮状态
   const [toast, setToast] = useState<ToastData | null>(null);
   const [highlight, setHighlight] = useState<{ songId: string; id: string } | null>(null);
-  const [requestErrorMessage, setRequestErrorMessage] = useState("");
-  const [operationStatusMessage, setOperationStatusMessage] = useState("");
-  const [isRequesting, setIsRequesting] = useState(false);
-  const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
 
   // 歌单内搜索与筛选状态
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -213,27 +203,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   const isFilterActive = Boolean(searchQuery.trim() || (selectedRequester && selectedRequester !== "all"));
 
   const playback = usePublicPlayback({ sessionId, roomId, active, view: query.data,
-    pendingWrite: isRequesting || Boolean(activeOperationId) || Boolean(activeReplacementOperationId), notify: setToast });
-
-  const openSongRequestDrawer = () => {
-    setRequestErrorMessage("");
-    setOperationStatusMessage("");
-    setIsDrawerOpen(true);
-  };
-
-  const handleSongRequestSucceeded = (songId: string, name: string) => {
-    setIsRequesting(false);
-    setIsDrawerOpen(false);
-    setActiveOperationId(null);
-    setOperationStatusMessage("");
-    setHighlight({ songId, id: uuidv7() });
-    setToast({
-      id: uuidv7(),
-      message: `《${name}》点歌成功！已加入公共歌单并记录你的标签。`,
-      type: "success"
-    });
-    void client.invalidateQueries({ queryKey });
-  };
+    pendingWrite: Boolean(activeReplacementOperationId), notify: setToast });
 
   useEffect(() => () => {
     controller.current?.abort();
@@ -280,105 +250,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       setRefreshError(errorMessage(failure));
     }
   });
-
-  // 异步点歌操作轮询与监听（由 SSE 失效通知驱动重查，附带低频兜底）
-  const operationQuery = useQuery({
-    queryKey: ["song-request-operation", activeOperationId],
-    queryFn: ({ signal }) => request(`/${roomId}/song-requests/${activeOperationId}`, songRequestOperationView, signal),
-    enabled: Boolean(activeOperationId && active),
-    refetchInterval: q => (q.state.data?.status && ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status) ? 10000 : false),
-    ...queryOptions
-  });
-
-  useEffect(() => {
-    if (!operationQuery.data) return;
-    const op = operationQuery.data;
-    switch (op.status) {
-      case "succeeded":
-        handleSongRequestSucceeded(op.songId, op.name);
-        break;
-      case "awaitingConfirmation":
-        setIsRequesting(false);
-        setIsDrawerOpen(false);
-        setOperationStatusMessage("");
-        setToast({
-          id: uuidv7(),
-          message: op.songConfirmed && !op.tagConfirmed
-            ? `《${op.name}》网易云已确认，但点歌人标签待补记。`
-            : `《${op.name}》已发送至网易云，正在等待云端确认，请稍后刷新查看。`,
-          type: "info"
-        });
-        void client.invalidateQueries({ queryKey });
-        // 不清除 activeOperationId，保留轮询直到到达 succeeded
-        break;
-      case "waitingAuthorization":
-        setIsRequesting(false);
-        setOperationStatusMessage("");
-        setRequestErrorMessage("房主的网易云授权需要重新确认，正在等待房主恢复授权…");
-        break;
-      case "needsAdministrator":
-        setIsRequesting(false);
-        setActiveOperationId(null);
-        setOperationStatusMessage("");
-        setRequestErrorMessage("点歌操作需要管理员协助处理，请联系房主或管理员。");
-        break;
-      case "failed":
-      case "stopped":
-        setIsRequesting(false);
-        setActiveOperationId(null);
-        setOperationStatusMessage("");
-        setRequestErrorMessage(getFriendlySongRequestErrorMessage(op.errorCode));
-        break;
-      case "queued":
-      case "processing":
-        setOperationStatusMessage(getFriendlyOperationStatusMessage(op.status, op.name));
-        break;
-    }
-  }, [operationQuery.data, client, queryKey]);
-
-  useEffect(() => {
-    if (operationQuery.isError) {
-      setIsRequesting(false);
-      setOperationStatusMessage("");
-      setRequestErrorMessage(getFriendlySongRequestErrorMessage("NETWORK_ERROR"));
-    }
-  }, [operationQuery.isError]);
-
-  const songRequestMutation = useMutation({
-    mutationFn: async (candidate: SongCandidate) => {
-      setIsRequesting(true);
-      setRequestErrorMessage("");
-      setOperationStatusMessage("");
-      const key = uuidv7();
-      return request(`/${roomId}/song-requests`, songRequestResponse, undefined, {
-        idempotencyKey: key,
-        sourcePlaylistId: "retired-in-issue-03",
-        songId: candidate.id,
-        name: candidate.name,
-        artists: candidate.artists,
-        album: candidate.album
-      });
-    },
-    onSuccess: res => {
-      if (res.operation.status === "succeeded") {
-        handleSongRequestSucceeded(res.operation.songId, res.operation.name);
-      } else {
-        setActiveOperationId(res.operation.id);
-        setOperationStatusMessage(getFriendlyOperationStatusMessage(res.operation.status, res.operation.name));
-      }
-    },
-    onError: failure => {
-      setIsRequesting(false);
-      setOperationStatusMessage("");
-      const code = failure instanceof RoomRequestError ? failure.code : null;
-      setRequestErrorMessage(getFriendlySongRequestErrorMessage(code));
-    }
-  });
-
-  function handleConfirmSongRequest(candidate: SongCandidate) {
-    if (isRequesting) return;
-    songRequestMutation.mutate(candidate);
-  }
 
   // 异步换歌操作轮询与监听
   const replacementOperationQuery = useQuery({
@@ -546,22 +417,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
 
           <div className="playlist-header-right">
-            {/* 显眼的右上角「+ 点歌」主操作入口 */}
-            {view.allowedActions.includes("requestSong") && (
-              <button
-                className="primary-button open-request-drawer-btn"
-                type="button"
-                disabled={view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
-                aria-label="+ 点歌"
-                aria-haspopup="dialog"
-                aria-expanded={isDrawerOpen}
-                onClick={openSongRequestDrawer}
-              >
-                <Plus size={15} aria-hidden="true" />
-                <span>点歌</span>
-              </button>
-            )}
-
             <button type="button" className="secondary-button locate-playback-button"
               disabled={!playback.anchorSongId} onClick={() => playback.anchorSongId && setHighlight({ songId: playback.anchorSongId, id: uuidv7() })}>
               <LocateFixed size={14} aria-hidden="true" />
@@ -602,7 +457,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               <button
                 type="button"
                 className="secondary-button random-replacement-button"
-                disabled={isReplacementBusy || isRequesting || Boolean(activeOperationId) || view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
+                disabled={isReplacementBusy || Boolean(activeReplacementOperationId) || view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
                 onClick={() => setIsRandomDialogOpen(true)}
                 aria-haspopup="dialog"
                 aria-expanded={isRandomDialogOpen}
@@ -723,20 +578,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
             </div>
             <h4 className="empty-playlist-title">歌单暂无歌曲</h4>
             <p className="empty-playlist-guidance">
-              点击右上角「+ 点歌」或下方按钮，为你和室友添上第一首背景音乐。
+              可在「我的歌单」中点歌，为你和室友添上第一首背景音乐。
             </p>
-            {view.allowedActions.includes("requestSong") && (
-              <button
-                className="primary-button empty-playlist-cta-btn"
-                type="button"
-                disabled={view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
-                aria-label="+ 点歌"
-                onClick={openSongRequestDrawer}
-              >
-                <Plus size={15} aria-hidden="true" />
-                <span>点一首歌</span>
-              </button>
-            )}
           </div>
         ) : (
           <TrackList
@@ -756,19 +599,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         {message && <p className="form-message" role="alert">{message}</p>}
       </div>
     )}
-
-    {/* 网易云全网点歌专属抽屉面板 */}
-    <SongRequestDrawer
-      isOpen={isDrawerOpen}
-      onClose={() => setIsDrawerOpen(false)}
-      roomId={roomId}
-      active={active}
-      isRequesting={isRequesting}
-      operationStatusMessage={operationStatusMessage}
-      onConfirmSongRequest={handleConfirmSongRequest}
-      requestErrorMessage={requestErrorMessage}
-      clearRequestErrorMessage={() => setRequestErrorMessage("")}
-    />
 
     {/* 随机换一组抽选与替换弹窗 */}
     <RandomReplacementDialog

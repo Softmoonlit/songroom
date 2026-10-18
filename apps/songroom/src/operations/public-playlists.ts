@@ -1393,6 +1393,10 @@ export class PublicPlaylists {
       const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.ownerUserId)).get();
       if (!auth || auth.status !== "active" || !auth.credentials) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
 
+      if (personalBinding.accountId !== auth.accountId) {
+        throw new BusinessError(409, "AUTHORIZATION_CHANGED", "网易云账号已变化，请重新读取并确认身份");
+      }
+
       const admissionCode = this.scheduler.admissionCode(auth.accountId);
       if (admissionCode) {
         throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
@@ -1626,7 +1630,11 @@ export class PublicPlaylists {
         eq(personalPlaylistBinding.memberId, detail.sourceMemberId ?? member.id)
       )).get();
       if (!personalBinding) return "stopped";
-      if (personalBinding.playlistId !== detail.sourcePlaylistId || personalBinding.generation !== detail.sourceBindingGeneration) {
+      if (
+        personalBinding.playlistId !== detail.sourcePlaylistId ||
+        personalBinding.generation !== detail.sourceBindingGeneration ||
+        personalBinding.accountId !== row.accountId
+      ) {
         return "stopped";
       }
       if (detail.sourceMemberId && detail.sourceMemberId !== member.id) {
@@ -1887,7 +1895,7 @@ export class PublicPlaylists {
     const cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
 
     try {
-      if (detail.step === "ready") {
+      if (detail.step === "ready" || detail.step === "verified") {
         if (!detail.sourcePlaylistId) {
           this.#status(row.id, "stopped");
           return;
@@ -1897,7 +1905,7 @@ export class PublicPlaylists {
         if (!identity.ok) { this.#readFailure(row, identity.error.code); return; }
         if (identity.data.accountId !== row.accountId) { this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH"); return; }
 
-        // 实时完整读取来源个人歌单并确认歌曲 ID 仍在；来源变化/读取失败停止，不凭旧快照放行
+        // 实时完整读取来源个人歌单并确认歌单身份及歌曲仍在；来源变化/读取失败停止，不凭旧快照放行
         const sourceResult = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.sourcePlaylistId });
         if (!sourceResult.ok) {
           if (sourceResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
@@ -1905,49 +1913,18 @@ export class PublicPlaylists {
             this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
             return;
           }
-          // 来源读取失败：停止并记录错误码，不混淆为公共写入错误
-          this.database.transaction(tx => {
-            tx.update(publicSongRequest).set({ step: "stopped" }).where(eq(publicSongRequest.operationId, row.id)).run();
-            tx.update(operation).set({
-              status: "stopped",
-              errorCode: sourceResult.error.code,
-              accountId: null,
-              authorizationId: null,
-              generation: null,
-              version: sql`${operation.version} + 1`,
-              updatedAt: this.now()
-            }).where(eq(operation.id, row.id)).run();
-            this.#bump(row.roomId);
-          });
-          const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
-          this.eventStream.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: 1 });
-          if (updatedRoom) {
-            this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
-          }
+          this.#status(row.id, "stopped", "SOURCE_PLAYLIST_UNAVAILABLE");
           return;
         }
 
         const sourceData = sourceResult.data;
-        if (sourceData.playlist.status !== 0 || !sourceData.songIds.includes(detail.songId)) {
-          // 来源变化或歌曲已被移除：停止操作
-          this.database.transaction(tx => {
-            tx.update(publicSongRequest).set({ step: "stopped" }).where(eq(publicSongRequest.operationId, row.id)).run();
-            tx.update(operation).set({
-              status: "stopped",
-              errorCode: null,
-              accountId: null,
-              authorizationId: null,
-              generation: null,
-              version: sql`${operation.version} + 1`,
-              updatedAt: this.now()
-            }).where(eq(operation.id, row.id)).run();
-            this.#bump(row.roomId);
-          });
-          const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
-          this.eventStream.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: 1 });
-          if (updatedRoom) {
-            this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
-          }
+        if (sourceData.playlist.id !== detail.sourcePlaylistId || sourceData.playlist.status !== 0) {
+          this.#status(row.id, "stopped", "SOURCE_PLAYLIST_UNAVAILABLE");
+          return;
+        }
+
+        if (!sourceData.songIds.includes(detail.songId)) {
+          this.#status(row.id, "stopped", "SOURCE_SONG_REMOVED");
           return;
         }
 
@@ -1964,18 +1941,9 @@ export class PublicPlaylists {
           return;
         }
 
-        // 公共尚无歌曲：更新 step 为 verified，重新排队进入 sending 阶段
-        this.database.transaction(tx => {
-          tx.update(publicSongRequest).set({ step: "verified" }).where(eq(publicSongRequest.operationId, row.id)).run();
-          tx.update(operation).set({ status: "queued", version: sql`${operation.version} + 1`, updatedAt: this.now() }).where(eq(operation.id, row.id)).run();
-          this.#bump(row.roomId);
-        });
-        const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
-        this.eventStream.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: 1 });
-        if (updatedRoom) {
-          this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
-        }
-        return;
+        // 公共尚无歌曲：更新 step 为 sending，立即在同一次执行中发送 trackAdd，杜绝 TOCTOU 竞态
+        this.database.update(publicSongRequest).set({ step: "sending" }).where(eq(publicSongRequest.operationId, row.id)).run();
+        detail.step = "sending";
       }
 
       if (detail.step === "sending") {
@@ -2071,6 +2039,11 @@ export class PublicPlaylists {
             userId: anonymousId,
             updatedAt: this.now()
           }).where(eq(operation.id, op.id)).run();
+          tx.update(publicSongRequest).set({
+            sourcePlaylistId: null,
+            sourceBindingGeneration: null,
+            sourceMemberId: null
+          }).where(eq(publicSongRequest.operationId, op.id)).run();
         }
       }
     }
@@ -2273,6 +2246,11 @@ export class PublicPlaylists {
             userId: anonymousId,
             updatedAt: this.now()
           }).where(eq(operation.id, op.id)).run();
+          tx.update(publicSongRequest).set({
+            sourcePlaylistId: null,
+            sourceBindingGeneration: null,
+            sourceMemberId: null
+          }).where(eq(publicSongRequest.operationId, op.id)).run();
         }
       }
     }

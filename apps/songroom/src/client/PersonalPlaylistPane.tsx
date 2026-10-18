@@ -1,15 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, ListMusic, RotateCw } from "lucide-react";
+import { AlertCircle, ListMusic, Plus, RotateCw } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   personalPlaylistView,
   type PersonalPlaylistTrack,
   type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
-import { errorMessage, errorMessageForCode, queryOptions, request } from "./room-http.js";
+import { songRequestResponse } from "../shared/public-playlist-contracts.js";
+import { errorMessage, errorMessageForCode, queryOptions, request, RoomRequestError } from "./room-http.js";
 import { QueryError } from "./RoomQueryError.js";
+import { getFriendlySongRequestErrorMessage } from "./song-request-messages.js";
+import { Toast, type ToastData } from "./Toast.js";
 
 function getRefreshErrorMessage(code: string): string {
   switch (code) {
@@ -66,7 +69,17 @@ const personalDisabledMessages: Record<NonNullable<PersonalPlaylistView["disable
   OPERATION_PENDING: "当前有正在处理的歌单创建操作，请稍候。"
 };
 
-function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]; active: boolean }) {
+function PersonalTrackList({
+  tracks,
+  active,
+  onRequestSong,
+  requestingSongId
+}: {
+  tracks: PersonalPlaylistTrack[];
+  active: boolean;
+  onRequestSong?: (track: PersonalPlaylistTrack) => void;
+  requestingSongId?: string | null;
+}) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
 
@@ -97,6 +110,7 @@ function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]
       <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
         <span className="tracks-header-col col-index">#</span>
         <span className="tracks-header-col col-title">歌曲与歌手</span>
+        {onRequestSong && <span className="tracks-header-col col-actions" style={{ textAlign: "right" }}>操作</span>}
       </div>
       {tracks.length === 0 ? (
         <div className="playlist-tracks-empty" role="status">
@@ -143,6 +157,21 @@ function PersonalTrackList({ tracks, active }: { tracks: PersonalPlaylistTrack[]
                     {track.album && <span className="track-album"> · {track.album}</span>}
                   </span>
                 </div>
+                {onRequestSong && (
+                  <div className="track-actions" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      className="secondary-button request-song-btn"
+                      disabled={Boolean(requestingSongId)}
+                      onClick={() => onRequestSong(track)}
+                      aria-label={`点播《${track.name}》到公共歌单`}
+                      title="点歌到公共歌单"
+                    >
+                      <Plus size={14} aria-hidden="true" />
+                      <span>{requestingSongId === track.songId ? "点歌中…" : "点歌"}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -165,6 +194,9 @@ export function PersonalPlaylistPane({
 }) {
   const queryClient = useQueryClient();
   const [createError, setCreateError] = useState("");
+  const [requestingSongId, setRequestingSongId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastData | null>(null);
+  const [requestError, setRequestError] = useState("");
 
   const query = useQuery({
     queryKey: ["room-personal-playlist", sessionId, roomId],
@@ -199,6 +231,45 @@ export function PersonalPlaylistPane({
     mutationFn: () => request(`/${roomId}/personal-playlist/refresh`, personalPlaylistView),
     onSuccess: data => {
       queryClient.setQueryData(["room-personal-playlist", sessionId, roomId], data);
+    }
+  });
+
+  const requestSongMutation = useMutation({
+    mutationFn: async (track: PersonalPlaylistTrack) => {
+      if (!query.data?.playlist?.id) return null;
+      setRequestError("");
+      setRequestingSongId(track.songId);
+      return request(`/${roomId}/song-requests`, songRequestResponse, undefined, {
+        idempotencyKey: uuidv7(),
+        sourcePlaylistId: query.data.playlist.id,
+        songId: track.songId,
+        name: track.name,
+        artists: track.artists,
+        album: track.album
+      });
+    },
+    onSuccess: (res, track) => {
+      setRequestingSongId(null);
+      if (!res) return;
+      if (res.operation.status === "succeeded") {
+        setToast({
+          id: uuidv7(),
+          message: `《${track.name}》已成功加入公共歌单并记录你的标签！`,
+          type: "success"
+        });
+      } else {
+        setToast({
+          id: uuidv7(),
+          message: `《${track.name}》已提交点歌，正在排队处理…`,
+          type: "info"
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
+    },
+    onError: failure => {
+      setRequestingSongId(null);
+      const code = failure instanceof RoomRequestError ? failure.code : null;
+      setRequestError(getFriendlySongRequestErrorMessage(code));
     }
   });
 
@@ -339,9 +410,22 @@ export function PersonalPlaylistPane({
             </span>
           </div>
         )}
+
+        {requestError && (
+          <div className="error-banner" role="alert">
+            <AlertCircle size={16} aria-hidden="true" />
+            <span>{requestError}</span>
+          </div>
+        )}
       </div>
 
-      <PersonalTrackList tracks={tracks} active={active} />
+      <PersonalTrackList
+        tracks={tracks}
+        active={active}
+        onRequestSong={track => requestSongMutation.mutate(track)}
+        requestingSongId={requestingSongId}
+      />
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
   );
 }

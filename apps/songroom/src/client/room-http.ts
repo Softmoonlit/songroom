@@ -45,7 +45,9 @@ export const errorMessages: Record<string, string> = {
   IDEMPOTENCY_CONFLICT: "此次操作内容已变化，请重新填写后提交。",
   IDEMPOTENCY_KEY_EXPIRED: "此次操作标识已过期，请重新填写后提交。",
   PERSONAL_PLAYLIST_NOT_FOUND: "尚未配置个人歌单，无法发起点歌。",
-  SOURCE_PLAYLIST_FORBIDDEN: "只能从自己的专用个人歌单发起点歌。"
+  SOURCE_PLAYLIST_FORBIDDEN: "只能从自己的专用个人歌单发起点歌。",
+  SOURCE_SONG_REMOVED: "该歌曲已从你的个人歌单中移除，无法发起点歌。",
+  SOURCE_PLAYLIST_UNAVAILABLE: "来源个人歌单暂时无法访问，请核对个人歌单状态。"
 };
 export class RoomRequestError extends Error {
   constructor(readonly code: string) {
