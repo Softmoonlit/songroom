@@ -5,7 +5,7 @@ import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
 import { and, eq } from "drizzle-orm";
-import { neteaseAuthorization, operation, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicSongRequest, requesterTag, room, roomMembership, user } from "../db/schema.js";
+import { neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicSongRequest, requesterTag, room, roomMembership, user } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
 import { UpstreamScheduler } from "./upstream-scheduling.js";
@@ -23,6 +23,43 @@ afterEach(async () => {
   }
 });
 
+function defaultSourceDetail(playlistId: string): AdapterResult<"playlistDetail"> {
+  return {
+    ok: true,
+    data: {
+      playlist: { id: playlistId, name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+      songIds: ["s-101", "s-202", "s-1", "s-2", "s-3", "s-owner", "s-half", "s-seam-1", "s-seam-2", "s-seam-3", "s-seam-4", "s-seam-5", "s-keep", "s-fail", "s-invalid", "s-unknown", "s-discrepancy", "s-check", "s-blocked", "s-new", "s-new-1", "s-auth", "s-malformed", "s-expired", "s-other"],
+      songs: [
+        { id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
+        { id: "s-202", name: "七里香", artists: ["周杰伦"], album: "七里香" },
+        { id: "s-1", name: "歌1", artists: ["歌手"], album: "专1" },
+        { id: "s-2", name: "歌2", artists: ["歌手"], album: "专2" },
+        { id: "s-3", name: "歌3", artists: ["歌手"], album: "专3" },
+        { id: "s-owner", name: "房主曲", artists: ["房主"], album: "房主专辑" },
+        { id: "s-half", name: "半完成曲", artists: ["歌手"], album: "专辑" },
+        { id: "s-seam-1", name: "接缝1", artists: ["歌手"], album: "专辑" },
+        { id: "s-seam-2", name: "接缝2", artists: ["歌手"], album: "专辑" },
+        { id: "s-seam-3", name: "接缝3", artists: ["歌手"], album: "专辑" },
+        { id: "s-seam-4", name: "接缝4", artists: ["歌手"], album: "专辑" },
+        { id: "s-seam-5", name: "接缝5", artists: ["歌手"], album: "专辑" },
+        { id: "s-keep", name: "保留曲", artists: ["歌手"], album: "专辑" },
+        { id: "s-fail", name: "失败歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-invalid", name: "非法歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-unknown", name: "未知歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-discrepancy", name: "矛盾歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-check", name: "补查歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-blocked", name: "阻塞歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-new", name: "新歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-new-1", name: "原提交者新歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-auth", name: "权限歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-malformed", name: "畸形歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-expired", name: "过期歌", artists: ["歌手"], album: "专辑" },
+        { id: "s-other", name: "他房歌", artists: ["歌手"], album: "专辑" }
+      ]
+    }
+  };
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "songroom-song-req-test-"));
   const dbPath = path.join(root, "songroom.sqlite");
@@ -35,6 +72,7 @@ function fixture() {
   const now = () => Date.now() + timeOffset;
   const scheduler = new UpstreamScheduler(database, now);
   const adapter = new ScriptedNeteaseAdapter();
+  adapter.identityAccount = "acc-owner";
   const eventStream = new EventStreamService();
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now);
   fixtures.push({ root, database, scheduler });
@@ -67,28 +105,61 @@ function fixture() {
     accountId: "acc-owner", playlistId: "pl-public", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now()
   }).run();
 
+  const roommate1Member = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "roommate1"))).get()!;
+  const roommate2Member = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "roommate2"))).get()!;
+  const ownerMember = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "owner"))).get()!;
+
+  database.insert(personalPlaylistBinding).values([
+    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate1Member.id, playlistId: "pl-roommate1", name: "songroom-测试宿舍-室友甲", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate2Member.id, playlistId: "pl-roommate2", name: "songroom-测试宿舍-室友乙", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, accountId: "acc-owner", memberId: ownerMember.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() }
+  ]).run();
+
+  database.insert(playlistSnapshot).values([
+    { accountId: "acc-owner", playlistId: "pl-roommate1", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() },
+    { accountId: "acc-owner", playlistId: "pl-roommate2", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() },
+    { accountId: "acc-owner", playlistId: "pl-owner", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() }
+  ]).run();
+
+  adapter.playlistDetail = input => {
+    if (input.playlistId.startsWith("pl-roommate") || input.playlistId.startsWith("pl-owner") || input.playlistId.startsWith("pl-rm")) {
+      return defaultSourceDetail(input.playlistId);
+    }
+    return {
+      ok: true,
+      data: {
+        playlist: { id: input.playlistId, name: "公共歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+        songIds: [],
+        songs: []
+      }
+    };
+  };
+
   return { root, database, scheduler, adapter, playlists, roomId, now, advanceTime: (ms: number) => { timeOffset += ms; } };
 }
 
 it("公共已有歌曲时不调用增加接口，只写入去重标签；不同成员分别留标签，重复点歌不累计", async () => {
   const f = fixture();
+  f.playlists.start();
   // 歌单已有《晴天》
   f.database.insert(playlistTrack).values({
     accountId: "acc-owner", playlistId: "pl-public", position: 0, songId: "s-101", name: "晴天", artists: JSON.stringify(["周杰伦"]), album: "叶惠美"
   }).run();
 
-  const inputsBefore = f.adapter.inputs.length;
-
   // 室友甲点歌
   const res1 = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
   });
   expect(res1.replay).toBe(false);
-  expect(res1.operation.status).toBe("succeeded");
-  expect(res1.operation.songConfirmed).toBe(true);
-  expect(res1.operation.tagConfirmed).toBe(true);
+  expect(res1.operation.status).toBe("queued");
+  await f.scheduler.settle();
+
+  const op1 = f.playlists.readOperation("roommate1", f.roomId, res1.operation.id);
+  expect(op1.status).toBe("succeeded");
+  expect(op1.songConfirmed).toBe(true);
+  expect(op1.tagConfirmed).toBe(true);
   // 不调用上游增加接口！
-  expect(f.adapter.inputs.length).toBe(inputsBefore);
+  expect(f.adapter.inputs.filter(i => i.operation === "trackAdd")).toHaveLength(0);
 
   // 查看快照展示
   let view = f.playlists.read("roommate1", f.roomId);
@@ -96,17 +167,21 @@ it("公共已有歌曲时不调用增加接口，只写入去重标签；不同�
 
   // 室友甲重复点同一首歌：幂等成功，不累计次数
   const res1Again = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
   });
-  expect(res1Again.operation.status).toBe("succeeded");
+  await f.scheduler.settle();
+  const op1Again = f.playlists.readOperation("roommate1", f.roomId, res1Again.operation.id);
+  expect(op1Again.status).toBe("succeeded");
   view = f.playlists.read("roommate1", f.roomId);
   expect(view.snapshot?.tracks[0].requesters).toEqual(["室友甲"]);
 
   // 室友乙点同一首歌：分别留标签
   const res2 = f.playlists.requestSong("roommate2", f.roomId, {
-    idempotencyKey: v7(), songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate2", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
   });
-  expect(res2.operation.status).toBe("succeeded");
+  await f.scheduler.settle();
+  const op2 = f.playlists.readOperation("roommate2", f.roomId, res2.operation.id);
+  expect(op2.status).toBe("succeeded");
   view = f.playlists.read("roommate1", f.roomId);
   expect(view.snapshot?.tracks[0].requesters).toEqual(["室友甲", "室友乙"]);
 });
@@ -126,6 +201,9 @@ it("公共尚无歌曲时发送一次增加请求并执行写后读回，确认�
       return { ok: true, data: { acknowledged: true } } as any;
     }
     if (input.operation === "playlistDetail") {
+      if (input.playlistId !== "pl-public") {
+        return defaultSourceDetail(input.playlistId) as any;
+      }
       return {
         ok: true,
         data: {
@@ -140,7 +218,7 @@ it("公共尚无歌曲时发送一次增加请求并执行写后读回，确认�
 
   const idempotencyKey = v7();
   const res = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey, songId: "s-202", name: "七里香", artists: ["周杰伦"], album: "七里香"
+    idempotencyKey, sourcePlaylistId: "pl-roommate1", songId: "s-202", name: "七里香", artists: ["周杰伦"], album: "七里香"
   });
   expect(res.replay).toBe(false);
   expect(res.operation.status).toBe("queued");
@@ -180,25 +258,25 @@ it("同一成员在同一房间已有未完成写操作时拒绝第二项不同�
   const key1 = v7();
   // 第一项点歌入队
   const op1 = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: key1, songId: "s-1", name: "歌1", artists: ["歌手"], album: "专1"
+    idempotencyKey: key1, sourcePlaylistId: "pl-roommate1", songId: "s-1", name: "歌1", artists: ["歌手"], album: "专1"
   });
   expect(op1.operation.status).toBe("queued");
 
   // 同一成员尝试提交第二项不同点歌：被拒绝
   expect(() => f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-2", name: "歌2", artists: ["歌手"], album: "专2"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-2", name: "歌2", artists: ["歌手"], album: "专2"
   })).toThrowError("CONCURRENT_OPERATION_LIMIT_EXCEEDED");
 
   // 相同幂等键相同内容：返回原操作
   const replay = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: key1, songId: "s-1", name: "歌1", artists: ["歌手"], album: "专1"
+    idempotencyKey: key1, sourcePlaylistId: "pl-roommate1", songId: "s-1", name: "歌1", artists: ["歌手"], album: "专1"
   });
   expect(replay.replay).toBe(true);
   expect(replay.operation.id).toBe(op1.operation.id);
 
   // 另一成员可正常提交
   const op2 = f.playlists.requestSong("roommate2", f.roomId, {
-    idempotencyKey: v7(), songId: "s-3", name: "歌3", artists: ["歌手"], album: "专3"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate2", songId: "s-3", name: "歌3", artists: ["歌手"], album: "专3"
   });
   expect(op2.operation.status).toBe("queued");
 });
@@ -256,12 +334,13 @@ it("歌曲已确认但标签未完成时，恢复只补标签，绝不再次调�
   }).run();
 
   const opId = v7();
+  const rm1 = f.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, f.roomId), eq(roomMembership.userId, "roommate1"))).get()!;
   // 插入一个处于 songConfirmed=true, tagConfirmed=false 的操作
   f.database.insert(operation).values({
     id: opId, kind: "requestPublicSong", userId: "roommate1", roomId: f.roomId, accountId: "acc-owner", authorizationId: f.database.select().from(neteaseAuthorization).get()!.id, generation: 1, status: "queued", createdAt: f.now(), updatedAt: f.now()
   }).run();
   f.database.insert(publicSongRequest).values({
-    operationId: opId, songId: "s-half", name: "半完成曲", artists: JSON.stringify(["歌手"]), album: "专辑", step: "tagging", songConfirmed: true, tagConfirmed: false,
+    operationId: opId, sourcePlaylistId: "pl-roommate1", sourceBindingGeneration: 1, sourceMemberId: rm1.id, songId: "s-half", name: "半完成曲", artists: JSON.stringify(["歌手"]), album: "专辑", step: "tagging", songConfirmed: true, tagConfirmed: false,
     playlistId: "pl-public", bindingGeneration: 1
   }).run();
 
@@ -293,11 +372,12 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
   {
     const f = fixture();
     const opId = v7();
+    const rm1 = f.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, f.roomId), eq(roomMembership.userId, "roommate1"))).get()!;
     f.database.insert(operation).values({
       id: opId, kind: "requestPublicSong", userId: "roommate1", roomId: f.roomId, accountId: "acc-owner", authorizationId: f.database.select().from(neteaseAuthorization).get()!.id, generation: 1, status: "processing", createdAt: f.now(), updatedAt: f.now()
     }).run();
     f.database.insert(publicSongRequest).values({
-      operationId: opId, songId: "s-seam-1", name: "接缝1", artists: JSON.stringify(["歌手"]), album: "专辑", step: "verified", songConfirmed: false, tagConfirmed: false,
+      operationId: opId, sourcePlaylistId: "pl-roommate1", sourceBindingGeneration: 1, sourceMemberId: rm1.id, songId: "s-seam-1", name: "接缝1", artists: JSON.stringify(["歌手"]), album: "专辑", step: "verified", songConfirmed: false, tagConfirmed: false,
       playlistId: "pl-public", bindingGeneration: 1
     }).run();
 
@@ -309,6 +389,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
         return { ok: true, data: { acknowledged: true } } as any;
       }
       if (input.operation === "playlistDetail") {
+        if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
         return {
           ok: true,
           data: {
@@ -351,6 +432,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
         return { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } } as any;
       }
       if (input.operation === "playlistDetail") {
+        if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
         return {
           ok: true,
           data: {
@@ -365,7 +447,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
 
     f.playlists.start();
     const req = f.playlists.requestSong("roommate1", f.roomId, {
-      idempotencyKey: v7(), songId: "s-seam-2", name: "接缝2", artists: ["歌手"], album: "专辑"
+      idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-seam-2", name: "接缝2", artists: ["歌手"], album: "专辑"
     });
 
     f.advanceTime(1500);
@@ -411,6 +493,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
         return { ok: true, data: { acknowledged: true } } as any;
       }
       if (input.operation === "playlistDetail") {
+        if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
         if (shouldCrashOnDetail) {
           shouldCrashOnDetail = false;
           throw new Error("Simulated crash right before playlistDetail parsing");
@@ -429,7 +512,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
 
     f.playlists.start();
     const req = f.playlists.requestSong("roommate1", f.roomId, {
-      idempotencyKey: v7(), songId: "s-seam-3", name: "接缝3", artists: ["歌手"], album: "专辑"
+      idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-seam-3", name: "接缝3", artists: ["歌手"], album: "专辑"
     });
 
     f.advanceTime(1500);
@@ -472,6 +555,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
         return { ok: true, data: { acknowledged: true } } as any;
       }
       if (input.operation === "playlistDetail") {
+        if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
         detailRound++;
         if (detailRound === 1) {
           // 首次读回返回 status=10（异常状态）
@@ -498,7 +582,7 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
 
     f.playlists.start();
     const req = f.playlists.requestSong("roommate1", f.roomId, {
-      idempotencyKey: v7(), songId: "s-seam-4", name: "接缝4", artists: ["歌手"], album: "专辑"
+      idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-seam-4", name: "接缝4", artists: ["歌手"], album: "专辑"
     });
 
     f.advanceTime(1500);
@@ -531,11 +615,12 @@ it("5 个确定性终结接缝恢复后，至多调用一次 trackAdd，绝不�
   {
     const f = fixture();
     const opId = v7();
+    const rm1 = f.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, f.roomId), eq(roomMembership.userId, "roommate1"))).get()!;
     f.database.insert(operation).values({
       id: opId, kind: "requestPublicSong", userId: "roommate1", roomId: f.roomId, accountId: "acc-owner", authorizationId: f.database.select().from(neteaseAuthorization).get()!.id, generation: 1, status: "queued", createdAt: f.now(), updatedAt: f.now()
     }).run();
     f.database.insert(publicSongRequest).values({
-      operationId: opId, songId: "s-seam-5", name: "接缝5", artists: JSON.stringify(["歌手"]), album: "专辑", step: "tagging", songConfirmed: true, tagConfirmed: false,
+      operationId: opId, sourcePlaylistId: "pl-roommate1", sourceBindingGeneration: 1, sourceMemberId: rm1.id, songId: "s-seam-5", name: "接缝5", artists: JSON.stringify(["歌手"]), album: "专辑", step: "tagging", songConfirmed: true, tagConfirmed: false,
       playlistId: "pl-public", bindingGeneration: 1
     }).run();
 
@@ -565,11 +650,14 @@ it("错误分类：明确拒绝立即终结为失败，不进入补查；未知�
     if (input.operation === "trackAdd") {
       return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed" } } as any;
     }
+    if (input.operation === "playlistDetail") {
+      return defaultSourceDetail(input.playlistId) as any;
+    }
     return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
   }) as any;
 
   const resFail = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-fail", name: "失败歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-fail", name: "失败歌", artists: ["歌手"], album: "专辑"
   });
 
   f.advanceTime(1500);
@@ -593,11 +681,14 @@ it("错误分类：明确拒绝立即终结为失败，不进入补查；未知�
     if (input.operation === "trackAdd") {
       return { ok: false, error: { code: "INVALID_INPUT", outcome: "failed" } } as any;
     }
+    if (input.operation === "playlistDetail") {
+      return defaultSourceDetail(input.playlistId) as any;
+    }
     return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
   }) as any;
 
   const resInvalid = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-invalid", name: "非法歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-invalid", name: "非法歌", artists: ["歌手"], album: "专辑"
   });
 
   f.advanceTime(1500);
@@ -618,11 +709,14 @@ it("错误分类：明确拒绝立即终结为失败，不进入补查；未知�
     if (input.operation === "trackAdd") {
       return { ok: false, error: { code: "DEADLINE", outcome: "unknown" } } as any;
     }
+    if (input.operation === "playlistDetail") {
+      return defaultSourceDetail(input.playlistId) as any;
+    }
     return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
   }) as any;
 
   const resUnknown = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-unknown", name: "未知歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-unknown", name: "未知歌", artists: ["歌手"], album: "专辑"
   });
 
   f.advanceTime(1500);
@@ -642,6 +736,7 @@ it("错误分类：明确拒绝立即终结为失败，不进入补查；未知�
     if (input.operation === "identity") return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
     if (input.operation === "trackAdd") return { ok: true, data: { acknowledged: true } } as any;
     if (input.operation === "playlistDetail") {
+      if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
       return {
         ok: true,
         data: {
@@ -658,7 +753,7 @@ it("错误分类：明确拒绝立即终结为失败，不进入补查；未知�
   f.database.delete(operation).where(eq(operation.id, resUnknown.operation.id)).run();
 
   const resDiscrepancy = f.playlists.requestSong("roommate2", f.roomId, {
-    idempotencyKey: v7(), songId: "s-discrepancy", name: "矛盾歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate2", songId: "s-discrepancy", name: "矛盾歌", artists: ["歌手"], album: "专辑"
   });
 
   f.advanceTime(1500);
@@ -688,6 +783,7 @@ it("3 轮只读补查机制：约 5s, 30s, 2min 推进，若未证实则停止�
       return { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } } as any;
     }
     if (input.operation === "playlistDetail") {
+      if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
       detailCalls++;
       return {
         ok: true,
@@ -702,7 +798,7 @@ it("3 轮只读补查机制：约 5s, 30s, 2min 推进，若未证实则停止�
   }) as any;
 
   const res = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-check", name: "补查歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-check", name: "补查歌", artists: ["歌手"], album: "专辑"
   });
 
   // 执行写入，遭遇 NETWORK_ERROR
@@ -768,11 +864,12 @@ it("目标冲突隔离：awaitingConfirmation 仅阻塞同一规范化歌单的�
   const f = fixture();
   // 在 f.roomId 上插入一个处于 awaitingConfirmation 的点歌操作
   const opId = v7();
+  const rm1 = f.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, f.roomId), eq(roomMembership.userId, "roommate1"))).get()!;
   f.database.insert(operation).values({
     id: opId, kind: "requestPublicSong", userId: "roommate1", roomId: f.roomId, accountId: "acc-owner", authorizationId: f.database.select().from(neteaseAuthorization).get()!.id, generation: 1, status: "awaitingConfirmation", createdAt: f.now(), updatedAt: f.now()
   }).run();
   f.database.insert(publicSongRequest).values({
-    operationId: opId, songId: "s-blocked", name: "阻塞歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "unknown", songConfirmed: false, tagConfirmed: false,
+    operationId: opId, sourcePlaylistId: "pl-roommate1", sourceBindingGeneration: 1, sourceMemberId: rm1.id, songId: "s-blocked", name: "阻塞歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "unknown", songConfirmed: false, tagConfirmed: false,
     playlistId: "pl-public", bindingGeneration: 1, checkRound: 0, nextCheckAt: f.now() + 5000
   }).run();
 
@@ -784,12 +881,12 @@ it("目标冲突隔离：awaitingConfirmation 仅阻塞同一规范化歌单的�
 
   // 原提交者（室友甲）使用新键尝试点歌：也被 TARGET_BLOCKED 409 拒绝（目标歌单阻塞优先于成员单次操作限制）
   expect(() => f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-new-1", name: "原提交者新歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-new-1", name: "原提交者新歌", artists: ["歌手"], album: "专辑"
   })).toThrowError("TARGET_BLOCKED");
 
   // 室友乙尝试点歌：同样被 TARGET_BLOCKED 409 拒绝
   expect(() => f.playlists.requestSong("roommate2", f.roomId, {
-    idempotencyKey: v7(), songId: "s-new", name: "新歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate2", songId: "s-new", name: "新歌", artists: ["歌手"], album: "专辑"
   })).toThrowError("TARGET_BLOCKED");
 
   // 创建第二个房间，绑定不同的歌单目标 pl-other
@@ -806,13 +903,30 @@ it("目标冲突隔离：awaitingConfirmation 仅阻塞同一规范化歌单的�
     accountId: "acc-owner", playlistId: "pl-other", snapshotVersion: 1, syncedAt: f.now(), createdAt: f.now(), updatedAt: f.now()
   }).run();
 
+  const rm2Other = f.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, room2Id), eq(roomMembership.userId, "roommate2"))).get()!;
+  f.database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId: room2Id,
+    accountId: "acc-owner",
+    memberId: rm2Other.id,
+    playlistId: "pl-rm2-other",
+    name: "songroom-二号宿舍-室友乙",
+    creationOperationId: v7(),
+    generation: 1,
+    createdAt: f.now(),
+    updatedAt: f.now()
+  }).run();
+  f.database.insert(playlistSnapshot).values({
+    accountId: "acc-owner", playlistId: "pl-rm2-other", snapshotVersion: 1, syncedAt: f.now(), createdAt: f.now(), updatedAt: f.now()
+  }).run();
+
   // 二号房间未受阻塞，可以正常点歌！
   const view2 = f.playlists.read("roommate2", room2Id);
   expect(view2.disabledReason).toBe("PUBLIC_PLAYLIST_EXISTS");
   expect(view2.allowedActions).toContain("requestSong");
 
   const res2 = f.playlists.requestSong("roommate2", room2Id, {
-    idempotencyKey: v7(), songId: "s-other", name: "他房歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-rm2-other", songId: "s-other", name: "他房歌", artists: ["歌手"], album: "专辑"
   });
   expect(res2.operation.status).toBe("queued");
 });
@@ -822,37 +936,38 @@ it("幂等冲突与操作键校验：相同 key 相同内容重放，不同内�
   const idempotencyKey = v7();
 
   const res1 = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey, songId: "s-1", name: "歌1", artists: ["歌手1"], album: "专辑1"
+    idempotencyKey, sourcePlaylistId: "pl-roommate1", songId: "s-1", name: "歌1", artists: ["歌手1"], album: "专辑1"
   });
   expect(res1.replay).toBe(false);
 
   // 相同幂等键相同内容：重放
   const resReplay = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey, songId: "s-1", name: "歌1", artists: ["歌手1"], album: "专辑1"
+    idempotencyKey, sourcePlaylistId: "pl-roommate1", songId: "s-1", name: "歌1", artists: ["歌手1"], album: "专辑1"
   });
   expect(resReplay.replay).toBe(true);
   expect(resReplay.operation.id).toBe(res1.operation.id);
 
   // 相同幂等键不同内容（不同歌名）：409 IDEMPOTENCY_CONFLICT
   expect(() => f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey, songId: "s-1", name: "不同歌名", artists: ["歌手1"], album: "专辑1"
+    idempotencyKey, sourcePlaylistId: "pl-roommate1", songId: "s-1", name: "不同歌名", artists: ["歌手1"], album: "专辑1"
   })).toThrowError("IDEMPOTENCY_CONFLICT");
 
   // 过期幂等键（超过 24 小时前创建的 UUIDv7）：400 IDEMPOTENCY_KEY_EXPIRED
   const expiredKey = v7({ msecs: f.now() - 25 * 3600 * 1000 });
   expect(() => f.playlists.requestSong("roommate2", f.roomId, {
-    idempotencyKey: expiredKey, songId: "s-expired", name: "过期歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: expiredKey, sourcePlaylistId: "pl-roommate2", songId: "s-expired", name: "过期歌", artists: ["歌手"], album: "专辑"
   })).toThrowError("IDEMPOTENCY_KEY_EXPIRED");
 });
 
 it("标签补记隔离与当前条件重新校验：成员退出或歌单解绑后停止并不补记标签", async () => {
   const f = fixture();
   const opId = v7();
+  const rm1 = f.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, f.roomId), eq(roomMembership.userId, "roommate1"))).get()!;
   f.database.insert(operation).values({
     id: opId, kind: "requestPublicSong", userId: "roommate1", roomId: f.roomId, accountId: "acc-owner", authorizationId: f.database.select().from(neteaseAuthorization).get()!.id, generation: 1, status: "queued", createdAt: f.now(), updatedAt: f.now()
   }).run();
   f.database.insert(publicSongRequest).values({
-    operationId: opId, songId: "s-tag-check", name: "标签校验歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "tagging", songConfirmed: true, tagConfirmed: false,
+    operationId: opId, sourcePlaylistId: "pl-roommate1", sourceBindingGeneration: 1, sourceMemberId: rm1.id, songId: "s-tag-check", name: "标签校验歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "tagging", songConfirmed: true, tagConfirmed: false,
     playlistId: "pl-public", bindingGeneration: 1
   }).run();
 
@@ -872,7 +987,7 @@ it("标签补记隔离与当前条件重新校验：成员退出或歌单解绑�
 it("权限控制：撤销成员资格或非提交者无法读取操作详情", async () => {
   const f = fixture();
   const res = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-auth", name: "权限歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-auth", name: "权限歌", artists: ["歌手"], album: "专辑"
   });
 
   // 提交者本人可以读取
@@ -901,6 +1016,7 @@ it("读回快照数据结构校验失败（PARSE_ERROR）时，绝不误标成�
       return { ok: true, data: { acknowledged: true } } as any;
     }
     if (input.operation === "playlistDetail") {
+      if (input.playlistId !== "pl-public") return defaultSourceDetail(input.playlistId) as any;
       // 模拟上游返回畸形数据（songIds 包含该歌，但 songs 内部字段为空或与 songIds 不一致，被 commitSnapshot 校验拦截为 PARSE_ERROR）
       return {
         ok: true,
@@ -916,7 +1032,7 @@ it("读回快照数据结构校验失败（PARSE_ERROR）时，绝不误标成�
 
   f.playlists.start();
   const req = f.playlists.requestSong("roommate1", f.roomId, {
-    idempotencyKey: v7(), songId: "s-malformed", name: "畸形歌", artists: ["歌手"], album: "专辑"
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-malformed", name: "畸形歌", artists: ["歌手"], album: "专辑"
   });
 
   f.advanceTime(1500);
@@ -932,5 +1048,101 @@ it("读回快照数据结构校验失败（PARSE_ERROR）时，绝不误标成�
   expect(op.status).toBe("awaitingConfirmation");
   expect(op.songConfirmed).toBe(false);
   expect(op.tagConfirmed).toBe(false);
+  f.playlists.stop();
+});
+
+it("个人来源校验：未配置个人歌单拒绝 409 PERSONAL_PLAYLIST_NOT_FOUND", () => {
+  const f = fixture();
+  // 删除室友甲的个人歌单绑定
+  f.database.delete(personalPlaylistBinding).where(and(eq(personalPlaylistBinding.roomId, f.roomId), eq(personalPlaylistBinding.playlistId, "pl-roommate1"))).run();
+
+  expect(() => f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  })).toThrowError(expect.objectContaining({ status: 409, code: "PERSONAL_PLAYLIST_NOT_FOUND" }));
+});
+
+it("个人来源校验：冒用他人专用个人歌单拒绝 403 SOURCE_PLAYLIST_FORBIDDEN", () => {
+  const f = fixture();
+  // 室友甲试图使用室友乙的歌单 ID 点歌
+  expect(() => f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate2", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  })).toThrowError(expect.objectContaining({ status: 403, code: "SOURCE_PLAYLIST_FORBIDDEN" }));
+});
+
+it("调度阶段实时核验：来源歌单读取失败时停止，并记录错误码，不混淆为公共写入错误且不调用 trackAdd", async () => {
+  const f = fixture();
+  f.playlists.start();
+
+  let trackAddCalled = false;
+  f.adapter.call = (async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    if (input.operation === "identity") return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
+    if (input.operation === "trackAdd") {
+      trackAddCalled = true;
+      return { ok: true, data: { acknowledged: true } } as any;
+    }
+    if (input.operation === "playlistDetail") {
+      if (input.playlistId === "pl-roommate1") {
+        return { ok: false, error: { code: "NETWORK_ERROR", outcome: "failed" } } as any;
+      }
+      return defaultSourceDetail(input.playlistId) as any;
+    }
+    return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
+  }) as any;
+
+  const res = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+
+  f.advanceTime(1500);
+  f.scheduler.kick();
+  await f.scheduler.settle();
+
+  expect(trackAddCalled).toBe(false);
+  const op = f.playlists.readOperation("roommate1", f.roomId, res.operation.id);
+  expect(op.status).toBe("stopped");
+  expect(op.step).toBe("stopped");
+  expect(op.errorCode).toBe("NETWORK_ERROR");
+  f.playlists.stop();
+});
+
+it("调度阶段实时核验：来源歌单中歌曲已被移除时停止操作，不凭旧快照放行且不调用 trackAdd", async () => {
+  const f = fixture();
+  f.playlists.start();
+
+  let trackAddCalled = false;
+  f.adapter.call = (async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    if (input.operation === "identity") return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
+    if (input.operation === "trackAdd") {
+      trackAddCalled = true;
+      return { ok: true, data: { acknowledged: true } } as any;
+    }
+    if (input.operation === "playlistDetail") {
+      if (input.playlistId === "pl-roommate1") {
+        return {
+          ok: true,
+          data: {
+            playlist: { id: "pl-roommate1", name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            songIds: ["s-other-song"],
+            songs: [{ id: "s-other-song", name: "其他歌", artists: ["歌手"], album: "专辑" }]
+          }
+        } as any;
+      }
+      return defaultSourceDetail(input.playlistId) as any;
+    }
+    return { ok: false, error: { code: "MODULE_ERROR", outcome: "failed" } };
+  }) as any;
+
+  const res = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+
+  f.advanceTime(1500);
+  f.scheduler.kick();
+  await f.scheduler.settle();
+
+  expect(trackAddCalled).toBe(false);
+  const op = f.playlists.readOperation("roommate1", f.roomId, res.operation.id);
+  expect(op.status).toBe("stopped");
+  expect(op.step).toBe("stopped");
   f.playlists.stop();
 });

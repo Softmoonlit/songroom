@@ -352,6 +352,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       const key = uuidv7();
       return request(`/${roomId}/song-requests`, songRequestResponse, undefined, {
         idempotencyKey: key,
+        sourcePlaylistId: "retired-in-issue-03",
         songId: candidate.id,
         name: candidate.name,
         artists: candidate.artists,

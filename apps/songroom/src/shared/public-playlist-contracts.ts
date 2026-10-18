@@ -58,6 +58,7 @@ export type PublicPlaylistCreateCommand = z.infer<typeof publicPlaylistCreateCom
 
 export const publicSongRequestCommand = z.strictObject({
   idempotencyKey: uuidv7,
+  sourcePlaylistId: z.string().min(1),
   songId: z.string().min(1),
   name: z.string().min(1),
   artists: z.array(z.string()),
@@ -68,6 +69,7 @@ export type PublicSongRequestCommand = z.infer<typeof publicSongRequestCommand>;
 export const songRequestOperationView = z.strictObject({
   id: uuidv7,
   roomId: uuidv7,
+  sourcePlaylistId: z.string().min(1).nullable().optional(),
   songId: z.string().min(1),
   name: z.string().min(1),
   artists: z.array(z.string()),

@@ -43,7 +43,9 @@ export const errorMessages: Record<string, string> = {
   MEMBER_NOT_FOUND: "成员已不在房间中，请核对最新成员列表。",
   INVALID_INPUT: "请输入有效的房间名称和昵称。",
   IDEMPOTENCY_CONFLICT: "此次操作内容已变化，请重新填写后提交。",
-  IDEMPOTENCY_KEY_EXPIRED: "此次操作标识已过期，请重新填写后提交。"
+  IDEMPOTENCY_KEY_EXPIRED: "此次操作标识已过期，请重新填写后提交。",
+  PERSONAL_PLAYLIST_NOT_FOUND: "尚未配置个人歌单，无法发起点歌。",
+  SOURCE_PLAYLIST_FORBIDDEN: "只能从自己的专用个人歌单发起点歌。"
 };
 export class RoomRequestError extends Error {
   constructor(readonly code: string) {

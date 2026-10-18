@@ -6,7 +6,7 @@ import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase } from "../db/database.js";
 import { eq, and } from "drizzle-orm";
-import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, playlistTrack, playlistSnapshot, requesterTag, roomInvite, operation, publicSongRequest } from "../db/schema.js";
+import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, playlistTrack, playlistSnapshot, requesterTag, roomInvite, operation, publicSongRequest, personalPlaylistBinding } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
@@ -108,6 +108,19 @@ async function fixture() {
     { roomId, bindingGeneration: 1, songId: "song-1", memberId: rm1MemberId, createdAt: Date.now() },
     { roomId, bindingGeneration: 1, songId: "song-1", memberId: rm2MemberId, createdAt: Date.now() }
   ]).run();
+
+  app.database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: rm1MemberId,
+    accountId: "acc-owner",
+    playlistId: "pl-rm1",
+    name: "songroom-测试宿舍-室友甲",
+    creationOperationId: v7(),
+    generation: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
 
   return { app, adapter, owner, roommate1, roommate2, outsider, roomId, ownerMemberId, rm1MemberId, rm2MemberId, config };
 }
@@ -311,12 +324,23 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
   const originalCall = adapter.call.bind(adapter);
   adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
     dispatchedOps.push(input.operation);
+    if (input.operation === "playlistDetail" && input.playlistId === "pl-rm1") {
+      return {
+        ok: true,
+        data: {
+          playlist: { id: "pl-rm1", name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+          songIds: ["new-song-99"],
+          songs: [{ id: "new-song-99", name: "稻香", artists: ["周杰伦"], album: "魔杰座" }]
+        }
+      } as any;
+    }
     return originalCall(input);
   };
 
   // 提交一个点歌操作
   const songReqRes = await request(app, `/api/rooms/${roomId}/song-requests`, roommate1.cookie, {
     idempotencyKey: v7(),
+    sourcePlaylistId: "pl-rm1",
     songId: "new-song-99",
     name: "稻香",
     artists: ["周杰伦"],

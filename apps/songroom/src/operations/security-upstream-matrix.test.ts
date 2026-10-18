@@ -9,6 +9,7 @@ import {
   joinApplication,
   neteaseAuthorization,
   operation,
+  personalPlaylistBinding,
   playlistSnapshot,
   playlistTrack,
   publicPlaylistBinding,
@@ -97,6 +98,44 @@ function fixture() {
     accountId: "acc-owner", playlistId: "pl-public", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now()
   }).run();
 
+  const rm1Member = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "roommate1"))).get()!;
+  const rm2Member = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "roommate2"))).get()!;
+
+  database.insert(personalPlaylistBinding).values([
+    { id: v7(), roomId, memberId: rm1Member.id, accountId: "acc-owner", playlistId: "pl-rm1", name: "室友1歌单", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, memberId: rm2Member.id, accountId: "acc-owner", playlistId: "pl-rm2", name: "室友2歌单", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() }
+  ]).run();
+
+  adapter.playlistDetail = async (input) => {
+    if (input.playlistId === "pl-rm1" || input.playlistId === "pl-rm2") {
+      return {
+        ok: true,
+        data: {
+          playlist: { id: input.playlistId, name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+          songIds: ["song-rl", "song-perm", "song-auth", "song-net", "song-mod", "song-revoked-auth", "song-removed-user", "song-late-room"],
+          songs: [
+            { id: "song-rl", name: "风控测试歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-perm", name: "权限测试歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-auth", name: "授权测试歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-net", name: "网络测试歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-mod", name: "模块测试歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-revoked-auth", name: "撤权歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-removed-user", name: "移除测试歌曲", artists: ["歌手"], album: "专辑" },
+            { id: "song-late-room", name: "迟到删房歌曲", artists: ["歌手"], album: "专辑" }
+          ]
+        }
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        playlist: { id: input.playlistId, name: "公共歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+        songIds: [],
+        songs: []
+      }
+    };
+  };
+
   return {
     root, database, scheduler, adapter, vault, playlists, invites, roomsService, abnormalService, roomId, authorizationId, now,
     advanceTime: (ms: number) => { timeOffset += ms; }
@@ -116,6 +155,7 @@ describe("上游异常分类与隔离语义矩阵 (Checklist Item 11)", () => {
 
     const rateOp = playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-rl",
       name: "风控测试歌曲",
       artists: ["歌手"],
@@ -145,6 +185,7 @@ describe("上游异常分类与隔离语义矩阵 (Checklist Item 11)", () => {
 
     const permOp = playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-perm",
       name: "权限测试歌曲",
       artists: ["歌手"],
@@ -172,6 +213,7 @@ describe("上游异常分类与隔离语义矩阵 (Checklist Item 11)", () => {
 
     const authOp = playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-auth",
       name: "授权测试歌曲",
       artists: ["歌手"],
@@ -198,6 +240,7 @@ describe("上游异常分类与隔离语义矩阵 (Checklist Item 11)", () => {
 
     const netOp = playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-net",
       name: "网络测试歌曲",
       artists: ["歌手"],
@@ -223,6 +266,7 @@ describe("上游异常分类与隔离语义矩阵 (Checklist Item 11)", () => {
 
     const modOp = playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-mod",
       name: "模块测试歌曲",
       artists: ["歌手"],
@@ -271,6 +315,7 @@ describe("并发竞态矩阵 (Checklist Item 12)", () => {
     // 1. 室友甲提交点歌（尚未执行上游写）
     const songOp = playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-revoked-auth",
       name: "撤权歌曲",
       artists: ["歌手"],
@@ -294,18 +339,31 @@ describe("并发竞态矩阵 (Checklist Item 12)", () => {
 
     // 模拟网易云写入成功且读回有该歌曲
     adapter.trackAdd = async () => ({ ok: true, data: { acknowledged: true } });
-    adapter.playlistDetail = async () => ({
-      ok: true,
-      data: {
-        playlist: { id: "pl-public", name: "公共歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
-        songIds: ["song-removed-user"],
-        songs: [{ id: "song-removed-user", name: "移除测试歌曲", artists: ["歌手"], album: "专辑" }]
+    adapter.playlistDetail = async (input) => {
+      if (input.playlistId === "pl-rm2") {
+        return {
+          ok: true,
+          data: {
+            playlist: { id: "pl-rm2", name: "室友2歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            songIds: ["song-removed-user"],
+            songs: [{ id: "song-removed-user", name: "移除测试歌曲", artists: ["歌手"], album: "专辑" }]
+          }
+        };
       }
-    });
+      return {
+        ok: true,
+        data: {
+          playlist: { id: "pl-public", name: "公共歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+          songIds: ["song-removed-user"],
+          songs: [{ id: "song-removed-user", name: "移除测试歌曲", artists: ["歌手"], album: "专辑" }]
+        }
+      };
+    };
 
     // 室友乙提交点歌
     const songOp = playlists.requestSong("roommate2", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm2",
       songId: "song-removed-user",
       name: "移除测试歌曲",
       artists: ["歌手"],
@@ -406,6 +464,7 @@ describe("并发竞态矩阵 (Checklist Item 12)", () => {
     // 提交点歌
     playlists.requestSong("roommate1", roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "pl-rm1",
       songId: "song-late-room",
       name: "迟到删房歌曲",
       artists: ["歌手"],

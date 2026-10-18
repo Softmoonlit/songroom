@@ -10,6 +10,7 @@ import {
   commandReceipt,
   neteaseAuthorization,
   operation,
+  personalPlaylistBinding,
   playlistSnapshot,
   playlistTrack,
   publicPlaylistBinding,
@@ -39,17 +40,32 @@ class TestAdapter implements NeteaseAdapter {
     ok: true,
     data: { playlistId: "cloud-playlist-new" }
   });
-  detail: (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => Promise<AdapterResult<"playlistDetail">> = async () => ({
-    ok: true,
-    data: {
-      playlist: { id: "cloud-playlist-1", name: "songroom-宿舍-公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
-      songIds: ["song-1", "song-2"],
-      songs: [
-        { id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
-        { id: "song-2", name: "七里香", artists: ["周杰伦"], album: "七里香" }
-      ]
+  detail: (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => Promise<AdapterResult<"playlistDetail">> = async (input) => {
+    if (input.playlistId === "member-personal-pl") {
+      return {
+        ok: true,
+        data: {
+          playlist: { id: "member-personal-pl", name: "songroom-宿舍-室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          songIds: ["song-1", "song-2"],
+          songs: [
+            { id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
+            { id: "song-2", name: "七里香", artists: ["周杰伦"], album: "七里香" }
+          ]
+        }
+      };
     }
-  });
+    return {
+      ok: true,
+      data: {
+        playlist: { id: "cloud-playlist-1", name: "songroom-宿舍-公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
+        songIds: ["song-1", "song-2"],
+        songs: [
+          { id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
+          { id: "song-2", name: "七里香", artists: ["周杰伦"], album: "七里香" }
+        ]
+      }
+    };
+  };
   userPlaylists: (input: Extract<AdapterInput, { operation: "userPlaylists" }>) => Promise<AdapterResult<"userPlaylists">> = async () => ({
     ok: true,
     data: {
@@ -125,6 +141,20 @@ function fixture() {
     nickname: "房主",
     status: "active",
     credentials: vault.encrypt("MUSIC_U=owner", scope)
+  }).run();
+
+  const memberMembership = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "member"))).get()!;
+  database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId,
+    memberId: memberMembership.id,
+    accountId: scope.accountId,
+    playlistId: "member-personal-pl",
+    name: "songroom-宿舍-室友",
+    creationOperationId: v7(),
+    generation: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
   }).run();
 
   const adapter = new TestAdapter();
@@ -437,17 +467,30 @@ describe("失效公共歌单识别与重新创建 (ticket 13)", () => {
     // 6. 室友再次点同一首旧歌 (song-1)，新建代次 2 的标签，不继承代次 1
     f.advanceTime(1500);
     f.adapter.trackAdd = async () => ({ ok: true, data: { acknowledged: true } });
-    f.adapter.detail = async () => ({
-      ok: true,
-      data: {
-        playlist: { id: "cloud-playlist-v2", name: "songroom-宿舍-公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
-        songIds: ["song-1"],
-        songs: [{ id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+    f.adapter.detail = async (input) => {
+      if (input.playlistId === "member-personal-pl") {
+        return {
+          ok: true,
+          data: {
+            playlist: { id: "member-personal-pl", name: "songroom-宿舍-室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["song-1"],
+            songs: [{ id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+          }
+        };
       }
-    });
+      return {
+        ok: true,
+        data: {
+          playlist: { id: "cloud-playlist-v2", name: "songroom-宿舍-公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          songIds: ["song-1"],
+          songs: [{ id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
+        }
+      };
+    };
 
     service.requestSong("member", f.roomId, {
       idempotencyKey: v7(),
+      sourcePlaylistId: "member-personal-pl",
       songId: "song-1",
       name: "晴天",
       artists: ["周杰伦"],

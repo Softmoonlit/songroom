@@ -5,8 +5,8 @@ import { createServer } from "node:net";
 import { v7 } from "uuid";
 import { afterEach, expect, it } from "vitest";
 import { initializeDatabase } from "../db/database.js";
-import { eq } from "drizzle-orm";
-import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, playlistTrack, operation, publicSongRequest } from "../db/schema.js";
+import { and, eq } from "drizzle-orm";
+import { room, roomMembership, neteaseAuthorization, publicPlaylistBinding, playlistTrack, operation, publicSongRequest, personalPlaylistBinding } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
@@ -48,6 +48,14 @@ async function fixture() {
   app.database.insert(neteaseAuthorization).values({ id: authorizationId, userId: owner.userId, accountId: "test", nickname: "网易云", generation: 1, status: "active", credentials }).run();
   app.database.insert(publicPlaylistBinding).values({ roomId, accountId: "test", playlistId: "pl-test", name: "songroom-测试宿舍-公共", creationOperationId: v7(), generation: 1 }).run();
 
+  const memberRecord = app.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, member.userId))).get()!;
+  const ownerRecord = app.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, owner.userId))).get()!;
+
+  app.database.insert(personalPlaylistBinding).values([
+    { id: v7(), roomId, accountId: "test", memberId: memberRecord.id, playlistId: "pl-member", name: "songroom-测试宿舍-室友", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: v7(), roomId, accountId: "test", memberId: ownerRecord.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() }
+  ]).run();
+
   return { app, adapter, owner, member, outsider, roomId, baseUrl };
 }
 
@@ -75,6 +83,21 @@ it("通过 HTTP 提交点歌并在歌曲已有或新增时正确返回", async (
     if (input.operation === "identity") return { ok: true, data: { accountId: "test", name: "网易云" } } as any;
     if (input.operation === "trackAdd") { addedSong = (input as any).songId; return { ok: true, data: { acknowledged: true } } as any; }
     if (input.operation === "playlistDetail") {
+      if (input.playlistId === "pl-member" || input.playlistId === "pl-owner") {
+        return {
+          ok: true,
+          data: {
+            playlist: { id: input.playlistId, name: "个人歌单", creatorId: "test", subscribed: false, status: 0 },
+            songIds: ["s-1", "s-2", "s-idem", "s-blocked"],
+            songs: [
+              { id: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
+              { id: "s-2", name: "新歌", artists: ["歌手"], album: "专辑" },
+              { id: "s-idem", name: "歌A", artists: ["歌手"], album: "专辑" },
+              { id: "s-blocked", name: "待确认歌", artists: ["歌手"], album: "专辑" }
+            ]
+          }
+        } as any;
+      }
       return {
         ok: true,
         data: {
@@ -90,6 +113,7 @@ it("通过 HTTP 提交点歌并在歌曲已有或新增时正确返回", async (
   const key1 = v7();
   const res = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
     idempotencyKey: key1,
+    sourcePlaylistId: "pl-member",
     songId: "s-1",
     name: "晴天",
     artists: ["周杰伦"],
@@ -105,6 +129,7 @@ it("通过 HTTP 提交点歌并在歌曲已有或新增时正确返回", async (
   // 相同幂等键重放：返回 200 或 202 原操作
   const replayRes = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
     idempotencyKey: key1,
+    sourcePlaylistId: "pl-member",
     songId: "s-1",
     name: "晴天",
     artists: ["周杰伦"],
@@ -125,17 +150,19 @@ it("HTTP: 目标处于待确认时返回 409 TARGET_BLOCKED，非成员或他人
 
   // 1. 模拟插入一个处于 awaitingConfirmation 的点歌操作
   const opId = v7();
+  const ownerRecord = app.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, owner.userId))).get()!;
   app.database.insert(operation).values({
     id: opId, kind: "requestPublicSong", userId: owner.userId, roomId, accountId: "test", authorizationId: v7(), generation: 1, status: "awaitingConfirmation", createdAt: Date.now(), updatedAt: Date.now()
   }).run();
   app.database.insert(publicSongRequest).values({
-    operationId: opId, songId: "s-blocked", name: "待确认歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "unknown", songConfirmed: false, tagConfirmed: false,
+    operationId: opId, sourcePlaylistId: "pl-owner", sourceBindingGeneration: 1, sourceMemberId: ownerRecord.id, songId: "s-blocked", name: "待确认歌", artists: JSON.stringify(["歌手"]), album: "专辑", step: "unknown", songConfirmed: false, tagConfirmed: false,
     playlistId: "pl-test", bindingGeneration: 1, checkRound: 0, nextCheckAt: Date.now() + 5000
   }).run();
 
   // 室友尝试点歌，因目标阻塞返回 409 TARGET_BLOCKED
   const blockedRes = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
     idempotencyKey: v7(),
+    sourcePlaylistId: "pl-member",
     songId: "s-2",
     name: "新歌",
     artists: ["歌手"],
@@ -164,12 +191,12 @@ it("HTTP: 目标处于待确认时返回 409 TARGET_BLOCKED，非成员或他人
   app.database.delete(operation).where(eq(operation.id, opId)).run();
 
   const req1 = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
-    idempotencyKey: keySame, songId: "s-idem", name: "歌A", artists: ["歌手"], album: "专辑"
+    idempotencyKey: keySame, sourcePlaylistId: "pl-member", songId: "s-idem", name: "歌A", artists: ["歌手"], album: "专辑"
   });
   expect(req1.statusCode).toBe(202);
 
   const reqConflict = await request(app, `/api/rooms/${roomId}/song-requests`, member.cookie, {
-    idempotencyKey: keySame, songId: "s-idem", name: "不同歌名", artists: ["歌手"], album: "专辑"
+    idempotencyKey: keySame, sourcePlaylistId: "pl-member", songId: "s-idem", name: "不同歌名", artists: ["歌手"], album: "专辑"
   });
   expect(reqConflict.statusCode).toBe(409);
   expect(reqConflict.json().error.code).toBe("IDEMPOTENCY_CONFLICT");

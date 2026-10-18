@@ -37,6 +37,14 @@ describe("song-request-messages", () => {
       expect(getFriendlySongRequestErrorMessage("AUTH_UNAVAILABLE")).toBe(
         "房主的网易云授权需要重新连接，请提醒房主更新授权。"
       );
+
+      // 个人歌单校验
+      expect(getFriendlySongRequestErrorMessage("PERSONAL_PLAYLIST_NOT_FOUND")).toBe(
+        "尚未配置个人歌单，无法发起点歌。"
+      );
+      expect(getFriendlySongRequestErrorMessage("SOURCE_PLAYLIST_FORBIDDEN")).toBe(
+        "只能从自己的专用个人歌单发起点歌。"
+      );
     });
 
     it("空或未识别错误码返回温和托底提示", () => {

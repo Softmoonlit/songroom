@@ -421,6 +421,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     expect(() => {
       ctx.playlists.requestSong(ctx.roommate1UserId, ctx.roomId, {
         idempotencyKey: v7(),
+        sourcePlaylistId: "rm1-playlist",
         songId: "new-song-999",
         name: "冲突歌曲",
         artists: ["歌手"],

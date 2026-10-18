@@ -946,6 +946,9 @@ export class PublicPlaylists {
       }).where(eq(operation.id, id)).run();
       if (terminal(status)) {
         tx.delete(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, id)).run();
+        if (status === "stopped") {
+          tx.update(publicSongRequest).set({ step: "stopped", nextCheckAt: null }).where(eq(publicSongRequest.operationId, id)).run();
+        }
       } else if (status === "awaitingConfirmation") {
         tx.update(publicPlaylistCreation).set({ step: "unknown" }).where(eq(publicPlaylistCreation.operationId, id)).run();
       } else if (status === "needsAdministrator") {
@@ -1340,6 +1343,7 @@ export class PublicPlaylists {
     return {
       id: row.id,
       roomId: row.roomId,
+      sourcePlaylistId: detail.sourcePlaylistId,
       songId: detail.songId,
       name: detail.name,
       artists: JSON.parse(detail.artists) as string[],
@@ -1358,6 +1362,7 @@ export class PublicPlaylists {
     const command = publicSongRequestCommand.parse(input);
     const prepared = prepareCommand(userId, command.idempotencyKey, "requestPublicSong", {
       roomId,
+      sourcePlaylistId: command.sourcePlaylistId,
       songId: command.songId,
       name: command.name,
       artists: command.artists,
@@ -1370,14 +1375,23 @@ export class PublicPlaylists {
       const member = tx.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, userId))).get()!;
       const original = readCommandResource(tx, prepared, this.now());
       if (original) {
-        return { replay: true, opId: original, existing: false };
+        return { replay: true, opId: original };
+      }
+
+      const personalBinding = tx.select().from(personalPlaylistBinding).where(and(
+        eq(personalPlaylistBinding.roomId, roomId),
+        eq(personalPlaylistBinding.memberId, member.id)
+      )).get();
+      if (!personalBinding) throw new BusinessError(409, "PERSONAL_PLAYLIST_NOT_FOUND", "尚未配置个人歌单，无法点歌");
+      if (personalBinding.playlistId !== command.sourcePlaylistId) {
+        throw new BusinessError(403, "SOURCE_PLAYLIST_FORBIDDEN", "只能从自己的专用个人歌单点歌");
       }
 
       const binding = tx.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
       if (!binding) throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单");
 
       const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.ownerUserId)).get();
-      if (!auth || auth.status !== "active") throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
+      if (!auth || auth.status !== "active" || !auth.credentials) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
 
       const admissionCode = this.scheduler.admissionCode(auth.accountId);
       if (admissionCode) {
@@ -1399,76 +1413,29 @@ export class PublicPlaylists {
         throw new BusinessError(409, "CONCURRENT_OPERATION_LIMIT_EXCEEDED", "你在该房间已有未完成的写操作，请等待处理");
       }
 
-      // 检查当前快照中是否已有该歌曲
-      const existingTrack = tx.select().from(playlistTrack).where(and(
-        eq(playlistTrack.accountId, binding.accountId),
-        eq(playlistTrack.playlistId, binding.playlistId),
-        eq(playlistTrack.songId, command.songId)
-      )).get();
-
-      if (existingTrack) {
-        // 公共目标已有该歌曲时不调用增加接口、不移动或重排歌曲，只写入该成员的去重标签
-        tx.insert(requesterTag).values({
-          roomId,
-          bindingGeneration: binding.generation,
-          songId: command.songId,
-          memberId: member.id,
-          createdAt: this.now()
-        }).onConflictDoNothing().run();
-
-        const id = v7();
-        tx.insert(operation).values({
-          id,
-          kind: "requestPublicSong",
-          userId,
-          roomId,
-          accountId: null,
-          authorizationId: null,
-          generation: null,
-          lastGranted: this.now(),
-          status: "succeeded",
-          createdAt: this.now(),
-          updatedAt: this.now()
-        }).run();
-
-        tx.insert(publicSongRequest).values({
-          operationId: id,
-          songId: command.songId,
-          name: command.name,
-          artists: JSON.stringify(command.artists),
-          album: command.album,
-          step: "succeeded",
-          songConfirmed: true,
-          tagConfirmed: true,
-          playlistId: binding.playlistId,
-          bindingGeneration: binding.generation,
-          checkRound: 0,
-          nextCheckAt: null
-        }).run();
-
-        recordCommandResource(tx, prepared, id, this.now());
-        this.#bump(roomId);
-        return { replay: false, opId: id, existing: true };
-      }
-
-      // 目标尚无歌曲，入队排队
+      // 目标入队排队（实时核验来源由调度执行阶段发起，不凭旧快照放行）
       const id = v7();
       tx.insert(operation).values({
         id,
         kind: "requestPublicSong",
         userId,
         roomId,
-        accountId: binding.accountId,
+        accountId: auth.accountId,
         authorizationId: auth.id,
         generation: auth.generation,
         lastGranted: this.now(),
         status: "queued",
+        errorCode: null,
+        version: 1,
         createdAt: this.now(),
         updatedAt: this.now()
       }).run();
 
       tx.insert(publicSongRequest).values({
         operationId: id,
+        sourcePlaylistId: command.sourcePlaylistId,
+        sourceBindingGeneration: personalBinding.generation,
+        sourceMemberId: member.id,
         songId: command.songId,
         name: command.name,
         artists: JSON.stringify(command.artists),
@@ -1484,10 +1451,10 @@ export class PublicPlaylists {
 
       recordCommandResource(tx, prepared, id, this.now());
       this.#bump(roomId);
-      return { replay: false, opId: id, existing: false };
+      return { replay: false, opId: id };
     });
 
-    if (!accepted.replay && !accepted.existing) {
+    if (!accepted.replay) {
       this.scheduler.kick();
     }
     const currentRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get();
@@ -1650,7 +1617,27 @@ export class PublicPlaylists {
     const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, row.roomId)).get();
     if (!current || !member || !binding) return "stopped";
     const detail = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get();
-    if (detail && (binding.playlistId !== detail.playlistId || binding.generation !== detail.bindingGeneration)) return "stopped";
+    if (!detail) return "stopped";
+    if (binding.playlistId !== detail.playlistId || binding.generation !== detail.bindingGeneration) return "stopped";
+
+    if (detail.sourcePlaylistId) {
+      const personalBinding = this.database.select().from(personalPlaylistBinding).where(and(
+        eq(personalPlaylistBinding.roomId, row.roomId),
+        eq(personalPlaylistBinding.memberId, detail.sourceMemberId ?? member.id)
+      )).get();
+      if (!personalBinding) return "stopped";
+      if (personalBinding.playlistId !== detail.sourcePlaylistId || personalBinding.generation !== detail.sourceBindingGeneration) {
+        return "stopped";
+      }
+      if (detail.sourceMemberId && detail.sourceMemberId !== member.id) {
+        return "stopped";
+      }
+    } else {
+      if (["ready", "verified"].includes(detail.step)) {
+        return "stopped";
+      }
+    }
+
     const auth = this.#authorization(current.ownerUserId);
     if (!auth || auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation) return "waitingAuthorization";
     return "valid";
@@ -1866,11 +1853,24 @@ export class PublicPlaylists {
         if (detail.checkRound < 3) {
           this.#scheduleConfirmationCheck(row.id, nextCheckAt - this.now());
         }
-      } else if (detail.step === "verified") {
-        this.database.update(publicSongRequest).set({ step: "ready" }).where(eq(publicSongRequest.operationId, row.id)).run();
-        this.#status(row.id, "queued");
-      } else if (row.status === "processing") {
-        this.#status(row.id, "queued");
+      } else if (["ready", "verified"].includes(detail.step) || row.status === "processing") {
+        if (!detail.sourcePlaylistId) {
+          this.database.transaction(tx => {
+            tx.update(publicSongRequest).set({ step: "stopped" }).where(eq(publicSongRequest.operationId, row.id)).run();
+            tx.update(operation).set({
+              status: "stopped",
+              accountId: null,
+              authorizationId: null,
+              generation: null,
+              version: sql`${operation.version} + 1`,
+              updatedAt: this.now()
+            }).where(eq(operation.id, row.id)).run();
+            this.#bump(row.roomId);
+          });
+        } else {
+          this.database.update(publicSongRequest).set({ step: "ready" }).where(eq(publicSongRequest.operationId, row.id)).run();
+          this.#status(row.id, "queued");
+        }
       }
     }
   }
@@ -1888,24 +1888,93 @@ export class PublicPlaylists {
 
     try {
       if (detail.step === "ready") {
+        if (!detail.sourcePlaylistId) {
+          this.#status(row.id, "stopped");
+          return;
+        }
+
+        const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
+        if (!identity.ok) { this.#readFailure(row, identity.error.code); return; }
+        if (identity.data.accountId !== row.accountId) { this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH"); return; }
+
+        // 实时完整读取来源个人歌单并确认歌曲 ID 仍在；来源变化/读取失败停止，不凭旧快照放行
+        const sourceResult = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.sourcePlaylistId });
+        if (!sourceResult.ok) {
+          if (sourceResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
+          if (sourceResult.error.code === "AUTH_UNAVAILABLE") {
+            this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+            return;
+          }
+          // 来源读取失败：停止并记录错误码，不混淆为公共写入错误
+          this.database.transaction(tx => {
+            tx.update(publicSongRequest).set({ step: "stopped" }).where(eq(publicSongRequest.operationId, row.id)).run();
+            tx.update(operation).set({
+              status: "stopped",
+              errorCode: sourceResult.error.code,
+              accountId: null,
+              authorizationId: null,
+              generation: null,
+              version: sql`${operation.version} + 1`,
+              updatedAt: this.now()
+            }).where(eq(operation.id, row.id)).run();
+            this.#bump(row.roomId);
+          });
+          const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+          this.eventStream.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: 1 });
+          if (updatedRoom) {
+            this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
+          }
+          return;
+        }
+
+        const sourceData = sourceResult.data;
+        if (sourceData.playlist.status !== 0 || !sourceData.songIds.includes(detail.songId)) {
+          // 来源变化或歌曲已被移除：停止操作
+          this.database.transaction(tx => {
+            tx.update(publicSongRequest).set({ step: "stopped" }).where(eq(publicSongRequest.operationId, row.id)).run();
+            tx.update(operation).set({
+              status: "stopped",
+              errorCode: null,
+              accountId: null,
+              authorizationId: null,
+              generation: null,
+              version: sql`${operation.version} + 1`,
+              updatedAt: this.now()
+            }).where(eq(operation.id, row.id)).run();
+            this.#bump(row.roomId);
+          });
+          const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+          this.eventStream.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: 1 });
+          if (updatedRoom) {
+            this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
+          }
+          return;
+        }
+
+        // 来源歌单确认歌曲仍在！检查公共歌单当前快照中是否已有该歌曲
         const snap = this.database.select().from(playlistTrack).where(and(
           eq(playlistTrack.accountId, binding.accountId),
           eq(playlistTrack.playlistId, binding.playlistId),
           eq(playlistTrack.songId, detail.songId)
         )).get();
+
         if (snap) {
-          this.database.update(publicSongRequest).set({ step: "confirming" }).where(eq(publicSongRequest.operationId, row.id)).run();
-          this.#status(row.id, "queued");
+          // 公共已有歌曲：直接确认歌曲并提交标签
+          this.#confirmSongAndCommitTag(row, detail);
           return;
         }
 
-        const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
+        // 公共尚无歌曲：更新 step 为 verified，重新排队进入 sending 阶段
         this.database.transaction(tx => {
-          if (!identity.ok) { this.#readFailure(row, identity.error.code); return; }
-          if (identity.data.accountId !== row.accountId) { this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH"); return; }
           tx.update(publicSongRequest).set({ step: "verified" }).where(eq(publicSongRequest.operationId, row.id)).run();
-          this.#status(row.id, "queued");
+          tx.update(operation).set({ status: "queued", version: sql`${operation.version} + 1`, updatedAt: this.now() }).where(eq(operation.id, row.id)).run();
+          this.#bump(row.roomId);
         });
+        const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, row.roomId)).get();
+        this.eventStream.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: 1 });
+        if (updatedRoom) {
+          this.eventStream.notifyRoom(this.database, row.roomId, { type: "room", resourceId: row.roomId, version: updatedRoom.version });
+        }
         return;
       }
 

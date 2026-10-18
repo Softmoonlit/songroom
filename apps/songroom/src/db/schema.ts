@@ -324,6 +324,9 @@ export const playlistTrack = sqliteTable("playlist_track", {
 
 export const publicSongRequest = sqliteTable("public_song_request", {
   operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
+  sourcePlaylistId: text("source_playlist_id"),
+  sourceBindingGeneration: integer("source_binding_generation"),
+  sourceMemberId: text("source_member_id"),
   songId: text("song_id").notNull(),
   name: text("name").notNull(),
   artists: text("artists").notNull(),
@@ -337,11 +340,14 @@ export const publicSongRequest = sqliteTable("public_song_request", {
   nextCheckAt: integer("next_check_at")
 }, table => [
   index("public_song_request_target_index").on(table.playlistId),
+  index("public_song_request_source_playlist_index").on(table.sourcePlaylistId),
+  index("public_song_request_source_member_index").on(table.sourceMemberId),
   check("public_song_request_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'tagging', 'succeeded', 'rejected', 'unknown', 'stopped')`),
   check("public_song_request_song_id_valid", sql`length(${table.songId}) > 0`),
   check("public_song_request_name_valid", sql`length(${table.name}) > 0`),
   check("public_song_request_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
   check("public_song_request_binding_generation_valid", sql`${table.bindingGeneration} > 0`),
+  check("public_song_request_source_binding_generation_valid", sql`${table.sourceBindingGeneration} IS NULL OR ${table.sourceBindingGeneration} > 0`),
   check("public_song_request_check_round_valid", sql`${table.checkRound} >= 0 AND ${table.checkRound} <= 3`)
 ]);
 
