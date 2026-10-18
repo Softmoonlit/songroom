@@ -343,6 +343,11 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(page.getByText("《晴天》添加结果待确认，正在核验网易云歌单，请勿重复添加。")).toBeVisible();
 
+    // 页面刷新：搜索输入被清空，但在途未完成添加操作跨刷新从 sessionStorage 恢复
+    await page.reload();
+    await expect(page.getByRole("searchbox", { name: "搜索歌曲" })).toHaveValue("");
+    await expect(page.getByText("《晴天》添加结果待确认，正在核验网易云歌单，请勿重复添加。")).toBeVisible();
+
     // 变更为 succeeded
     currentOpStatus = "succeeded";
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));

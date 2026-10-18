@@ -11,7 +11,8 @@ import {
 import {
   personalPlaylistView,
   personalSongAddResponse,
-  personalSongOperationView
+  personalSongOperationView,
+  type PersonalSongOperationView
 } from "../shared/personal-playlist-contracts.js";
 import { queryOptions, request, RoomRequestError } from "./room-http.js";
 import { Toast, type ToastData } from "./Toast.js";
@@ -28,6 +29,14 @@ export interface SongSearchPaneProps {
   onNavigateToPersonal: () => void;
 }
 
+const IN_FLIGHT_STATUSES: ReadonlySet<PersonalSongOperationView["status"]> = new Set([
+  "queued",
+  "processing",
+  "awaitingConfirmation",
+  "waitingAuthorization",
+  "needsAdministrator"
+]);
+
 export function SongSearchPane({
   sessionId,
   roomId,
@@ -38,9 +47,29 @@ export function SongSearchPane({
   const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
   const [searchLocalError, setSearchLocalError] = useState("");
   const [addingSongId, setAddingSongId] = useState<string | null>(null);
-  const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
   const [additionError, setAdditionError] = useState("");
   const [toast, setToast] = useState<ToastData | null>(null);
+
+  const additionStorageKey = `songroom:personal-song-addition:${roomId}`;
+
+  // 初始化尝试从 sessionStorage 恢复当前房间未完成操作
+  const [activeOperationId, setActiveOperationId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(`songroom:personal-song-addition:${roomId}`) || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const setPersistedOperationId = (opId: string | null) => {
+    setActiveOperationId(opId);
+    try {
+      if (opId) sessionStorage.setItem(additionStorageKey, opId);
+      else sessionStorage.removeItem(additionStorageKey);
+    } catch {
+      // 忽略存储异常
+    }
+  };
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchGeneration = useRef(0);
@@ -48,16 +77,20 @@ export function SongSearchPane({
   currentRoomId.current = roomId;
   const queryClient = useQueryClient();
 
-  // 房间切换时清空现场
+  // 房间切换时重置搜索现场，并从对应房间的存储中恢复未完成操作
   useEffect(() => {
     searchGeneration.current += 1;
     setActiveSearchId(null);
     setSearchQueryText("");
     setSearchLocalError("");
     setAddingSongId(null);
-    setActiveOperationId(null);
     setAdditionError("");
     setToast(null);
+    try {
+      setActiveOperationId(sessionStorage.getItem(`songroom:personal-song-addition:${roomId}`) || null);
+    } catch {
+      setActiveOperationId(null);
+    }
   }, [roomId]);
 
   // 读取个人歌单配置状态与快照
@@ -88,18 +121,25 @@ export function SongSearchPane({
       request(`/${roomId}/personal-playlist/songs/${activeOperationId}`, personalSongOperationView, signal),
     enabled: Boolean(activeOperationId && active),
     refetchInterval: q =>
-      q.state.data?.status && ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status)
+      q.state.data?.status && IN_FLIGHT_STATUSES.has(q.state.data.status)
         ? 2500
         : false,
     ...queryOptions
   });
+
+  // 查询失败（如操作不存在）时清空持久化 ID
+  useEffect(() => {
+    if (additionOperationQuery.error) {
+      setPersistedOperationId(null);
+    }
+  }, [additionOperationQuery.error]);
 
   // 处理异步添加操作状态变化
   useEffect(() => {
     if (!additionOperationQuery.data) return;
     const op = additionOperationQuery.data;
     if (op.status === "succeeded") {
-      setActiveOperationId(null);
+      setPersistedOperationId(null);
       setAddingSongId(null);
       setToast({
         id: uuidv7(),
@@ -110,7 +150,7 @@ export function SongSearchPane({
       });
       void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
     } else if (op.status === "failed" || op.status === "stopped") {
-      setActiveOperationId(null);
+      setPersistedOperationId(null);
       setAddingSongId(null);
       setAdditionError(getFriendlyPersonalSongAdditionErrorMessage(op.errorCode));
     }
@@ -161,40 +201,79 @@ export function SongSearchPane({
 
   // 添加单曲到个人歌单
   const addSongMutation = useMutation({
-    mutationFn: async (candidate: SongCandidate) => {
+    mutationFn: async (variables: {
+      candidate: SongCandidate;
+      targetRoomId: string;
+      generation: number;
+      wasAlreadyInPersonal: boolean;
+    }) => {
       setAdditionError("");
-      setAddingSongId(candidate.id);
-      return request(`/${roomId}/personal-playlist/songs`, personalSongAddResponse, undefined, {
-        idempotencyKey: uuidv7(),
-        songId: candidate.id,
-        name: candidate.name,
-        artists: candidate.artists,
-        album: candidate.album
-      });
+      setAddingSongId(variables.candidate.id);
+      const res = await request(
+        `/${variables.targetRoomId}/personal-playlist/songs`,
+        personalSongAddResponse,
+        undefined,
+        {
+          idempotencyKey: uuidv7(),
+          songId: variables.candidate.id,
+          name: variables.candidate.name,
+          artists: variables.candidate.artists,
+          album: variables.candidate.album
+        }
+      );
+      return { response: res, variables };
     },
-    onSuccess: (data, candidate) => {
+    onSuccess: ({ response: data, variables }) => {
+      if (variables.generation !== searchGeneration.current || variables.targetRoomId !== currentRoomId.current) return;
       const op = data.operation;
       if (op.status === "succeeded") {
         setAddingSongId(null);
-        setActiveOperationId(null);
+        setPersistedOperationId(null);
         setToast({
           id: uuidv7(),
-          message: personalSongIds.has(candidate.id)
-            ? `《${candidate.name}》已在个人歌单`
-            : `《${candidate.name}》已加入个人歌单`,
+          message:
+            variables.wasAlreadyInPersonal || personalSongIds.has(variables.candidate.id)
+              ? `《${variables.candidate.name}》已在个人歌单`
+              : `《${variables.candidate.name}》已加入个人歌单`,
           type: "success"
         });
+        // 乐观同步当前缓存快照，避免立即重复点击时仍显示为未添加
+        queryClient.setQueryData(
+          ["room-personal-playlist", sessionId, roomId],
+          (prev: z.infer<typeof personalPlaylistView> | undefined) => {
+            if (!prev || !prev.snapshot) return prev;
+            if (prev.snapshot.tracks.some(t => t.songId === variables.candidate.id)) return prev;
+            return {
+              ...prev,
+              snapshot: {
+                ...prev.snapshot,
+                trackCount: prev.snapshot.trackCount + 1,
+                tracks: [
+                  ...prev.snapshot.tracks,
+                  {
+                    position: prev.snapshot.tracks.length,
+                    songId: variables.candidate.id,
+                    name: variables.candidate.name,
+                    artists: variables.candidate.artists,
+                    album: variables.candidate.album
+                  }
+                ]
+              }
+            };
+          }
+        );
         void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
       } else if (op.status === "failed" || op.status === "stopped") {
         setAddingSongId(null);
-        setActiveOperationId(null);
+        setPersistedOperationId(null);
         setAdditionError(getFriendlyPersonalSongAdditionErrorMessage(op.errorCode));
       } else {
         // queued / processing / awaitingConfirmation / waitingAuthorization / needsAdministrator
-        setActiveOperationId(op.id);
+        setPersistedOperationId(op.id);
       }
     },
-    onError: failure => {
+    onError: (failure, variables) => {
+      if (variables.generation !== searchGeneration.current || variables.targetRoomId !== currentRoomId.current) return;
       setAddingSongId(null);
       const code = failure instanceof RoomRequestError ? failure.code : null;
       setAdditionError(getFriendlyPersonalSongAdditionErrorMessage(code));
@@ -226,7 +305,13 @@ export function SongSearchPane({
 
   function handleAddSong(candidate: SongCandidate) {
     if (!hasPersonalPlaylist || addSongMutation.isPending || addingSongId) return;
-    addSongMutation.mutate(candidate);
+    const wasAlreadyInPersonal = personalSongIds.has(candidate.id);
+    addSongMutation.mutate({
+      candidate,
+      targetRoomId: roomId,
+      generation: searchGeneration.current,
+      wasAlreadyInPersonal
+    });
   }
 
   const candidates = searchQuery.data?.songs ?? [];
@@ -234,7 +319,7 @@ export function SongSearchPane({
   const searchError = searchLocalError || (searchQuery.data?.errorCode ? getFriendlySearchErrorMessage(searchQuery.data.errorCode) : "");
 
   const activeOp = additionOperationQuery.data;
-  const isAdditionPending = activeOp && ["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator"].includes(activeOp.status);
+  const isAdditionPending = activeOp && IN_FLIGHT_STATUSES.has(activeOp.status);
 
   return (
     <div className="song-search-pane" role="region" aria-label="搜索歌曲页面">
