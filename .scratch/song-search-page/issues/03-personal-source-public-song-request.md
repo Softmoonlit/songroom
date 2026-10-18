@@ -1,6 +1,6 @@
 # 03：实现个人来源公共点歌并退役直接点歌
 
-Status: need-review
+Status: resolved
 
 ## 目标
 
@@ -30,10 +30,19 @@ Status: need-review
 - 规划：用户确认公共点歌改从个人歌单发起；接口端必须同步落实，不能只移除页面入口。
 - 实现与验证结果：
   1. 数据库迁移：新增 `0026_personal_source_song_request.sql`，在 `public_song_request` 表中持久化记录 `source_playlist_id`、`source_binding_generation`、`source_member_id`，更新 metadata 并在 `database.ts` 中注册迁移。
-  2. 契约更新：`publicSongRequestCommand` 新增必需参数 `sourcePlaylistId`，`songRequestOperationView` 返回来源信息；退役无来源直接点歌契约。
+  2. 契约更新：`publicSongRequestCommand` 新增必需参数 `sourcePlaylistId`，`songRequestOperationView` 返回来源信息；彻底退役无来源直接点歌契约。
   3. 业务校验与调度执行：
      - 受理阶段严格校验成员专用个人歌单归属（`PERSONAL_PLAYLIST_NOT_FOUND` / `SOURCE_PLAYLIST_FORBIDDEN`，房主亦不可冒用他人个人歌单发起逐首点歌）、代次、目标冲突与单成员单操作排他限制。
-     - 调度执行阶段实时读取来源歌单详情，核验歌曲仍在且歌单正常；来源读取失败或歌曲已被移除时立即置为 stopped 并记录来源错误码，不调用上游加歌。
+     - 调度执行阶段实时读取来源歌单详情，核验歌曲仍在且歌单正常；来源读取失败或歌曲已被移除时立即置为 stopped 并严格区分 `SOURCE_PLAYLIST_UNAVAILABLE` 与 `SOURCE_SONG_REMOVED` 错误码，不调用上游加歌。
+     - 消除 TOCTOU 竞态：来源校验与向公共歌单写入在同一次调度执行中原子连贯推进，并在推进至 `sending` 阶段前核验操作未被取消或成员未撤权。
+     - 撤权最小留存：成员退出或被移除时，未发出的写入直接撤销，可能已发出的在途操作脱离原归属匿名化，彻底清空 `source_playlist_id` 等来源字段。
      - 公共已有歌曲时仅追加点歌人标签；公共缺少歌曲时执行单次 trackAdd、写后读回及未知重试机制。
-  4. 自动化测试：更新并补充了 `public-song-requests.test.ts`、`public-song-requests-http.test.ts`、`member-leave-removal.test.ts` 等全套单元与集成测试，覆盖归属越权、来源读取失败与歌曲移除停止、已有歌曲去重打标等场景；全量 568 项测试及类型检查全部通过。
-  5. 剩余事项：待代码审查与下一步联调。
+  4. 客户端交互：
+     - 从公共歌单彻底移除旧全网点歌抽屉与点歌主按钮，保留播放定位与随机换一组等功能。
+     - 在「我的歌单」各歌曲右侧提供逐首「点歌」到公共歌单操作，支持微加载防重入、异步排队状态横幅及成功 Toast。他人个人歌单维持只读。
+  5. 自动化测试与验证：
+     - 单元与集成测试：52 个测试文件、572 项测试全部通过（包含归属越权、来源移除/读取失败、歌单 ID 校验、撤权竞态、版本号单调递增及去重打标等）。
+     - E2E 测试：180 项 Playwright 端到端测试全部通过（包含个人来源点歌、微加载正反馈、异步状态流转、无障碍及 320px/900px/1440px 响应式无横向溢出）。
+     - TypeScript 类型检查与 Vite 构建无任何报错。
+  6. 涉及提交：`0368c9f`, `57617ad`, `03b7176`。
+  7. 剩余事项：无，已完成全部验收规范并验证通过，标记为 resolved。
