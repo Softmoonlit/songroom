@@ -396,7 +396,7 @@ function MembersPane({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [applicationsDrawerOpen, setApplicationsDrawerOpen] = useState(false);
   const listScroll = useRef(0);
-  const selected = query.data?.members.find(member => member.id === memberId);
+  const selected = query.data?.members.find(member => member.id === memberId && !member.isSelf);
 
   const removeMutation = useMutation({
     mutationFn: () => {
@@ -439,7 +439,6 @@ function MembersPane({
           </button>
         </nav>
         <h1>{selected.nickname}</h1>
-        {selected.isSelf && selected.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={selected.nickname} disabledReason={selected.disabledReasons.renameNickname} />}
         <dl className="netease-identity">
 
           <div>
@@ -556,7 +555,7 @@ function MembersPane({
                 <span className={`status-pill role-${member.role}`}>
                   {roleLabels[member.role]}
                 </span>
-                <button
+                {!member.isSelf && <button
                   type="button"
                   className="secondary-button"
                   aria-label={`查看${member.nickname}的歌单`}
@@ -566,7 +565,7 @@ function MembersPane({
                   }}
                 >
                   查看歌单
-                </button>
+                </button>}
               </div>
             </div>
           </li>

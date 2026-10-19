@@ -120,8 +120,10 @@ test("房名和昵称修改后同步聚合版本，不重复读取已写入的�
   }
   await expect(page.getByText("房间：新音乐间", { exact: true })).toBeVisible();
   await expect(page.locator(".room-meta-pill").filter({ hasText: "é" })).toBeVisible();
-  await page.getByRole("button", { name: "查看é的歌单", exact: true }).click();
-  await expect(page.getByRole("region", { name: "成员详情" })).toContainText("é");
+  await expect(page.locator(".member-card").filter({ hasText: "é" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看é的歌单", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "房间设置", exact: true }).click();
+  await expect(page.getByLabel("我的房间昵称", { exact: true })).toHaveValue("é");
 });
 
 for (const [status, text] of [["approved", "申请已获批"], ["rejected", "房主已拒绝申请"], ["nickname_conflict", "拟用昵称已被占用，申请已终结，请重新提交"]] as const) {
@@ -259,6 +261,8 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     await page.getByRole("button", { name: "批准：室友昵称", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("已批准：室友昵称");
     await expect(page.getByRole("button", { name: "查看室友昵称的歌单", exact: true })).toBeVisible();
+    await expect(page.locator(".member-card").filter({ hasText: "房主昵称" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看房主昵称的歌单", exact: true })).toHaveCount(0);
     await guest.reload();
     await expect(guest.getByRole("status")).toHaveText("申请已获批");
     await guest.getByRole("link", { name: "返回房间列表", exact: true }).click();
@@ -272,15 +276,16 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     await guest.getByRole("button", { name: "房间成员", exact: true }).click();
     await expect(guest.getByRole("button", { name: "邀请室友" })).toHaveCount(0);
     await expect(guest.getByRole("button", { name: "审批加入申请" })).toHaveCount(0);
+    await expect(guest.locator(".member-card").filter({ hasText: "室友昵称" })).toBeVisible();
+    await expect(guest.getByRole("button", { name: "查看室友昵称的歌单", exact: true })).toHaveCount(0);
     await guest.getByRole("button", { name: "查看房主昵称的歌单", exact: true }).click();
     await expect(guest.getByRole("region", { name: "成员详情" }).getByRole("button", { name: "保存我的昵称" })).toHaveCount(0);
     await guest.getByRole("button", { name: "返回成员列表", exact: true }).click();
-    await guest.getByRole("button", { name: "查看室友昵称的歌单", exact: true }).click();
-    await guest.getByRole("region", { name: "成员详情", exact: true }).getByLabel("我的房间昵称", { exact: true }).fill("新昵称");
-    await guest.getByRole("region", { name: "成员详情", exact: true }).getByRole("button", { name: "保存我的昵称", exact: true }).click();
-    await expect(guest.locator(".room-meta-pill").filter({ hasText: "新昵称" })).toBeVisible();
-    await expect(guest.getByRole("heading", { name: "新昵称", exact: true })).toBeVisible();
     await guest.getByRole("button", { name: "房间设置", exact: true }).click();
+    await guest.getByRole("region", { name: "房间设置", exact: true }).getByLabel("我的房间昵称", { exact: true }).fill("新昵称");
+    await guest.getByRole("region", { name: "房间设置", exact: true }).getByRole("button", { name: "保存我的昵称", exact: true }).click();
+    await expect(guest.locator(".room-meta-pill").filter({ hasText: "新昵称" })).toBeVisible();
+    await expect(guest.getByRole("status").filter({ hasText: "我的房间昵称已更新。" })).toHaveText("我的房间昵称已更新。");
     await expect(guest.getByRole("button", { name: "保存房间名称" })).toHaveCount(0);
     await expect(guest.getByRole("region", { name: "房间设置", exact: true }).getByLabel("我的房间昵称", { exact: true })).toHaveValue("新昵称");
     await expect.poll(() => guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

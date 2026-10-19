@@ -227,7 +227,13 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       await page.route(`${memberEndpoint}/refresh`, route => route.fulfill({ json: view }));
       await page.goto(`/rooms/${roomId}`);
       await page.getByRole("button", { name: "房间成员" }).click();
-      await page.getByRole("button", { name: `查看${nickname}的歌单` }).click();
+      const selfNickname = isOwner ? "房主小林" : "室友小明";
+      const selfCard = page.locator(".member-card").filter({ hasText: selfNickname });
+      await expect(selfCard).toBeVisible();
+      await expect(selfCard.getByRole("button", { name: /查看.*的歌单/ })).toHaveCount(0);
+      const viewOtherPlaylist = page.getByRole("button", { name: `查看${nickname}的歌单`, exact: true });
+      await expect(viewOtherPlaylist).toBeVisible();
+      await viewOtherPlaylist.click();
       const detail = page.getByRole("region", { name: "成员详情", exact: true });
       await expect(detail.getByRole("heading", { name: nickname, exact: true })).toBeVisible();
       await expect(detail.getByText(`songroom-测试音乐间-${nickname}`, { exact: true })).toBeVisible();

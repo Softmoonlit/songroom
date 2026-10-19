@@ -240,11 +240,12 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
 
   // 验证调用了 remove API 并回到成员列表，且列表中不再有室友小张
   expect(removeCalled).toBe(true);
-  await expect(page.getByRole("button", { name: "查看房主阿林的歌单" })).toBeVisible();
+  await expect(page.locator(".member-card").filter({ hasText: "房主阿林" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看房主阿林的歌单" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "查看室友小张的歌单" })).toHaveCount(0);
 });
 
-test("房主查看自己不显示“移除成员”按钮；房间设置中房主不显示“退出房间”按钮", async ({ page }) => {
+test("房主本人卡片无查看歌单或移除入口；房间设置中不显示退出房间按钮", async ({ page }) => {
   await setupMocks(page, "owner");
 
   await page.goto(`/rooms/${roomId}`);
@@ -253,9 +254,12 @@ test("房主查看自己不显示“移除成员”按钮；房间设置中房�
   await page.getByRole("button", { name: "房间设置" }).click();
   await expect(page.getByRole("button", { name: "退出房间" })).toHaveCount(0);
 
-  // 检查房间成员：房主查看自己不显示移除成员按钮
+  // 本人卡片不提供详情入口，其他成员保留查看歌单按钮。
   await page.getByRole("button", { name: "房间成员" }).click();
-  await page.getByRole("button", { name: "查看房主阿林的歌单" }).click();
+  const selfCard = page.locator(".member-card").filter({ hasText: "房主阿林" });
+  await expect(selfCard).toBeVisible();
+  await expect(selfCard.getByRole("button", { name: /查看.*的歌单/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "查看室友小张的歌单" })).toBeVisible();
   await expect(page.getByRole("button", { name: "移除成员" })).toHaveCount(0);
 });
 
