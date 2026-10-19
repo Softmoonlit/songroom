@@ -77,8 +77,7 @@ class ReplacementTestAdapter implements NeteaseAdapter {
       }
       const pl = this.playlists.get(input.playlistId);
       if (!pl) return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed" } };
-      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
-      for (const id of songIds) {
+      for (const id of input.songIds) {
         if (!pl.songs.some(s => s.id === id)) {
           pl.songs.push({ id, name: `歌曲-${id}`, artists: ["歌手"], album: "专辑" });
         }
@@ -93,8 +92,7 @@ class ReplacementTestAdapter implements NeteaseAdapter {
       }
       const pl = this.playlists.get(input.playlistId);
       if (!pl) return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed" } };
-      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
-      pl.songs = pl.songs.filter(s => !songIds.includes(s.id));
+      pl.songs = pl.songs.filter(s => !input.songIds.includes(s.id));
       return { ok: true, data: { acknowledged: true } } as AdapterResult<I["operation"]>;
     }
 
@@ -626,8 +624,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
         hooked = true;
         // 实际上网易云收到了写入并添加了歌曲，但返回了网络中断
         const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
-        const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
-        for (const id of songIds) {
+        for (const id of input.songIds) {
           pl.songs.push({ id, name: `歌曲-${id}`, artists: ["歌手"], album: "专辑" });
         }
         return {
@@ -661,8 +658,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
     ctx.adapter.trackRemoveHook = async (input) => {
       const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
-      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
-      pl.songs = pl.songs.filter(s => !songIds.includes(s.id));
+      pl.songs = pl.songs.filter(s => !input.songIds.includes(s.id));
       // 外部客户端突然插入了一首不在计划内的歌曲
       pl.songs.push({ id: "external-surprise-song", name: "外部加歌", artists: ["外部"], album: "外部" });
       return { ok: true, data: { acknowledged: true } };
@@ -695,8 +691,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
     ctx.adapter.trackAddHook = async (input) => {
       const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
-      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
-      for (const id of songIds) {
+      for (const id of input.songIds) {
         pl.songs.push({ id, name: `歌曲-${id}`, artists: ["歌手"], album: "专辑" });
       }
       // 移除 roommate2 成员资格
@@ -712,8 +707,9 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     await ctx.playlists.settle();
 
     const op = ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, res.operation.id);
-    expect(op.status).toBe("succeeded");
-    expect(op.tagConfirmed).toBe(true);
+    expect(op.status).toBe("stopped");
+    expect(op.errorCode).toBe("PLAYLIST_CONFLICT");
+    expect(op.tagConfirmed).toBe(false);
 
     // 验证：已退出的 roommate2 来源歌曲在云端已确认存在，但没有写其点歌人标签
     for (const t of rm2Tracks) {
@@ -1044,9 +1040,8 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
     ctx.adapter.trackAddHook = async (input) => {
       const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
-      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
       // 模拟网易云接口将歌曲倒序插入
-      const reversed = [...songIds].reverse();
+      const reversed = [...input.songIds].reverse();
       for (const id of reversed) {
         pl.songs.push({ id, name: `歌曲-${id}`, artists: ["歌手"], album: "专辑" });
       }
@@ -1072,5 +1067,54 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     const cloudSongs = ctx.adapter.playlists.get(ctx.publicPlaylistId)!.songs.map(s => s.id);
     const expectedReversed = [...preview.tracks.map(t => t.songId)].reverse();
     expect(cloudSongs).toEqual(expectedReversed);
+  }, 25_000);
+
+  it("验收清单 4 & 6: 批量清空部分成功据实反馈已移除集合并停止后续写入", async () => {
+    const ctx = createTestContext();
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+
+    // 模拟批量清空时，实际只删除了 old-song-1 和 old-song-2，但 shared-keep-1 仍然留在云端
+    ctx.adapter.trackRemoveHook = async (input) => {
+      const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
+      pl.songs = pl.songs.filter(s => s.id === "shared-keep-1");
+      return { ok: true, data: { acknowledged: true } };
+    };
+
+    const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
+      idempotencyKey: v7(),
+      previewId: preview.previewId
+    });
+
+    await ctx.playlists.settle();
+
+    // 经历 3 轮补查核验
+    ctx.advanceTime(5_001);
+    ctx.playlists.triggerDueChecks();
+    await ctx.playlists.settle();
+
+    ctx.advanceTime(30_001);
+    ctx.playlists.triggerDueChecks();
+    await ctx.playlists.settle();
+
+    ctx.advanceTime(120_001);
+    ctx.playlists.triggerDueChecks();
+    await ctx.playlists.settle();
+
+    const op = ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, res.operation.id);
+    expect(op.status).toBe("failed");
+    expect(op.errorCode).toBe("MODULE_ERROR");
+    expect(op.step).toBe("rejected");
+    expect(op.removedSongIds).toEqual(["old-song-1", "old-song-2"]);
+    expect(op.addedSongIds).toEqual([]);
+
+    // 验证：绝不发起后续批量添加
+    expect(ctx.adapter.inputs.filter(i => i.operation === "trackAdd")).toHaveLength(0);
+
+    // 验证：已移除旧歌的标签已清除
+    const old1Tags = ctx.database.select().from(requesterTag).where(and(
+      eq(requesterTag.roomId, ctx.roomId),
+      eq(requesterTag.songId, "old-song-1")
+    )).all();
+    expect(old1Tags).toHaveLength(0);
   }, 25_000);
 });

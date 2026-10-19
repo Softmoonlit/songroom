@@ -1,6 +1,6 @@
 process.umask(0o077);
 process.once('message', ({input}) => {
-  const mode = input.key || input.songId;
+  const mode = input.key || input.songIds?.[0];
   if (mode === 'hang') { setInterval(() => {}, 100); return; }
   if (mode === 'exit') { process.exit(0); }
   if (mode === 'crash') { process.exit(7); }

@@ -33,6 +33,8 @@ import type { PublicRandomPreview, SourceBasis } from "./public-random-preview.j
 import type { SelectedTrack } from "./random-selector.js";
 import type { PublicPlayNext } from "./public-play-next.js";
 
+type DbTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
+
 type ReplacementDetail = typeof publicPlaylistReplacement.$inferSelect;
 type Authorization = typeof neteaseAuthorization.$inferSelect;
 type SnapshotData = Extract<AdapterResult<"playlistDetail">, { ok: true }>["data"];
@@ -529,8 +531,57 @@ export class PublicPlaylistReplacement {
 
         this.#queue(row.id, "verified");
       } else {
-        // 旧歌尚未全清（可能写入未抵达）
-        this.#awaitConfirmation(row, detail, null);
+        // 旧歌尚未全清
+        const actuallyRemoved = originalSongIds.filter(id => !data.songIds.includes(id));
+        if (actuallyRemoved.length > 0) {
+          this.database.transaction(tx => {
+            for (const songId of actuallyRemoved) {
+              tx.delete(requesterTag).where(and(
+                eq(requesterTag.roomId, row.roomId),
+                eq(requesterTag.bindingGeneration, detail.bindingGeneration),
+                eq(requesterTag.songId, songId)
+              )).run();
+            }
+            tx.update(publicPlaylistReplacement).set({
+              removedSongIds: JSON.stringify(actuallyRemoved)
+            }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+          });
+        }
+
+        if (detail.checkRound < 3) {
+          this.#awaitConfirmation(row, { ...detail, removedSongIds: JSON.stringify(actuallyRemoved) }, null);
+        } else {
+          // 3 轮核验结束仍未全清
+          if (actuallyRemoved.length > 0) {
+            // 清空部分成功据实反馈并停止后续写入
+            this.database.transaction(tx => {
+              tx.update(publicPlaylistReplacement).set({
+                removedSongIds: JSON.stringify(actuallyRemoved),
+                currentAction: null,
+                currentSongId: null,
+                step: "rejected",
+                targetTracks: "[]",
+                originalSongIds: "[]",
+                sources: "[]"
+              }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+
+              tx.update(operation).set({
+                status: "failed",
+                errorCode: "MODULE_ERROR",
+                accountId: null,
+                authorizationId: null,
+                generation: null,
+                updatedAt: this.now(),
+                version: sql`${operation.version} + 1`
+              }).where(eq(operation.id, row.id)).run();
+
+              tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, row.roomId)).run();
+            });
+            this.#notify(row.id);
+          } else {
+            this.#status(row.id, "awaitingConfirmation", null);
+          }
+        }
       }
     } else if (detail.currentAction === "add") {
       // 确认批量添加结果
@@ -574,7 +625,7 @@ export class PublicPlaylistReplacement {
           // 3 轮补查结束，仍不完整
           if (presentTargetSongs.length > 0) {
             // 规格："批量部分成功据实展示，停止后续写入，不自动重放缺失歌曲。"
-            await this.#executePartialSuccess(row, detail, presentTargetSongs);
+            await this.#finishPartialReplacement(row, detail, presentTargetSongs);
           } else {
             this.#status(row.id, "awaitingConfirmation", null);
           }
@@ -591,7 +642,48 @@ export class PublicPlaylistReplacement {
     }
   }
 
-  async #executePartialSuccess(
+  #writeRequesterTags(
+    tx: DbTransaction,
+    roomId: string,
+    bindingGeneration: number,
+    songIds: string[],
+    targetTracks: SelectedTrack[],
+    sources: SourceBasis[]
+  ): { writtenSongIds: string[]; allWritten: boolean } {
+    const writtenSongIds: string[] = [];
+    for (const songId of songIds) {
+      const track = targetTracks.find(t => t.songId === songId);
+      if (!track) continue;
+      const source = sources.find(s => s.memberId === track.sourceMemberId);
+      if (!source) continue;
+      const member = tx.select().from(roomMembership).where(and(
+        eq(roomMembership.id, track.sourceMemberId),
+        eq(roomMembership.roomId, roomId)
+      )).get();
+      if (!member) continue;
+      const binding = tx.select().from(personalPlaylistBinding).where(and(
+        eq(personalPlaylistBinding.id, source.bindingId),
+        eq(personalPlaylistBinding.generation, source.bindingGeneration),
+        eq(personalPlaylistBinding.roomId, roomId)
+      )).get();
+      if (!binding) continue;
+
+      tx.insert(requesterTag).values({
+        roomId,
+        bindingGeneration,
+        songId: track.songId,
+        memberId: track.sourceMemberId,
+        createdAt: this.now()
+      }).onConflictDoNothing().run();
+      writtenSongIds.push(songId);
+    }
+    return {
+      writtenSongIds,
+      allWritten: writtenSongIds.length === songIds.length
+    };
+  }
+
+  async #finishPartialReplacement(
     row: Operation,
     detail: ReplacementDetail,
     presentSongIds: string[]
@@ -600,31 +692,14 @@ export class PublicPlaylistReplacement {
     const sources = JSON.parse(detail.sources) as SourceBasis[];
 
     this.database.transaction(tx => {
-      for (const songId of presentSongIds) {
-        const track = targetTracks.find(t => t.songId === songId);
-        if (!track) continue;
-        const source = sources.find(s => s.memberId === track.sourceMemberId);
-        if (!source) continue;
-        const member = tx.select().from(roomMembership).where(and(
-          eq(roomMembership.id, track.sourceMemberId),
-          eq(roomMembership.roomId, row.roomId)
-        )).get();
-        if (!member) continue;
-        const binding = tx.select().from(personalPlaylistBinding).where(and(
-          eq(personalPlaylistBinding.id, source.bindingId),
-          eq(personalPlaylistBinding.generation, source.bindingGeneration),
-          eq(personalPlaylistBinding.roomId, row.roomId)
-        )).get();
-        if (!binding) continue;
-
-        tx.insert(requesterTag).values({
-          roomId: row.roomId,
-          bindingGeneration: detail.bindingGeneration,
-          songId: track.songId,
-          memberId: track.sourceMemberId,
-          createdAt: this.now()
-        }).onConflictDoNothing().run();
-      }
+      this.#writeRequesterTags(
+        tx,
+        row.roomId,
+        detail.bindingGeneration,
+        presentSongIds,
+        targetTracks,
+        sources
+      );
 
       tx.update(publicPlaylistReplacement).set({
         addedSongIds: JSON.stringify(presentSongIds),
@@ -680,38 +755,37 @@ export class PublicPlaylistReplacement {
     const sources = JSON.parse(detail.sources) as SourceBasis[];
 
     this.database.transaction(tx => {
-      const snapTracks = tx.select().from(playlistTrack).where(and(
-        eq(playlistTrack.accountId, row.accountId!),
-        eq(playlistTrack.playlistId, detail.playlistId)
-      )).all();
-      const snapSongIds = new Set(snapTracks.map(t => t.songId));
+      const { allWritten } = this.#writeRequesterTags(
+        tx,
+        row.roomId,
+        detail.bindingGeneration,
+        targetSongIds,
+        targetTracks,
+        sources
+      );
 
-      for (const track of targetTracks) {
-        if (!snapSongIds.has(track.songId)) continue;
+      if (!allWritten) {
+        // 规格要求：“集合/标签/步骤未完成不报告完整成功”
+        tx.update(publicPlaylistReplacement).set({
+          tagConfirmed: false,
+          step: "stopped",
+          targetTracks: "[]",
+          originalSongIds: "[]",
+          sources: "[]"
+        }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
 
-        const source = sources.find(s => s.memberId === track.sourceMemberId);
-        if (!source) continue;
+        tx.update(operation).set({
+          status: "stopped",
+          errorCode: "PLAYLIST_CONFLICT",
+          accountId: null,
+          authorizationId: null,
+          generation: null,
+          updatedAt: this.now(),
+          version: sql`${operation.version} + 1`
+        }).where(eq(operation.id, row.id)).run();
 
-        const member = tx.select().from(roomMembership).where(and(
-          eq(roomMembership.id, track.sourceMemberId),
-          eq(roomMembership.roomId, row.roomId)
-        )).get();
-        if (!member) continue;
-
-        const binding = tx.select().from(personalPlaylistBinding).where(and(
-          eq(personalPlaylistBinding.id, source.bindingId),
-          eq(personalPlaylistBinding.generation, source.bindingGeneration),
-          eq(personalPlaylistBinding.roomId, row.roomId)
-        )).get();
-        if (!binding) continue;
-
-        tx.insert(requesterTag).values({
-          roomId: row.roomId,
-          bindingGeneration: detail.bindingGeneration,
-          songId: track.songId,
-          memberId: track.sourceMemberId,
-          createdAt: this.now()
-        }).onConflictDoNothing().run();
+        tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, row.roomId)).run();
+        return;
       }
 
       tx.update(publicPlaylistReplacement).set({

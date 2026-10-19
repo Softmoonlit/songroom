@@ -1350,7 +1350,7 @@ export class PersonalPlaylists {
       let result: AdapterResult<"trackAdd" | "trackRemove"> | null = null;
       try {
         result = await this.adapter.call({ operation: row.kind === "removePersonalSong" ? "trackRemove" : "trackAdd", cookie,
-          playlistId: detail.playlistId, songId: detail.songId });
+          playlistId: detail.playlistId, songIds: [detail.songId] });
       } catch { /* May have sent: the next grant can only confirm. */ }
       const after = this.#conditionsForSongMutation(row);
       if (after !== "valid") { this.#conditionStatusForSongMutation(row, after); return; }

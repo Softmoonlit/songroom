@@ -72,9 +72,7 @@ async function invoke(message: WorkerInput): Promise<AdapterResult> {
     case "playlistDelete": moduleName = "playlist_delete"; query.id = input.playlistId; break;
     case "trackAdd": case "trackRemove": {
       moduleName = "playlist_tracks";
-      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
-      if (songIds.length === 0) return error(operation, "INVALID_INPUT");
-      Object.assign(query, { pid: input.playlistId, tracks: songIds.join(","), op: operation === "trackAdd" ? "add" : "del" });
+      Object.assign(query, { pid: input.playlistId, tracks: input.songIds.join(","), op: operation === "trackAdd" ? "add" : "del" });
       break;
     }
   }

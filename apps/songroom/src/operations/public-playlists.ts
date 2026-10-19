@@ -2010,7 +2010,7 @@ export class PublicPlaylists {
       }
 
       if (detail.step === "sending") {
-        const addResult = await this.adapter.call({ operation: "trackAdd", cookie, playlistId: detail.playlistId, songId: detail.songId });
+        const addResult = await this.adapter.call({ operation: "trackAdd", cookie, playlistId: detail.playlistId, songIds: [detail.songId] });
         if (!addResult.ok) {
           if (addResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
           if (addResult.error.outcome === "failed") {

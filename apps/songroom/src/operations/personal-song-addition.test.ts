@@ -147,7 +147,7 @@ it("正常流程：室友添加歌曲到个人歌单，trackAdd 成功后读回�
   adapter.trackAdd = input => {
     trackAddCalled = true;
     expect(input.playlistId).toBe("pl-roommate");
-    expect(input.songId).toBe("song-101");
+    expect(input.songIds).toEqual(["song-101"]);
     return { ok: true, data: { acknowledged: true } };
   };
   adapter.playlistDetail = () => {
@@ -678,7 +678,7 @@ it("本人单首删除只写一次，完整读回云端顺序并由个人页恢�
     songId: "song-remove", name: "待删歌曲", artists: '["歌手"]', album: "专辑" }).run();
   let deleted = false;
   adapter.trackRemove = input => {
-    expect(input).toMatchObject({ playlistId: "pl-roommate", songId: "song-remove" });
+    expect(input).toMatchObject({ playlistId: "pl-roommate", songIds: ["song-remove"] });
     expect(deleted).toBe(false);
     deleted = true;
     return { ok: true, data: { acknowledged: true } };

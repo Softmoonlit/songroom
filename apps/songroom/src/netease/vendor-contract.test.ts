@@ -5,8 +5,8 @@ import type { AdapterInput } from "./protocol.js";
 const writes: AdapterInput[] = [
   { operation: "playlistCreate", cookie: "MUSIC_U=explicit-secret", name: "offline" },
   { operation: "playlistDelete", cookie: "MUSIC_U=explicit-secret", playlistId: "300" },
-  { operation: "trackAdd", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songId: "400" },
-  { operation: "trackRemove", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songId: "400" },
+  { operation: "trackAdd", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songIds: ["400"] },
+  { operation: "trackRemove", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songIds: ["400"] },
   { operation: "trackOrder", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songIds: ["400", "500"] }
 ];
 
@@ -14,7 +14,7 @@ describe("audited vendor through production adapter", () => {
   it("never repeats a track add when the real request layer receives business code 512", async () => {
     const fixture = await offlineAdapter(() => ({ body: { code: 512, msg: "Cookie=secret upstream payload" } }));
     try {
-      const result = await fixture.call({ operation: "trackAdd", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songId: "400" });
+      const result = await fixture.call({ operation: "trackAdd", cookie: "MUSIC_U=explicit-secret", playlistId: "300", songIds: ["400"] });
       expect(fixture.outbound).toHaveLength(1);
       expect(fixture.outbound[0].url).toBe("https://interfacepc.music.163.com/eapi/playlist/manipulate/tracks");
       expect(result).toEqual({ ok: false, error: { code: "MODULE_ERROR", outcome: "unknown", httpStatus: 200, businessCode: 512 } });

@@ -68,7 +68,7 @@ describe("production adapter offline process contract", () => {
   });
   it("dispose terminates pending calls and returns only after private directory cleanup", async () => {
     const { root, adapter } = await setup(fixture("adversarial-worker.cjs"));
-    const pending = adapter.call({ operation: "trackAdd", cookie: "secret", playlistId: "playlist", songId: "hang" });
+    const pending = adapter.call({ operation: "trackAdd", cookie: "secret", playlistId: "playlist", songIds: ["hang"] });
     // Observe the contract's private directory before asking the adapter to stop.
     while ((await readdir(root)).length === 0) await new Promise(resolve => setTimeout(resolve, 5));
     await adapter.dispose();
@@ -98,12 +98,12 @@ describe("production adapter offline process contract", () => {
   it("distinguishes read deadlines from possibly sent writes and cleans a hung process", async () => {
     const { root, adapter } = await setup(fixture("adversarial-worker.cjs"), 150);
     expect(await adapter.call({ operation: "qrCheck", key: "hang" })).toEqual({ ok: false, error: { code: "DEADLINE", outcome: "failed" } });
-    expect(await adapter.call({ operation: "trackAdd", cookie: "explicit", playlistId: "id", songId: "hang" })).toEqual({ ok: false, error: { code: "DEADLINE", outcome: "unknown" } });
+    expect(await adapter.call({ operation: "trackAdd", cookie: "explicit", playlistId: "id", songIds: ["hang"] })).toEqual({ ok: false, error: { code: "DEADLINE", outcome: "unknown" } });
     expect(await readdir(root)).toEqual([]);
   });
   it.each(["exit", "crash", "failedCrash", "malformed", "duplicate"])("keeps %s worker failures sanitized and unknown for a write", async mode => {
     const { root, adapter } = await setup(fixture("adversarial-worker.cjs"));
-    const result = await adapter.call({ operation: "trackAdd", cookie: "MUSIC_U=secret", playlistId: "id", songId: mode });
+    const result = await adapter.call({ operation: "trackAdd", cookie: "MUSIC_U=secret", playlistId: "id", songIds: [mode] });
     expect(result).toEqual({ ok: false, error: { code: ["malformed", "duplicate"].includes(mode) ? "PARSE_ERROR" : "PROCESS_ERROR", outcome: "unknown" } });
     expect(await readdir(root)).toEqual([]);
   });

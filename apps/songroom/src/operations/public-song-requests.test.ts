@@ -197,7 +197,7 @@ it("公共尚无歌曲时发送一次增加请求并执行写后读回，确认�
       return { ok: true, data: { accountId: "acc-owner", name: "房主" } } as any;
     }
     if (input.operation === "trackAdd") {
-      addedSongId = (input as any).songId;
+      addedSongId = input.songIds[0];
       return { ok: true, data: { acknowledged: true } } as any;
     }
     if (input.operation === "playlistDetail") {
