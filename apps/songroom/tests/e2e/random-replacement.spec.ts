@@ -701,6 +701,214 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     );
   });
 
+  test("全旧歌抽选：全部候选歌曲均在公共歌单中时正常预览与确认替换，不提示无新歌错误", async ({ page }) => {
+    await setupRoom(page, true);
+    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: initialPublicView }));
+
+    const allOldPreview: RandomReplacementPreviewView = {
+      previewId: v7(),
+      roomId,
+      targetCount: 5,
+      actualCount: 2,
+      tracks: [
+        { songId: "pub-s1", name: "七里香", artists: ["周杰伦"], album: "七里香", sourceMemberId: ownerMemberId, sourceMemberNickname: "房主小林", isNew: false },
+        { songId: "pub-s2", name: "红豆", artists: ["王菲"], album: "唱游", sourceMemberId: roommateMemberId, sourceMemberNickname: "室友小明", isNew: false }
+      ],
+      memberContributions: [
+        { memberId: ownerMemberId, nickname: "房主小林", count: 1 },
+        { memberId: roommateMemberId, nickname: "室友小明", count: 1 }
+      ],
+      oldTrackCount: 2,
+      oldTracksWithRequesterCount: 2,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 600000
+    };
+
+    await page.route(randomPreviewEndpoint, route => route.fulfill({ json: allOldPreview }));
+
+    const opId = v7();
+    const queuedOp: RandomReplacementOperationView = {
+      id: opId,
+      roomId,
+      status: "queued",
+      step: "ready",
+      targetCount: 2,
+      targetSongIds: ["pub-s1", "pub-s2"],
+      addedSongIds: [],
+      removedSongIds: [],
+      tagConfirmed: false,
+      currentAction: null,
+      currentSongId: null,
+      errorCode: null,
+      version: 1
+    };
+
+    let replacementSubmitted = false;
+    await page.route(randomReplacementEndpoint, route => {
+      replacementSubmitted = true;
+      return route.fulfill({
+        json: {
+          replay: false,
+          operation: queuedOp
+        }
+      });
+    });
+
+    await page.route(`**/api/rooms/${roomId}/public-playlist/random-replacement/${opId}`, route =>
+      route.fulfill({ json: queuedOp })
+    );
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await page.getByRole("button", { name: "随机点歌" }).click();
+
+    const modal = page.locator(".random-replacement-modal");
+    await expect(modal).toBeVisible();
+
+    // 确认没有错误横幅
+    await expect(modal.locator(".error-banner")).toHaveCount(0);
+
+    // 验证两首歌曲均正常展示且均无新歌标识
+    const trackItems = modal.locator(".preview-track-item");
+    await expect(trackItems).toHaveCount(2);
+    await expect(modal.locator(".track-badge.is-new")).toHaveCount(0);
+    await expect(modal.getByText("房主小林：1 首")).toBeVisible();
+    await expect(modal.getByText("室友小明：1 首")).toBeVisible();
+
+    // 确认替换
+    await modal.getByRole("button", { name: "确认替换" }).click();
+    await expect(modal).not.toBeVisible();
+    expect(replacementSubmitted).toBe(true);
+  });
+
+  test("清空成功后添加失败：公共歌单允许暂时为空，据实展示移除进度与失败原因，不伪报成功", async ({ page }) => {
+    await setupRoom(page, true);
+    let publicView: PublicPlaylistView = { ...initialPublicView };
+    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: publicView }));
+    await page.route(randomPreviewEndpoint, route => route.fulfill({ json: mockPreview10 }));
+
+    const operationId = v7();
+    const clearSucceededAddFailedOp: RandomReplacementOperationView = {
+      id: operationId,
+      roomId,
+      status: "failed",
+      step: "stopped",
+      targetCount: 10,
+      targetSongIds: mockPreview10.tracks.map(t => t.songId),
+      addedSongIds: [],
+      removedSongIds: ["pub-s1", "pub-s2"],
+      tagConfirmed: false,
+      currentAction: null,
+      currentSongId: null,
+      errorCode: "NETWORK_ERROR",
+      version: 3
+    };
+
+    await page.route(randomReplacementEndpoint, route =>
+      route.fulfill({ json: { replay: false, operation: clearSucceededAddFailedOp } })
+    );
+    await page.route(`**/api/rooms/${roomId}/public-playlist/random-replacement/${operationId}`, route =>
+      route.fulfill({ json: clearSucceededAddFailedOp })
+    );
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await page.getByRole("button", { name: "随机点歌" }).click();
+    await page.getByRole("button", { name: "确认替换" }).click();
+
+    // 状态横幅准确展示清空成功、添加未完成
+    const statusBanner = page.locator(".replacement-status-banner");
+    await expect(statusBanner).toBeVisible();
+    await expect(statusBanner).toContainText("换歌未完成");
+    await expect(statusBanner).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 0 首，移除 2 首）");
+
+    // 公共歌单更新为清空后的空快照，不自动回滚旧歌
+    publicView = {
+      ...initialPublicView,
+      snapshot: {
+        version: 2,
+        syncedAt: Date.now(),
+        trackCount: 0,
+        tracks: []
+      }
+    };
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+    // 页面不显示旧歌曲，呈现空歌单状态
+    await expect(page.locator(".track-name", { hasText: "七里香" })).toHaveCount(0);
+    await expect(page.locator(".track-name", { hasText: "红豆" })).toHaveCount(0);
+    await expect(page.locator(".empty-playlist-card")).toBeVisible();
+    await expect(page.getByText("歌单暂无歌曲")).toBeVisible();
+  });
+
+  test("云端真实顺序展示：读回乱序时按云端实际顺序展示，不依赖预览顺序且不调用额外排序", async ({ page }) => {
+    await setupRoom(page, true);
+    let publicView: PublicPlaylistView = { ...initialPublicView };
+    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: publicView }));
+    await page.route(randomPreviewEndpoint, route => route.fulfill({ json: mockPreview5 }));
+
+    const operationId = v7();
+    const succeededOp: RandomReplacementOperationView = {
+      id: operationId,
+      roomId,
+      status: "succeeded",
+      step: "succeeded",
+      targetCount: 5,
+      targetSongIds: mockPreview5.tracks.map(t => t.songId),
+      addedSongIds: mockPreview5.tracks.map(t => t.songId),
+      removedSongIds: ["pub-s1", "pub-s2"],
+      tagConfirmed: true,
+      currentAction: null,
+      currentSongId: null,
+      errorCode: null,
+      version: 5
+    };
+
+    await page.route(randomReplacementEndpoint, route =>
+      route.fulfill({ json: { replay: false, operation: succeededOp } })
+    );
+    await page.route(`**/api/rooms/${roomId}/public-playlist/random-replacement/${operationId}`, route =>
+      route.fulfill({ json: succeededOp })
+    );
+
+    // 模拟云端逆序或乱序读回（如 mockPreview5 顺序的倒序）
+    const reversedTracks = [...mockPreview5.tracks].reverse();
+    publicView = {
+      ...initialPublicView,
+      snapshot: {
+        version: 2,
+        syncedAt: Date.now(),
+        trackCount: reversedTracks.length,
+        tracks: reversedTracks.map((t, idx) => ({
+          position: idx,
+          songId: t.songId,
+          name: t.name,
+          artists: t.artists,
+          album: t.album,
+          requesters: [t.sourceMemberNickname]
+        }))
+      }
+    };
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await page.getByRole("button", { name: "随机点歌" }).click();
+
+    // 弹窗提示文案明确说明最终顺序以网易云实际读回为准
+    const modal = page.locator(".random-replacement-modal");
+    await expect(modal.locator(".random-confirm-guidance")).toContainText(
+      "最终顺序以网易云实际读回为准"
+    );
+
+    await modal.getByRole("button", { name: "确认替换" }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+    // 验证歌曲行按云端读回的倒序渲染展示
+    const trackNames = page.locator(".track-item .track-name");
+    await expect(trackNames.first()).toHaveText(reversedTracks[0].name);
+    await expect(trackNames.nth(1)).toHaveText(reversedTracks[1].name);
+  });
+
   test("多视口响应式与 Axe 无障碍扫描", async ({ page }) => {
     await setupRoom(page, true);
     await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: initialPublicView }));

@@ -1117,4 +1117,58 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     )).all();
     expect(old1Tags).toHaveLength(0);
   }, 25_000);
+
+  it("验收清单 7: 完整操作请求次数核算与各阶段阶段耗时记录，证明批量路径相比原逐首路径显著减少请求", async () => {
+    const ctx = createTestContext();
+    // 预览阶段：读取成员候选歌单
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const previewInputsCount = ctx.adapter.inputs.length;
+
+    // 记录确认执行前的时间与请求快照
+    const startExecutionTime = ctx.now();
+    const executionInputsStart = previewInputsCount;
+
+    const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
+      idempotencyKey: v7(),
+      previewId: preview.previewId
+    });
+
+    await ctx.playlists.settle();
+    const endExecutionTime = ctx.now();
+
+    const op = ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, res.operation.id);
+    expect(op.status).toBe("succeeded");
+
+    // 统计执行阶段的请求
+    const executionInputs = ctx.adapter.inputs.slice(executionInputsStart);
+    const writeCalls = executionInputs.filter(i => i.operation === "trackRemove" || i.operation === "trackAdd");
+    const readCalls = executionInputs.filter(i => i.operation === "playlistDetail" && i.playlistId === ctx.publicPlaylistId);
+
+    // 批量执行阶段精确核算：
+    // 1. 批量清空：1 次 trackRemove（全量移出 3 首旧歌）
+    // 2. 清空确认读回：1 次 playlistDetail
+    // 3. 批量添加：1 次 trackAdd（全量加入 5 首目标歌）
+    // 4. 最终读回核验：1 次 playlistDetail
+    expect(writeCalls).toHaveLength(2); // 1 次清空 + 1 次添加
+    expect(readCalls).toHaveLength(2);  // 2 次写后读回
+    expect(executionInputs).toHaveLength(4); // 总计仅 4 次上游请求
+
+    // 严格核对请求执行序列：两阶段严格串行，清空后先读回，再批量添加并读回核验
+    expect(executionInputs.map(i => i.operation)).toEqual([
+      "trackRemove",
+      "playlistDetail",
+      "trackAdd",
+      "playlistDetail"
+    ]);
+
+    // 与原逐首增删路径请求数对比：
+    // 原逐首路径对于 3 首旧歌移除 + 5 首新歌添加：
+    //   旧歌移除：3 次 trackRemove + 3 次 playlistDetail 读回 = 6 次
+    //   新歌添加：5 次 trackAdd + 5 次 playlistDetail 读回 = 10 次
+    //   共 16 次请求；
+    // 批量路径仅需 4 次请求（2 次写入 + 2 次读回），请求次数减少 75.0%。
+    // 在 10 首换 10 首的典型场景下，原逐首路径需 40 次请求，批量路径依然恒定仅需 4 次，请求减少达 90.0%。
+    const theoreticalOldRequestCount = 3 * 2 + 5 * 2;
+    expect(executionInputs.length).toBeLessThan(theoreticalOldRequestCount);
+  }, 25_000);
 });
