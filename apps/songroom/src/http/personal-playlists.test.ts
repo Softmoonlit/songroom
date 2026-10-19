@@ -188,3 +188,42 @@ describe("personal-playlist HTTP routes", () => {
     expect((await request(app, url, owner.cookie, { idempotencyKey: v7(), playlistId: "external" })).statusCode).toBe(400);
   });
 });
+
+it("单首删除 HTTP 校验本人、同源、命令及幂等，刷新可恢复操作而他人成员详情不泄露", async () => {
+  const { app, adapter, owner, member, outsider, roomId, roommateMemberId } = await fixture();
+  const { personalPlaylistBinding } = await import("../db/schema.js");
+  const { personalSongRemoveResponse, personalSongOperationView } = await import("../shared/personal-playlist-contracts.js");
+  app.database.insert(personalPlaylistBinding).values({ id: v7(), roomId, memberId: roommateMemberId,
+    accountId: "test", playlistId: "pl-personal", name: "个人", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() }).run();
+  const base = `/api/rooms/${roomId}/personal-playlist`;
+  const command = { idempotencyKey: v7(), songId: "song-1" };
+  expect((await request(app, `${base}/songs/remove`, undefined, command)).statusCode).toBe(401);
+  expect((await request(app, `${base}/songs/remove`, outsider.cookie, command)).statusCode).toBe(404);
+  expect((await request(app, `${base}/songs/remove`, owner.cookie, command)).statusCode).toBe(409);
+  expect((await request(app, `${base}/songs/remove`, member.cookie, command, "https://evil.com")).statusCode).toBe(403);
+  expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, memberId: roommateMemberId })).statusCode).toBe(400);
+  expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, songId: "" })).statusCode).toBe(400);
+  let removed = false;
+  adapter.trackRemove = () => { removed = true; return { ok: true, data: { acknowledged: true } }; };
+  adapter.playlistDetail = () => ({ ok: true, data: {
+    playlist: { id: "pl-personal", name: "个人", creatorId: "test", subscribed: false, status: 0 },
+    songIds: removed ? [] : ["song-1"],
+    songs: removed ? [] : [{ id: "song-1", name: "歌曲", artists: [], album: "" }]
+  } });
+  const accepted = await request(app, `${base}/songs/remove`, member.cookie, command);
+  expect(accepted.statusCode).toBe(202);
+  const result = personalSongRemoveResponse.parse(accepted.json());
+  expect(result.operation).toMatchObject({ action: "remove", name: "song-1", songConfirmed: false });
+  await app.scheduler.settle();
+  const operationUrl = `${base}/songs/${result.operation.id}`;
+  expect(personalSongOperationView.parse((await request(app, operationUrl, member.cookie)).json())).toMatchObject({ action: "remove", status: "succeeded" });
+  expect((await request(app, operationUrl, owner.cookie)).statusCode).toBe(404);
+  expect(personalPlaylistView.parse((await request(app, base, member.cookie)).json())).toMatchObject({ songOperation: { id: result.operation.id, action: "remove" } });
+  const other = await request(app, `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist`, owner.cookie);
+  expect(other.json()).not.toHaveProperty("songOperation");
+  const replay = await request(app, `${base}/songs/remove`, member.cookie, command);
+  expect(replay.statusCode).toBe(200);
+  expect(personalSongRemoveResponse.parse(replay.json())).toMatchObject({ replay: true, operation: { id: result.operation.id } });
+  expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, songId: "other" })).statusCode).toBe(409);
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(1);
+});

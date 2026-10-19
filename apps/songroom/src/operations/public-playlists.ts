@@ -1,5 +1,5 @@
 import { v7 } from "uuid";
-import { terminatePersonalPlaylistsInTx } from "./personal-playlist-lifecycle.js";
+import { hasPersonalSongWrite, terminatePersonalPlaylistsInTx } from "./personal-playlist-lifecycle.js";
 import { PublicPlayback } from "./public-playback.js";
 import { PublicPlayNext } from "./public-play-next.js";
 import type { PlayNextCommand, PlayNextResponse, PlayNextOperationView, PlaybackView } from "../shared/public-playlist-contracts.js";
@@ -1406,6 +1406,9 @@ export class PublicPlaylists {
       if (this.#hasTargetConflict(binding.accountId, binding.playlistId)) {
         throw new BusinessError(409, "TARGET_BLOCKED", "公共歌单当前有待确认的写入操作，请稍后刷新查看");
       }
+      if (hasPersonalSongWrite(this.database, personalBinding.accountId, personalBinding.playlistId)) {
+        throw new BusinessError(409, "TARGET_BLOCKED", "个人来源歌单有未完成写入，请先确认来源");
+      }
 
       // 同一成员在同一房间已有未完成写操作时拒绝第二项不同写入
       const pending = tx.select().from(operation).where(and(
@@ -1494,6 +1497,10 @@ export class PublicPlaylists {
       return false;
     }
 
+    if (detail.sourcePlaylistId && hasPersonalSongWrite(this.database, row.accountId!, detail.sourcePlaylistId)) {
+      this.#status(row.id, "queued", "PLAYLIST_CONFLICT");
+      return false;
+    }
     const condition = this.#conditionsForSongRequest(row);
     if (condition !== "valid") {
       this.#conditionStatus(row, condition);
@@ -2077,7 +2084,7 @@ export class PublicPlaylists {
     const ops = tx.select().from(operation)
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
     for (const op of ops) {
-      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist" || op.kind === "createPersonalPlaylist" || op.kind === "addPersonalSong") continue;
+      if (op.kind === "playNext" || op.kind === "replacePublicPlaylist" || op.kind === "createPersonalPlaylist" || op.kind === "addPersonalSong" || op.kind === "removePersonalSong") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {
@@ -2257,7 +2264,7 @@ export class PublicPlaylists {
 
     const ops = tx.select().from(operation).where(eq(operation.roomId, roomId)).all();
     for (const op of ops) {
-      if (op.kind === "createPersonalPlaylist" || op.kind === "addPersonalSong") continue;
+      if (op.kind === "createPersonalPlaylist" || op.kind === "addPersonalSong" || op.kind === "removePersonalSong") continue;
       tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
 
       if (["succeeded", "failed", "stopped"].includes(op.status)) {

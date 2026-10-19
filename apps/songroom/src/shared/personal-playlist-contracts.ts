@@ -21,7 +21,8 @@ export type PersonalPlaylistSnapshot = z.infer<typeof personalPlaylistSnapshot>;
 
 export const personalPlaylistAction = z.enum([
   "refreshPersonalPlaylist",
-  "createPersonalPlaylist"
+  "createPersonalPlaylist",
+  "removePersonalSong"
 ]);
 export type PersonalPlaylistAction = z.infer<typeof personalPlaylistAction>;
 
@@ -36,12 +37,30 @@ export const personalPlaylistOperation = z.strictObject({
 });
 export type PersonalPlaylistOperation = z.infer<typeof personalPlaylistOperation>;
 
+export const personalSongOperationView = z.strictObject({
+  id: uuidv7,
+  action: z.enum(["add", "remove"]),
+  roomId: uuidv7,
+  songId: z.string().min(1),
+  name: z.string().min(1),
+  artists: z.array(z.string()),
+  album: z.string(),
+  status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
+  songConfirmed: z.boolean(),
+  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED")]).nullable(),
+  step: z.enum(["ready", "verified", "prepared", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]),
+  version: z.number().int().positive()
+});
+export type PersonalSongOperationView = z.infer<typeof personalSongOperationView>;
+
+
 export const personalPlaylistView = z.strictObject({
   playlist: z.strictObject({
     id: z.string().min(1),
     name: z.string()
   }).nullable(),
   operation: personalPlaylistOperation.nullable().optional(),
+  songOperation: personalSongOperationView.nullable().optional(),
   snapshot: personalPlaylistSnapshot.nullable().optional(),
   lastRefreshError: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED")]).nullable().optional(),
   allowedActions: z.array(personalPlaylistAction),
@@ -70,24 +89,17 @@ export const personalSongAddCommand = z.strictObject({
 });
 export type PersonalSongAddCommand = z.infer<typeof personalSongAddCommand>;
 
-export const personalSongOperationView = z.strictObject({
-  id: uuidv7,
-  roomId: uuidv7,
-  songId: z.string().min(1),
-  name: z.string().min(1),
-  artists: z.array(z.string()),
-  album: z.string(),
-  status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
-  songConfirmed: z.boolean(),
-  errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED")]).nullable(),
-  step: z.enum(["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]),
-  version: z.number().int().positive()
-});
-export type PersonalSongOperationView = z.infer<typeof personalSongOperationView>;
-
 export const personalSongAddResponse = z.strictObject({
   replay: z.boolean(),
   operation: personalSongOperationView
 });
 export type PersonalSongAddResponse = z.infer<typeof personalSongAddResponse>;
 
+
+export const personalSongRemoveCommand = z.strictObject({
+  idempotencyKey: uuidv7,
+  songId: z.string().min(1)
+});
+export type PersonalSongRemoveCommand = z.infer<typeof personalSongRemoveCommand>;
+export const personalSongRemoveResponse = personalSongAddResponse;
+export type PersonalSongRemoveResponse = z.infer<typeof personalSongRemoveResponse>;

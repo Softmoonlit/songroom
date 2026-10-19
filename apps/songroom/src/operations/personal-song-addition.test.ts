@@ -10,7 +10,8 @@ import {
   neteaseAuthorization,
   operation,
   personalPlaylistBinding,
-  personalSongAddition,
+  publicPlaylistBinding,
+  personalSongMutation,
   playlistSnapshot,
   playlistTrack,
   room,
@@ -48,6 +49,7 @@ function fixture() {
   const now = () => Date.now() + timeOffset;
   const scheduler = new UpstreamScheduler(database, now);
   const adapter = new ScriptedNeteaseAdapter();
+  adapter.identityAccount = "acc-owner";
   const eventStream = new EventStreamService();
   const publicPlaylists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now);
   const playlists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, publicPlaylists, now);
@@ -114,6 +116,8 @@ function fixture() {
 
   return {
     root,
+    vault,
+    publicPlaylists,
     database,
     scheduler,
     adapter,
@@ -167,7 +171,7 @@ it("正常流程：室友添加歌曲到个人歌单，trackAdd 成功后读回�
   expect(trackAddCalled).toBe(true);
   expect(detailCalled).toBe(true);
 
-  const op = playlists.readSongAdditionOperation("roommate", roomId, res.operation.id);
+  const op = playlists.readSongOperation("roommate", roomId, res.operation.id);
   expect(op.status).toBe("succeeded");
   expect(op.songConfirmed).toBe(true);
   expect(op.step).toBe("succeeded");
@@ -342,7 +346,7 @@ it("目标歌单有待确认写入时拒绝添加（409 TARGET_BLOCKED）", () =
     updatedAt: now()
   }).run();
 
-  database.insert(personalSongAddition).values({
+  database.insert(personalSongMutation).values({
     operationId: conflictOpId,
     memberId: v7(),
     playlistId: "pl-roommate",
@@ -384,7 +388,7 @@ it("上游明确失败（outcome: failed）：操作标记为 failed，step 为 
 
   await scheduler.settle();
 
-  const op = playlists.readSongAdditionOperation("roommate", roomId, res.operation.id);
+  const op = playlists.readSongOperation("roommate", roomId, res.operation.id);
   expect(op.status).toBe("failed");
   expect(op.errorCode).toBe("TARGET_PERMISSION");
   expect(op.step).toBe("rejected");
@@ -418,7 +422,7 @@ it("上游未知异常：转入 awaitingConfirmation，并在后续轮次读回�
 
   await scheduler.settle();
 
-  const opBefore = playlists.readSongAdditionOperation("roommate", roomId, res.operation.id);
+  const opBefore = playlists.readSongOperation("roommate", roomId, res.operation.id);
   expect(opBefore.status).toBe("awaitingConfirmation");
   expect(opBefore.step).toBe("unknown");
   expect(opBefore.errorCode).toBe("NETWORK_ERROR");
@@ -428,7 +432,7 @@ it("上游未知异常：转入 awaitingConfirmation，并在后续轮次读回�
   playlists.triggerDueChecks();
   await playlists.settle();
 
-  const opAfter = playlists.readSongAdditionOperation("roommate", roomId, res.operation.id);
+  const opAfter = playlists.readSongOperation("roommate", roomId, res.operation.id);
   expect(opAfter.status).toBe("succeeded");
   expect(opAfter.step).toBe("succeeded");
   expect(opAfter.songConfirmed).toBe(true);
@@ -458,25 +462,25 @@ it("三轮补查未读到歌曲：保持 awaitingConfirmation，不再自动重�
   advanceTime(5000);
   playlists.triggerDueChecks();
   await playlists.settle();
-  let detail = database.select().from(personalSongAddition).where(eq(personalSongAddition.operationId, res.operation.id)).get()!;
+  let detail = database.select().from(personalSongMutation).where(eq(personalSongMutation.operationId, res.operation.id)).get()!;
   expect(detail.checkRound).toBe(1);
 
   // 推进 30 秒执行第二轮补查 -> round 2
   advanceTime(30000);
   playlists.triggerDueChecks();
   await playlists.settle();
-  detail = database.select().from(personalSongAddition).where(eq(personalSongAddition.operationId, res.operation.id)).get()!;
+  detail = database.select().from(personalSongMutation).where(eq(personalSongMutation.operationId, res.operation.id)).get()!;
   expect(detail.checkRound).toBe(2);
 
   // 推进 120 秒执行第三轮补查 -> round 3 (上限，不再安排 nextCheckAt)
   advanceTime(120000);
   playlists.triggerDueChecks();
   await playlists.settle();
-  detail = database.select().from(personalSongAddition).where(eq(personalSongAddition.operationId, res.operation.id)).get()!;
+  detail = database.select().from(personalSongMutation).where(eq(personalSongMutation.operationId, res.operation.id)).get()!;
   expect(detail.checkRound).toBe(3);
   expect(detail.nextCheckAt).toBeNull();
 
-  const finalOp = playlists.readSongAdditionOperation("roommate", roomId, res.operation.id);
+  const finalOp = playlists.readSongOperation("roommate", roomId, res.operation.id);
   expect(finalOp.status).toBe("awaitingConfirmation");
   expect(finalOp.step).toBe("unknown");
 });
@@ -518,7 +522,7 @@ it("成员离开房间后晚到的操作终结：彻底清除操作，不恢复�
   // 验证操作已被删除
   const remainingOp = database.select().from(operation).where(eq(operation.id, res.operation.id)).get();
   expect(remainingOp).toBeUndefined();
-  const remainingDetail = database.select().from(personalSongAddition).where(eq(personalSongAddition.operationId, res.operation.id)).get();
+  const remainingDetail = database.select().from(personalSongMutation).where(eq(personalSongMutation.operationId, res.operation.id)).get();
   expect(remainingDetail).toBeUndefined();
 });
 
@@ -546,7 +550,7 @@ it("房主重新授权：唤醒 waitingAuthorization 状态的添加操作", asy
     updatedAt: nowTime
   }).run();
 
-  database.insert(personalSongAddition).values({
+  database.insert(personalSongMutation).values({
     operationId: opId,
     memberId: (database.select().from(roomMembership).where(eq(roomMembership.userId, "roommate")).get()!).id,
     playlistId: "pl-roommate",
@@ -583,12 +587,12 @@ it("房主重新授权：唤醒 waitingAuthorization 状态的添加操作", asy
 
   await scheduler.settle();
 
-  const op = playlists.readSongAdditionOperation("roommate", roomId, opId);
+  const op = playlists.readSongOperation("roommate", roomId, opId);
   expect(op.status).toBe("succeeded");
   expect(op.songConfirmed).toBe(true);
 });
 
-it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并安排首轮补查，绝不重新发送 trackAdd", async () => {
+it.each(["addPersonalSong", "removePersonalSong"] as const)("服务重启恢复：%s sending 操作只确认，绝不重新发送", async kind => {
   const { root, database, roomId, advanceTime } = fixture();
 
   // 模拟进程崩溃前遗留的一个处于 processing + sending 的操作
@@ -596,7 +600,7 @@ it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并
   const nowTime = Date.now();
   database.insert(operation).values({
     id: crashOpId,
-    kind: "addPersonalSong",
+    kind,
     userId: "roommate",
     roomId,
     accountId: "acc-owner",
@@ -610,7 +614,7 @@ it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并
   }).run();
 
   const roommateMember = database.select().from(roomMembership).where(eq(roomMembership.userId, "roommate")).get()!;
-  database.insert(personalSongAddition).values({
+  database.insert(personalSongMutation).values({
     operationId: crashOpId,
     memberId: roommateMember.id,
     playlistId: "pl-roommate",
@@ -632,7 +636,7 @@ it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并
     return { ok: true, data: { acknowledged: true } };
   };
   newAdapter.playlistDetail = () => {
-    return { ok: true, data: mockDetailWithSongs("pl-roommate", ["song-crashed"]) };
+    return { ok: true, data: mockDetailWithSongs("pl-roommate", kind === "addPersonalSong" ? ["song-crashed"] : []) };
   };
 
   const keyPath = path.join(root, "netease.key");
@@ -646,7 +650,7 @@ it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并
 
   newScheduler.start();
   // 恢复后操作进入 awaitingConfirmation
-  const opBefore = newPlaylists.readSongAdditionOperation("roommate", roomId, crashOpId);
+  const opBefore = newPlaylists.readSongOperation("roommate", roomId, crashOpId);
   expect(opBefore.status).toBe("awaitingConfirmation");
   expect(opBefore.step).toBe("unknown");
 
@@ -657,7 +661,8 @@ it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并
 
   // 绝不重发 trackAdd，仅通过读回完成确认
   expect(trackAddCalled).toBe(false);
-  const opAfter = newPlaylists.readSongAdditionOperation("roommate", roomId, crashOpId);
+  expect(newAdapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(0);
+  const opAfter = newPlaylists.readSongOperation("roommate", roomId, crashOpId);
   expect(opAfter.status).toBe("succeeded");
   expect(opAfter.songConfirmed).toBe(true);
 
@@ -665,3 +670,216 @@ it("服务重启恢复：在途 sending 操作恢复为 awaitingConfirmation 并
   newScheduler.stop();
   await newScheduler.settle();
 });
+
+it("本人单首删除只写一次，完整读回云端顺序并由个人页恢复操作", async () => {
+  const { database, adapter, playlists, scheduler, roomId } = fixture();
+  database.insert(playlistTrack).values({ accountId: "acc-owner", playlistId: "pl-roommate", position: 0,
+    songId: "song-remove", name: "待删歌曲", artists: '["歌手"]', album: "专辑" }).run();
+  let deleted = false;
+  adapter.trackRemove = input => {
+    expect(input).toMatchObject({ playlistId: "pl-roommate", songId: "song-remove" });
+    expect(deleted).toBe(false);
+    deleted = true;
+    return { ok: true, data: { acknowledged: true } };
+  };
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", deleted ? ["song-3", "song-2"] : ["song-remove", "song-2"]) });
+  expect(playlists.read("roommate", roomId).allowedActions).toContain("removePersonalSong");
+  const command = { idempotencyKey: v7(), songId: "song-remove" };
+  const result = playlists.removeSong("roommate", roomId, command);
+  expect(result.operation).toMatchObject({ action: "remove", name: "待删歌曲", status: "queued" });
+  await scheduler.settle();
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ action: "remove", status: "succeeded", songConfirmed: true });
+  expect(playlists.read("roommate", roomId)).toMatchObject({ songOperation: { id: result.operation.id, action: "remove", status: "succeeded" },
+    snapshot: { tracks: [{ songId: "song-3" }, { songId: "song-2" }] } });
+  expect(playlists.read("owner", roomId, database.select().from(roomMembership).where(eq(roomMembership.userId, "roommate")).get()!.id).songOperation).toBeUndefined();
+  expect(playlists.removeSong("roommate", roomId, command)).toMatchObject({ replay: true, operation: { id: result.operation.id } });
+});
+
+it("删除执行前实时确认本人专用目标，权限变化不能发出删除", async () => {
+  const { database, adapter, playlists, scheduler, roomId } = fixture();
+  database.insert(playlistTrack).values({ accountId: "acc-owner", playlistId: "pl-roommate", position: 0,
+    songId: "song-remove", name: "待删歌曲", artists: "[]", album: "专辑" }).run();
+  adapter.playlistDetail = () => ({ ok: true, data: { ...mockDetailWithSongs("pl-roommate", ["song-remove"]),
+    playlist: { id: "pl-roommate", name: "已转移", creatorId: "other-account", subscribed: false, status: 0 } } });
+  const result = playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  await scheduler.settle();
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(0);
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ status: "failed", errorCode: "TARGET_PERMISSION" });
+});
+
+it("个人删除未知三轮停止补查，管理员可查询和终结普通未知任务且不补写", async () => {
+  const { database, adapter, playlists, scheduler, roomId, advanceTime, vault, publicPlaylists, now } = fixture();
+  database.insert(playlistTrack).values({ accountId: "acc-owner", playlistId: "pl-roommate", position: 0,
+    songId: "song-remove", name: "待删歌曲", artists: "[]", album: "专辑" }).run();
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", ["song-remove"]) });
+  adapter.trackRemove = () => ({ ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } });
+  const result = playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  await scheduler.settle();
+  for (const delay of [5000, 30000, 120000]) { advanceTime(delay); playlists.triggerDueChecks(); await scheduler.settle(); }
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ status: "awaitingConfirmation", step: "unknown" });
+  const { AbnormalOperationsService } = await import("./abnormal-operations.js");
+  const service = new AbnormalOperationsService(database, publicPlaylists, scheduler, adapter, vault, new EventStreamService(), playlists, now);
+  expect(service.listAbnormalOperations()).toContainEqual(expect.objectContaining({ id: result.operation.id, type: "unknown_song_write" }));
+  expect(service.getAbnormalOperation(result.operation.id)).toMatchObject({ playlistId: "pl-roommate", checkRound: 3 });
+  const version = playlists.readSongOperation("roommate", roomId, result.operation.id).version;
+  expect(service.resolveSongWrite("owner", result.operation.id, { reason: "确认停止追查", expectedVersion: version })).toMatchObject({ conclusion: "unconfirmed_terminal" });
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ status: "stopped", songConfirmed: false });
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(1);
+});
+
+it("本地缺少歌曲仍受理删除，以完整云端读回证明不存在，不凭快照判定成功", async () => {
+  const { adapter, playlists, scheduler, roomId } = fixture();
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", []) });
+  const result = playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "not-in-snapshot" });
+  expect(result.operation).toMatchObject({ status: "queued", name: "not-in-snapshot", songConfirmed: false });
+  await scheduler.settle();
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ status: "succeeded", songConfirmed: true });
+  expect(adapter.inputs.filter(input => input.operation === "playlistDetail")).toHaveLength(1);
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(0);
+});
+
+it("写入确认后云端仍含歌曲只待确认，刷新完整读证明删除后收敛且不重发", async () => {
+  const { adapter, playlists, scheduler, roomId, advanceTime } = fixture();
+  let cloudSongs = ["song-remove", "song-keep"];
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", cloudSongs) });
+  const result = playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  await scheduler.settle();
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ status: "awaitingConfirmation", songConfirmed: false });
+  advanceTime(5000); playlists.triggerDueChecks(); await scheduler.settle();
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id).status).toBe("awaitingConfirmation");
+  cloudSongs = ["song-keep"];
+  await playlists.refresh("roommate", roomId);
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ status: "succeeded", songConfirmed: true });
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(1);
+});
+
+it("原账号重授权后的 sending 删除只确认原目标，不重复删除", async () => {
+  const { database, adapter, playlists, scheduler, roomId, vault, now } = fixture();
+  const auth = database.select().from(neteaseAuthorization).get()!;
+  const member = database.select().from(roomMembership).where(eq(roomMembership.userId, "roommate")).get()!;
+  const id = v7();
+  database.insert(operation).values({ id, kind: "removePersonalSong", userId: "roommate", roomId, accountId: "acc-owner",
+    authorizationId: auth.id, generation: 1, status: "waitingAuthorization", createdAt: now(), updatedAt: now() }).run();
+  database.insert(personalSongMutation).values({ operationId: id, memberId: member.id, playlistId: "pl-roommate", bindingGeneration: 1,
+    songId: "song-remove", name: "歌曲", artists: "[]", album: "专辑", step: "sending" }).run();
+  const newAuthId = v7();
+  const credentials = vault.encrypt("MUSIC_U=reauthorized", { authorizationId: newAuthId, accountId: "acc-owner", generation: 2 });
+  database.update(neteaseAuthorization).set({ id: newAuthId, credentials, generation: 2, status: "active" }).run();
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", []) });
+  playlists.onReauthorized("owner", newAuthId, "acc-owner", 2);
+  await scheduler.settle();
+  expect(playlists.readSongOperation("roommate", roomId, id)).toMatchObject({ status: "succeeded", songConfirmed: true });
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(0);
+});
+
+it("个人删除每次上游调用让出调度，间隔至少一秒且让同账号其他任务公平执行", async () => {
+  const { adapter, playlists, scheduler, roomId } = fixture();
+  const calls: Array<{ operation: string; at: number; songId?: string }> = [];
+  const original = adapter.call.bind(adapter);
+  adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    calls.push({ operation: input.operation, at: Date.now() });
+    return original(input);
+  };
+  let removed = false;
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", removed ? [] : ["song-remove"]) });
+  adapter.trackRemove = () => { removed = true; return { ok: true, data: { acknowledged: true } }; };
+  const result = playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  const competing = scheduler.executeMemoryTask("acc-owner", async () => {
+    calls.push({ operation: "competing-task", at: Date.now() });
+  });
+  await scheduler.settle(); await competing;
+  expect(playlists.readSongOperation("roommate", roomId, result.operation.id).status).toBe("succeeded");
+  expect(calls.map(call => call.operation)).toEqual(["identity", "competing-task", "playlistDetail", "trackRemove", "playlistDetail"]);
+  for (let i = 1; i < calls.length; i++) expect(calls[i]!.at - calls[i - 1]!.at).toBeGreaterThanOrEqual(1000);
+}, 10000);
+
+it("本人个人删除排队或未知时拒绝公共同源点歌，公共点歌未完时拒绝再删除", async () => {
+  const { database, adapter, playlists, publicPlaylists, scheduler, roomId } = fixture();
+  const { publicPlaylistBinding } = await import("../db/schema.js");
+  database.insert(publicPlaylistBinding).values({ roomId, accountId: "acc-owner", playlistId: "pl-public", name: "公共", creationOperationId: v7(), generation: 1 }).run();
+  adapter.playlistDetail = input => ({ ok: true, data: mockDetailWithSongs(input.playlistId, ["song-remove"]) });
+  const command = { idempotencyKey: v7(), sourcePlaylistId: "pl-roommate", songId: "song-remove", name: "歌曲", artists: [], album: "专辑" };
+  const removal = playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  expect(() => publicPlaylists.requestSong("roommate", roomId, command)).toThrow(/TARGET_BLOCKED/);
+  await scheduler.settle();
+  expect(playlists.readSongOperation("roommate", roomId, removal.operation.id).status).toBe("awaitingConfirmation");
+  expect(() => publicPlaylists.requestSong("roommate", roomId, command)).toThrow(/TARGET_BLOCKED/);
+});
+
+it("公共同源点歌已受理时，个人删除及维护权限受到未完成写操作约束", () => {
+  const { database, adapter, playlists, publicPlaylists, roomId } = fixture();
+  database.insert(publicPlaylistBinding).values({ roomId, accountId: "acc-owner", playlistId: "pl-public", name: "公共", creationOperationId: v7(), generation: 1 }).run();
+  adapter.playlistDetail = input => ({ ok: true, data: mockDetailWithSongs(input.playlistId, ["song-remove"]) });
+  publicPlaylists.requestSong("roommate", roomId, { idempotencyKey: v7(), sourcePlaylistId: "pl-roommate", songId: "song-remove", name: "歌曲", artists: [], album: "专辑" });
+  expect(() => playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" })).toThrow(/CONCURRENT_OPERATION_LIMIT_EXCEEDED/);
+  expect(playlists.read("roommate", roomId)).toMatchObject({ disabledReason: "OPERATION_PENDING", allowedActions: ["refreshPersonalPlaylist"] });
+});
+
+it.each(["member", "room"] as const)("删除发送后%s撤销，晚到响应不能恢复绑定或快照", async boundary => {
+  const { database, adapter, playlists, publicPlaylists, scheduler, roomId, roommateMemberId } = fixture();
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", ["song-remove"]) });
+  adapter.trackRemove = () => {
+    database.transaction(tx => {
+      if (boundary === "member") {
+        publicPlaylists.terminateMemberInTx(tx, roomId, "roommate");
+        tx.delete(roomMembership).where(eq(roomMembership.id, roommateMemberId)).run();
+      } else {
+        publicPlaylists.terminateRoomInTx(tx, roomId, "owner");
+        tx.delete(roomMembership).where(eq(roomMembership.roomId, roomId)).run();
+        tx.delete(room).where(eq(room.id, roomId)).run();
+      }
+    });
+    return { ok: true, data: { acknowledged: true } };
+  };
+  playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  await scheduler.settle();
+  expect(() => playlists.read("roommate", roomId)).toThrow(/ROOM_UNAVAILABLE/);
+  expect(database.select().from(personalPlaylistBinding).all()).toHaveLength(0);
+  expect(database.select().from(playlistTrack).all()).toHaveLength(0);
+  expect(database.select().from(playlistSnapshot).all()).toHaveLength(0);
+  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(1);
+    const details = database.select().from(personalSongMutation).all();
+  expect(details).toHaveLength(1);
+  expect(details[0]).toMatchObject({ songId: "song-remove", name: "song-remove", artists: "[]", album: "" });
+  expect(details[0]!.memberId).not.toBe(roommateMemberId);
+  expect(database.select().from(operation).all().every(op => op.userId !== "roommate")).toBe(true);
+});
+
+it("终态24小时后查询页不再恢复旧删除，清理载荷并拒绝过期幂等键", async () => {
+  const { database, adapter, playlists, scheduler, roomId, advanceTime, now } = fixture();
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", []) });
+  const command = { idempotencyKey: v7(), songId: "song-remove" };
+  const result = playlists.removeSong("roommate", roomId, command);
+  await scheduler.settle();
+  advanceTime(86_400_001);
+  expect(playlists.read("roommate", roomId).songOperation).toBeNull();
+  // A subsequent accepted command drives the existing terminal pruning path.
+  playlists.removeSong("roommate", roomId, { idempotencyKey: v7({ msecs: now() }), songId: "song-other" });
+  expect(() => playlists.readSongOperation("roommate", roomId, result.operation.id)).toThrow(/OPERATION_NOT_FOUND/);
+  expect(database.select().from(personalSongMutation).where(eq(personalSongMutation.operationId, result.operation.id)).get()).toBeUndefined();
+  expect(() => playlists.removeSong("roommate", roomId, command)).toThrow(/IDEMPOTENCY_KEY_EXPIRED/);
+});
+
+it("删除确认在账号队列等待期间撤权，实际获得执行权后不再发旧请求", async () => {
+  const { adapter, database, playlists, publicPlaylists, scheduler, roomId, roommateMemberId, advanceTime } = fixture();
+  adapter.playlistDetail = () => ({ ok: true, data: mockDetailWithSongs("pl-roommate", ["song-remove"]) });
+  playlists.removeSong("roommate", roomId, { idempotencyKey: v7(), songId: "song-remove" });
+  await scheduler.settle();
+  const readCount = adapter.inputs.filter(input => input.operation === "playlistDetail").length;
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const occupied = scheduler.executeMemoryTask("acc-owner", async () => { enter(); await gate; });
+  await entered;
+  advanceTime(5000);
+  playlists.triggerDueChecks();
+  database.transaction(tx => {
+    publicPlaylists.terminateMemberInTx(tx, roomId, "roommate");
+    tx.delete(roomMembership).where(eq(roomMembership.id, roommateMemberId)).run();
+  });
+  release();
+  await occupied; await scheduler.settle();
+  expect(adapter.inputs.filter(input => input.operation === "playlistDetail")).toHaveLength(readCount);
+  expect(database.select().from(playlistSnapshot).all()).toHaveLength(0);
+}, 10000);

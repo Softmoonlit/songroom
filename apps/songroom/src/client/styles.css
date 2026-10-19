@@ -4852,6 +4852,18 @@ h1 {
   scroll-margin-block: 24px 100px;
 }
 .tracks-header-col.col-title { margin-left: 0; }
+.personal-track-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.personal-track-actions button {
+  min-height: 36px;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
 .play-next-button { font-size: var(--font-xs); padding: 8px; min-height: 40px; white-space: nowrap; }
 .playback-indicator {
   display: inline-flex;
@@ -5216,6 +5228,7 @@ h1 {
   .playlist-tracks-header-bar { padding-inline: 10px; }
   .track-item { min-height: 104px; padding: 12px 10px; }
   .track-info { grid-column: 2; }
+  .personal-track-actions { flex-direction: column; align-items: flex-end; }
   .play-next-button { grid-column: 3; grid-row: 1 / span 2; }
   .track-requesters-side { grid-column: 3; max-width: none; justify-content: flex-start; }
   .track-index { width: 1.5rem; }

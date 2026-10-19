@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, operation, personalPlaylistBinding, personalPlaylistCreation, personalSongAddition, playlistSnapshot, playlistTrack, publicPlaylistBinding } from "../db/schema.js";
+import { commandReceipt, operation, personalPlaylistBinding, personalPlaylistCreation, personalSongMutation, playlistSnapshot, playlistTrack, publicPlaylistBinding } from "../db/schema.js";
 
 type DatabaseTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
@@ -68,22 +68,31 @@ export function terminatePersonalPlaylistsInTx(
     }
   }
 
-  const additions = tx.select({ op: operation, detail: personalSongAddition }).from(operation)
-    .innerJoin(personalSongAddition, eq(personalSongAddition.operationId, operation.id))
-    .where(and(eq(operation.roomId, roomId), eq(operation.kind, "addPersonalSong"),
-      memberId ? eq(personalSongAddition.memberId, memberId) : undefined)).all();
-  for (const { op, detail } of additions) {
+  const mutations = tx.select({ op: operation, detail: personalSongMutation }).from(operation)
+    .innerJoin(personalSongMutation, eq(personalSongMutation.operationId, operation.id))
+    .where(and(eq(operation.roomId, roomId), sql`${operation.kind} IN ('addPersonalSong', 'removePersonalSong')`,
+      memberId ? eq(personalSongMutation.memberId, memberId) : undefined)).all();
+  for (const { op, detail } of mutations) {
     tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
-    if (["succeeded", "failed", "stopped"].includes(op.status) || ["ready", "verified"].includes(detail.step)) {
+    if (["succeeded", "failed", "stopped"].includes(op.status) || ["ready", "verified", "prepared"].includes(detail.step)) {
       tx.delete(operation).where(eq(operation.id, op.id)).run();
     } else {
       const anonymousId = v7();
-      tx.update(personalSongAddition).set({ memberId: anonymousId })
-        .where(eq(personalSongAddition.operationId, op.id)).run();
+      tx.update(personalSongMutation).set({ memberId: anonymousId, name: detail.songId, artists: "[]", album: "" })
+        .where(eq(personalSongMutation.operationId, op.id)).run();
       tx.update(operation).set({ userId: anonymousId, updatedAt: now, version: op.version + 1 })
         .where(eq(operation.id, op.id)).run();
     }
   }
 
   return [...cleanupIds];
+}
+
+/** Pending personal writes also block requests that read that playlist as their source. */
+export function hasPersonalSongWrite(database: AppDatabase, accountId: string, playlistId: string, exceptOperationId?: string): boolean {
+  return Boolean(database.select({ id: operation.id }).from(operation)
+    .innerJoin(personalSongMutation, eq(personalSongMutation.operationId, operation.id))
+    .where(and(eq(operation.accountId, accountId), eq(personalSongMutation.playlistId, playlistId),
+      sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`,
+      exceptOperationId ? sql`${operation.id} != ${exceptOperationId}` : undefined)).get());
 }

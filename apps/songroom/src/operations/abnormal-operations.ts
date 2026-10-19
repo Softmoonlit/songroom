@@ -7,6 +7,7 @@ import {
   operation,
   personalPlaylistBinding,
   personalPlaylistCreation,
+  personalSongMutation,
   publicPlaylistBinding,
   publicPlaylistCleanup,
   publicPlaylistCreation,
@@ -56,28 +57,12 @@ export class AbnormalOperationsService {
     const list: AbnormalOperationSummary[] = [];
 
     // 1. 普通未知歌曲写入 (必须是三轮补查结束后的长期未知待确认)
-    const songOps = this.database
-      .select({
-        id: operation.id,
-        accountId: operation.accountId,
-        status: operation.status,
-        version: operation.version,
-        updatedAt: operation.updatedAt,
-        playlistId: publicSongRequest.playlistId,
-        checkRound: publicSongRequest.checkRound
-      })
-      .from(operation)
-      .innerJoin(publicSongRequest, eq(publicSongRequest.operationId, operation.id))
-      .where(
-        and(
-          eq(operation.kind, "requestPublicSong"),
-          eq(operation.status, "awaitingConfirmation"),
-          sql`${publicSongRequest.checkRound} >= 3`,
-          isNull(publicSongRequest.nextCheckAt)
-        )
-      )
-      .orderBy(desc(operation.updatedAt))
-      .all();
+    const songOps = [publicSongRequest, personalSongMutation].flatMap(detail => this.database
+      .select({ id: operation.id, accountId: operation.accountId, status: operation.status, version: operation.version,
+        updatedAt: operation.updatedAt, playlistId: detail.playlistId, checkRound: detail.checkRound })
+      .from(operation).innerJoin(detail, eq(detail.operationId, operation.id))
+      .where(and(eq(operation.status, "awaitingConfirmation"), sql`${detail.checkRound} >= 3`, isNull(detail.nextCheckAt)))
+      .orderBy(desc(operation.updatedAt)).all());
 
     for (const op of songOps) {
       list.push({
@@ -200,8 +185,9 @@ export class AbnormalOperationsService {
     // 1. 尝试查询 operation (歌曲写入或歌单创建)
     const op = this.database.select().from(operation).where(eq(operation.id, id)).get();
     if (op) {
-      if (op.kind === "requestPublicSong") {
-        const req = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
+      if (["requestPublicSong", "addPersonalSong", "removePersonalSong"].includes(op.kind)) {
+        const table = op.kind === "requestPublicSong" ? publicSongRequest : personalSongMutation;
+        const req = this.database.select().from(table).where(eq(table.operationId, op.id)).get();
         if (req) {
           return {
             id: op.id,
@@ -214,7 +200,7 @@ export class AbnormalOperationsService {
             playlistId: req.playlistId,
             checkRound: req.checkRound,
             lastErrorCode: op.errorCode,
-            impactDescription: "终结后解除该公共歌单的目标写入阻塞，不宣称失败、不回滚、不补写；后续业务必须先刷新并使用新幂等键",
+            impactDescription: "终结后解除该歌单的目标写入阻塞，不宣称失败、不回滚、不补写；后续业务必须先刷新并使用新幂等键",
             updatedAt: op.updatedAt
           };
         }
@@ -321,7 +307,7 @@ export class AbnormalOperationsService {
     const validatedReason = validateAdminReason(input.reason);
 
     const op = this.database.select().from(operation).where(eq(operation.id, operationId)).get();
-    if (!op || op.kind !== "requestPublicSong") {
+    if (!op || !["requestPublicSong", "addPersonalSong", "removePersonalSong"].includes(op.kind)) {
       throw new BusinessError(404, "NOT_FOUND", "未找到对应的未知点歌写入操作");
     }
     if (op.status !== "awaitingConfirmation") {
@@ -331,7 +317,8 @@ export class AbnormalOperationsService {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
     }
 
-    const req = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, operationId)).get();
+    const table = op.kind === "requestPublicSong" ? publicSongRequest : personalSongMutation;
+    const req = this.database.select().from(table).where(eq(table.operationId, operationId)).get();
     if (!req) {
       throw new BusinessError(404, "NOT_FOUND", "未找到对应的点歌请求详情");
     }
@@ -354,12 +341,12 @@ export class AbnormalOperationsService {
         .where(eq(operation.id, operationId))
         .run();
 
-      tx.update(publicSongRequest)
+      tx.update(table)
         .set({
           step: "stopped",
           nextCheckAt: null
         })
-        .where(eq(publicSongRequest.operationId, operationId))
+        .where(eq(table.operationId, operationId))
         .run();
 
       // 严格脱敏：绝不记录昵称、歌曲、凭据、Cookie 或完整错误响应
@@ -374,7 +361,7 @@ export class AbnormalOperationsService {
           previousStatus: "awaitingConfirmation",
           nextStatus: "stopped",
           result: "succeeded",
-          details: JSON.stringify({ playlistId: req.playlistId, operationKind: "requestPublicSong" }),
+          details: JSON.stringify({ playlistId: req.playlistId, operationKind: op.kind }),
           createdAt: new Date(this.now())
         })
         .run();

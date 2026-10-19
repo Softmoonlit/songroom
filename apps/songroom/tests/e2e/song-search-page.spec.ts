@@ -222,6 +222,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
         album: "叶惠美",
         status: "succeeded",
         songConfirmed: true,
+        action: "add",
         errorCode: null,
         step: "succeeded",
         version: 1
@@ -303,6 +304,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
         album: "叶惠美",
         status: "queued",
         songConfirmed: false,
+        action: "add",
         errorCode: null,
         step: "ready",
         version: 1
@@ -320,6 +322,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
         album: "叶惠美",
         status: currentOpStatus,
         songConfirmed: currentOpStatus === "succeeded",
+        action: "add",
         errorCode: null,
         step: currentOpStatus === "succeeded" ? "succeeded" : currentOpStatus === "awaitingConfirmation" ? "confirming" : "ready",
         version: currentOpStatus === "succeeded" ? 2 : 1

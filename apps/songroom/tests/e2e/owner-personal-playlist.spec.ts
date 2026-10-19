@@ -235,7 +235,7 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       await expect(detail.getByText(`songroom-测试音乐间-${nickname}`, { exact: true })).toBeVisible();
       await expect(detail.getByText("专用（仅本人可维护）")).toBeVisible();
       await expect(detail.getByText("稻香", { exact: true })).toBeVisible();
-      await expect(detail.getByRole("button", { name: /创建|绑定|解绑|更换|同步|点歌|添加/ })).toHaveCount(0);
+      await expect(detail.getByRole("button", { name: /创建|绑定|解绑|更换|同步|点歌|添加|删除/ })).toHaveCount(0);
     });
   }
 

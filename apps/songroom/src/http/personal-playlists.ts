@@ -5,6 +5,8 @@ import {
   personalPlaylistCreateCommand,
   personalPlaylistView,
   personalSongAddCommand,
+  personalSongRemoveCommand,
+  personalSongRemoveResponse,
   personalSongAddResponse,
   personalSongOperationView
 } from "../shared/personal-playlist-contracts.js";
@@ -65,6 +67,15 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
     return reply.code(statusCode).send(result);
   });
 
+  typed.post("/api/rooms/:roomId/personal-playlist/songs/remove", {
+    schema: { params: roomParams, body: personalSongRemoveCommand,
+      response: { 200: personalSongRemoveResponse, 202: personalSongRemoveResponse } }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    const result = playlists.removeSong(principal.userId, request.params.roomId, request.body);
+    return reply.code(result.replay || result.operation.status === "succeeded" ? 200 : 202).send(result);
+  });
+
   typed.get("/api/rooms/:roomId/personal-playlist/songs/:operationId", {
     schema: {
       params: personalSongOperationParams,
@@ -74,7 +85,7 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
     }
   }, async (request, reply) => {
     const principal = await requireSession(auth, request, reply);
-    return playlists.readSongAdditionOperation(principal.userId, request.params.roomId, request.params.operationId);
+    return playlists.readSongOperation(principal.userId, request.params.roomId, request.params.operationId);
   });
 
   typed.get("/api/rooms/:roomId/members/:memberId/personal-playlist", {

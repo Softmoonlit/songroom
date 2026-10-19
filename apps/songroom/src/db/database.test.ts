@@ -75,7 +75,7 @@ describe("database lifecycle", () => {
       "operation",
       "personal_playlist_binding",
       "personal_playlist_creation",
-      "personal_song_addition",
+      "personal_song_mutation",
       "playlist_snapshot",
       "playlist_track",
       "public_play_next",
@@ -364,10 +364,10 @@ describe("database lifecycle", () => {
     const op = current.$client.prepare("SELECT * FROM operation WHERE id = 'op-prev'").get() as { id: string; kind: string };
     expect(op.kind).toBe("createPublicPlaylist");
 
-    // 验证新 operation.kind 允许 addPersonalSong 并能插入 personal_song_addition
+    // 验证新 operation.kind 允许 addPersonalSong 并能插入 personal_song_mutation
     current.$client.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, last_granted, version, created_at, updated_at) VALUES (?, 'addPersonalSong', ?, ?, 'acc', 'auth', 1, 'queued', 0, 1, ?, ?)").run("op-add", "u-1", "r-1", now, now);
-    current.$client.prepare("INSERT INTO personal_song_addition (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("op-add", "m-1", "pl-1", 1, "s-1", "歌", "[]", "专", "ready");
-    const addition = current.$client.prepare("SELECT * FROM personal_song_addition WHERE operation_id = 'op-add'").get() as { song_id: string; step: string };
+    current.$client.prepare("INSERT INTO personal_song_mutation (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("op-add", "m-1", "pl-1", 1, "s-1", "歌", "[]", "专", "ready");
+    const addition = current.$client.prepare("SELECT * FROM personal_song_mutation WHERE operation_id = 'op-add'").get() as { song_id: string; step: string };
     expect(addition.song_id).toBe("s-1");
     expect(addition.step).toBe("ready");
     expect(current.$client.pragma("foreign_key_check")).toEqual([]);
@@ -432,4 +432,24 @@ describe("database lifecycle", () => {
 
     expect(() => checkDatabase(filePath)).toThrow(/migration hash/i);
   });
+});
+
+it("0027将已有个人加歌明细升级到共享加删表，保持sending与恢复证据且不保留旧表", () => {
+  const filePath = temporaryDatabasePath();
+  createOldDatabase(filePath, 27);
+  const old = new Database(filePath);
+  const now = Date.now();
+  old.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, last_granted, version, created_at, updated_at) VALUES ('op-existing', 'addPersonalSong', 'actor', 'room', 'acc', 'auth', 2, 'processing', 4, 7, ?, ?)").run(now, now);
+  old.prepare("INSERT INTO personal_song_addition (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step, check_round, next_check_at) VALUES ('op-existing', 'member', 'target', 3, 'song', '歌', '[]', '专', 'sending', 2, ?)").run(now + 30000);
+  old.close();
+  migrateDatabase(filePath);
+  const current = openDatabase(filePath);
+  expect(checkDatabase(filePath).schemaVersion).toBe(28);
+  expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_addition'").get()).toBeUndefined();
+  expect(current.$client.prepare("SELECT kind, version, status, account_id FROM operation WHERE id = 'op-existing'").get()).toEqual({ kind: "addPersonalSong", version: 7, status: "processing", account_id: "acc" });
+  expect(current.$client.prepare("SELECT song_id, binding_generation, step, check_round, next_check_at FROM personal_song_mutation WHERE operation_id = 'op-existing'").get()).toEqual({ song_id: "song", binding_generation: 3, step: "sending", check_round: 2, next_check_at: now + 30000 });
+  current.$client.prepare("INSERT INTO operation (id, kind, user_id, room_id, status, version, created_at, updated_at) VALUES ('op-remove', 'removePersonalSong', 'actor2', 'room', 'succeeded', 1, ?, ?)").run(now, now);
+  current.$client.prepare("INSERT INTO personal_song_mutation (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES ('op-remove', 'member2', 'target2', 1, 'song2', '歌2', '[]', '', 'prepared')").run();
+  expect(current.$client.pragma("foreign_key_check")).toEqual([]);
+  current.$client.close();
 });
