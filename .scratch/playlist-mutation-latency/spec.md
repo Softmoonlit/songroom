@@ -1,6 +1,6 @@
 # 歌单修改延迟修复
 
-**Status:** need-review
+**Status:** resolved
 
 ## 已确认决策
 
