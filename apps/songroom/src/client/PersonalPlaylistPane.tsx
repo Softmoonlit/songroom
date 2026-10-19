@@ -5,7 +5,7 @@ import { AlertCircle, Info, ListMusic, Plus, RotateCw, Trash2 } from "lucide-rea
 import { v7 as uuidv7 } from "uuid";
 import {
   personalPlaylistView,
-  personalSongRemoveResponse,
+  personalSongMutationResponse,
   type PersonalPlaylistTrack,
   type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
@@ -392,7 +392,7 @@ export function PersonalPlaylistPane({
   const songOperationPending = Boolean(songOperation && !terminalStatuses.has(songOperation.status));
   const removeMutation = useMutation({
     mutationFn: ({ track, targetRoomId }: { track: PersonalPlaylistTrack; targetRoomId: string; context: string }) =>
-      request(`/${targetRoomId}/personal-playlist/songs/remove`, personalSongRemoveResponse, undefined, {
+      request(`/${targetRoomId}/personal-playlist/songs/remove`, personalSongMutationResponse, undefined, {
         idempotencyKey: uuidv7(),
         songId: track.songId
       }),

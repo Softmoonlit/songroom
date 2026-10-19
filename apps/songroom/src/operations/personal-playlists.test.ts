@@ -276,7 +276,7 @@ describe("PersonalPlaylists operations", () => {
       id: "pl-roommate-dedicated",
       name: "songroom-主房间-室友"
     });
-    expect(readView.allowedActions).toEqual(["refreshPersonalPlaylist"]);
+    expect(readView.allowedActions).toEqual(["refreshPersonalPlaylist", "removePersonalSong"]);
     expect(readView.snapshot?.trackCount).toBe(2);
   });
 

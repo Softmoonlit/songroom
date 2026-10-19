@@ -355,7 +355,7 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
     expect(showResult.ok).toBe(true);
     expect(showResult.detail?.id).toBe(opId);
     expect(showResult.detail?.playlistId).toBe(playlistId);
-    expect(showResult.detail?.impactDescription).toContain("解除该公共歌单的目标写入阻塞");
+    expect(showResult.detail?.impactDescription).toContain("解除该歌单的目标写入阻塞");
 
     // 4. 管理员通过 CLI 处置终结该操作
     const actionResult = await runAdminAbnormalAction(env.config, "resolve-write", opId, {

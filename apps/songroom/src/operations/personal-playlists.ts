@@ -55,6 +55,7 @@ export class PersonalPlaylists {
       execute: row => this.#executeCreate(row),
       recover: () => this.#recoverCreate()
     });
+    // 增删共用明细表；恢复扫描两种 kind，仅由成对注册中的 add handler 执行一次。
     for (const kind of ["addPersonalSong", "removePersonalSong"] as const) this.scheduler.register(kind, {
       claim: row => this.#claimSongMutation(row),
       execute: row => this.#executeSongMutation(row),

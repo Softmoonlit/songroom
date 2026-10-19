@@ -10,7 +10,7 @@ import {
 } from "../shared/song-search-contracts.js";
 import {
   personalPlaylistView,
-  personalSongAddResponse,
+  personalSongMutationResponse,
   personalSongOperationView,
   type PersonalSongOperationView
 } from "../shared/personal-playlist-contracts.js";
@@ -211,7 +211,7 @@ export function SongSearchPane({
       setAddingSongId(variables.candidate.id);
       const res = await request(
         `/${variables.targetRoomId}/personal-playlist/songs`,
-        personalSongAddResponse,
+        personalSongMutationResponse,
         undefined,
         {
           idempotencyKey: uuidv7(),

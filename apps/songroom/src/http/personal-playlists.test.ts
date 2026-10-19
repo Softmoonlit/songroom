@@ -192,7 +192,7 @@ describe("personal-playlist HTTP routes", () => {
 it("单首删除 HTTP 校验本人、同源、命令及幂等，刷新可恢复操作而他人成员详情不泄露", async () => {
   const { app, adapter, owner, member, outsider, roomId, roommateMemberId } = await fixture();
   const { personalPlaylistBinding } = await import("../db/schema.js");
-  const { personalSongRemoveResponse, personalSongOperationView } = await import("../shared/personal-playlist-contracts.js");
+  const { personalSongMutationResponse, personalSongOperationView } = await import("../shared/personal-playlist-contracts.js");
   app.database.insert(personalPlaylistBinding).values({ id: v7(), roomId, memberId: roommateMemberId,
     accountId: "test", playlistId: "pl-personal", name: "个人", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() }).run();
   const base = `/api/rooms/${roomId}/personal-playlist`;
@@ -212,7 +212,7 @@ it("单首删除 HTTP 校验本人、同源、命令及幂等，刷新可恢复�
   } });
   const accepted = await request(app, `${base}/songs/remove`, member.cookie, command);
   expect(accepted.statusCode).toBe(202);
-  const result = personalSongRemoveResponse.parse(accepted.json());
+  const result = personalSongMutationResponse.parse(accepted.json());
   expect(result.operation).toMatchObject({ action: "remove", name: "song-1", songConfirmed: false });
   await app.scheduler.settle();
   const operationUrl = `${base}/songs/${result.operation.id}`;
@@ -223,7 +223,7 @@ it("单首删除 HTTP 校验本人、同源、命令及幂等，刷新可恢复�
   expect(other.json()).not.toHaveProperty("songOperation");
   const replay = await request(app, `${base}/songs/remove`, member.cookie, command);
   expect(replay.statusCode).toBe(200);
-  expect(personalSongRemoveResponse.parse(replay.json())).toMatchObject({ replay: true, operation: { id: result.operation.id } });
+  expect(personalSongMutationResponse.parse(replay.json())).toMatchObject({ replay: true, operation: { id: result.operation.id } });
   expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, songId: "other" })).statusCode).toBe(409);
   expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(1);
 });

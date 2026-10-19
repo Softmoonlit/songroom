@@ -6,8 +6,7 @@ import {
   personalPlaylistView,
   personalSongAddCommand,
   personalSongRemoveCommand,
-  personalSongRemoveResponse,
-  personalSongAddResponse,
+  personalSongMutationResponse,
   personalSongOperationView
 } from "../shared/personal-playlist-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
@@ -56,8 +55,8 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
       params: roomParams,
       body: personalSongAddCommand,
       response: {
-        200: personalSongAddResponse,
-        202: personalSongAddResponse
+        200: personalSongMutationResponse,
+        202: personalSongMutationResponse
       }
     }
   }, async (request, reply) => {
@@ -69,7 +68,7 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
 
   typed.post("/api/rooms/:roomId/personal-playlist/songs/remove", {
     schema: { params: roomParams, body: personalSongRemoveCommand,
-      response: { 200: personalSongRemoveResponse, 202: personalSongRemoveResponse } }
+      response: { 200: personalSongMutationResponse, 202: personalSongMutationResponse } }
   }, async (request, reply) => {
     const principal = await requireSession(auth, request, reply);
     const result = playlists.removeSong(principal.userId, request.params.roomId, request.body);

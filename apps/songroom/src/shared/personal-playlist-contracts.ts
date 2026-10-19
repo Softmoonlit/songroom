@@ -89,17 +89,14 @@ export const personalSongAddCommand = z.strictObject({
 });
 export type PersonalSongAddCommand = z.infer<typeof personalSongAddCommand>;
 
-export const personalSongAddResponse = z.strictObject({
+export const personalSongMutationResponse = z.strictObject({
   replay: z.boolean(),
   operation: personalSongOperationView
 });
-export type PersonalSongAddResponse = z.infer<typeof personalSongAddResponse>;
-
+export type PersonalSongMutationResponse = z.infer<typeof personalSongMutationResponse>;
 
 export const personalSongRemoveCommand = z.strictObject({
   idempotencyKey: uuidv7,
   songId: z.string().min(1)
 });
 export type PersonalSongRemoveCommand = z.infer<typeof personalSongRemoveCommand>;
-export const personalSongRemoveResponse = personalSongAddResponse;
-export type PersonalSongRemoveResponse = z.infer<typeof personalSongRemoveResponse>;

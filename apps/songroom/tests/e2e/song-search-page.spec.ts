@@ -4,7 +4,7 @@ import { v7 } from "uuid";
 import type { PublicPlaylistView } from "../../src/shared/public-playlist-contracts.js";
 import type {
   PersonalPlaylistView,
-  PersonalSongAddResponse,
+  PersonalSongMutationResponse,
   PersonalSongOperationView
 } from "../../src/shared/personal-playlist-contracts.js";
 import type { SearchView, SearchInitiatedResponse } from "../../src/shared/song-search-contracts.js";
@@ -227,7 +227,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
         step: "succeeded",
         version: 1
       };
-      return route.fulfill({ json: { replay: false, operation: op } satisfies PersonalSongAddResponse });
+      return route.fulfill({ json: { replay: false, operation: op } satisfies PersonalSongMutationResponse });
     });
 
     await page.goto(`/rooms/${roomId}`);
