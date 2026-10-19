@@ -36,12 +36,18 @@ export function getFriendlyReplacementOperationStatus(
     case "processing": {
       let description = "正在处理中…";
       if (op.step === "verified" || op.step === "ready") {
-        description = "正在核对点歌台与各成员来源…";
+        if (op.removedSongIds.length > 0 && op.addedSongIds.length === 0) {
+          description = "已清空点歌台旧歌曲，准备添加新歌曲…";
+        } else {
+          description = "正在核对点歌台与各成员来源…";
+        }
       } else if (op.step === "sending") {
         if (op.currentAction === "add") {
           description = `正在添加歌曲到点歌台（已添加 ${op.addedSongIds.length} / ${op.targetCount} 首）…`;
         } else if (op.currentAction === "remove") {
-          description = `正在从点歌台移除旧歌曲（已移除 ${op.removedSongIds.length} 首）…`;
+          description = op.removedSongIds.length > 0
+            ? `正在从点歌台移除旧歌曲（已移除 ${op.removedSongIds.length} 首）…`
+            : "正在从点歌台移除旧歌曲…";
         } else {
           description = `正在同步云端歌曲增删（目标 ${op.targetCount} 首）…`;
         }

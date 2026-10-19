@@ -70,7 +70,13 @@ async function invoke(message: WorkerInput): Promise<AdapterResult> {
     case "songDetail": moduleName = "song_detail"; query.ids = input.songIds.join(","); break;
     case "playlistCreate": moduleName = "playlist_create"; Object.assign(query, { name: input.name, privacy: "0", type: "NORMAL" }); break;
     case "playlistDelete": moduleName = "playlist_delete"; query.id = input.playlistId; break;
-    case "trackAdd": case "trackRemove": moduleName = "playlist_tracks"; Object.assign(query, { pid: input.playlistId, tracks: input.songId, op: operation === "trackAdd" ? "add" : "del" }); break;
+    case "trackAdd": case "trackRemove": {
+      moduleName = "playlist_tracks";
+      const songIds = input.songIds ?? (input.songId ? [input.songId] : []);
+      if (songIds.length === 0) return error(operation, "INVALID_INPUT");
+      Object.assign(query, { pid: input.playlistId, tracks: songIds.join(","), op: operation === "trackAdd" ? "add" : "del" });
+      break;
+    }
   }
   const request = require(join(vendorRoot, "util/request.js"));
   const module = require(join(vendorRoot, "module", `${moduleName}.js`));

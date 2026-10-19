@@ -322,131 +322,32 @@ export class PublicPlaylistReplacement {
     auth: Authorization,
     cookie: string
   ): Promise<void> {
+    const originalSongIds = JSON.parse(detail.originalSongIds) as string[];
+    const removedSongIds = JSON.parse(detail.removedSongIds) as string[];
+    const addedSongIds = JSON.parse(detail.addedSongIds) as string[];
     const targetTracks = JSON.parse(detail.targetTracks) as SelectedTrack[];
     const targetSongIds = targetTracks.map(t => t.songId);
-    const originalSongIds = JSON.parse(detail.originalSongIds) as string[];
-    const addedSongIds = JSON.parse(detail.addedSongIds) as string[];
-    const removedSongIds = JSON.parse(detail.removedSongIds) as string[];
 
-    const currentTracks = this.database.select().from(playlistTrack).where(and(
-      eq(playlistTrack.accountId, row.accountId!),
-      eq(playlistTrack.playlistId, detail.playlistId)
-    )).orderBy(playlistTrack.position).all();
-    const currentSongIds = currentTracks.map(t => t.songId);
-
-    // 阶段 1：逐首增加缺失的目标歌曲
-    const missingTargetSongs = targetSongIds.filter(id => !currentSongIds.includes(id) && !addedSongIds.includes(id));
-    if (missingTargetSongs.length > 0) {
-      const songToAdd = missingTargetSongs[0];
-
-      // 发送前核验来源依据有效性（成员仍在、绑定未变、歌曲仍在来源歌单中）
-      const sources = JSON.parse(detail.sources) as SourceBasis[];
-      const targetTrack = targetTracks.find(t => t.songId === songToAdd);
-      if (targetTrack) {
-        const source = sources.find(s => s.memberId === targetTrack.sourceMemberId);
-        if (source) {
-          const member = this.database.select().from(roomMembership).where(and(
-            eq(roomMembership.id, source.memberId),
-            eq(roomMembership.roomId, row.roomId)
-          )).get();
-          const currentBinding = this.database.select().from(personalPlaylistBinding).where(and(
-            eq(personalPlaylistBinding.id, source.bindingId),
-            eq(personalPlaylistBinding.generation, source.bindingGeneration)
-          )).get();
-          const inSource = currentBinding ? this.database.select().from(playlistTrack).where(and(
-            eq(playlistTrack.accountId, currentBinding.accountId),
-            eq(playlistTrack.playlistId, currentBinding.playlistId),
-            eq(playlistTrack.songId, songToAdd)
-          )).get() : null;
-
-          if (!member || !currentBinding || !inSource) {
-            this.#finish(row.id, "stopped", "PLAYLIST_CONFLICT");
-            return;
-          }
-        }
-      }
-
-      this.database.update(publicPlaylistReplacement).set({
-        step: "sending",
-        currentAction: "add",
-        currentSongId: songToAdd
-      }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
-
-      const sendingDetail: ReplacementDetail = {
-        ...detail,
-        step: "sending",
-        currentAction: "add",
-        currentSongId: songToAdd
-      };
-
-      const addResult = await this.adapter.call({
-        operation: "trackAdd",
-        cookie,
-        playlistId: detail.playlistId,
-        songId: songToAdd
-      });
-
-      if (!this.#stillCurrent(row, sendingDetail)) return;
-
-      if (!addResult.ok) {
-        if (addResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
-        if (addResult.error.outcome === "failed") {
-          this.#failure(row, sendingDetail, addResult.error.code, true);
-          return;
-        }
-        this.#awaitConfirmation(row, sendingDetail, addResult.error.code);
-        return;
-      }
-
-      this.database.update(publicPlaylistReplacement).set({
-        step: "confirming"
-      }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
-
-      const confirmingDetail: ReplacementDetail = {
-        ...sendingDetail,
-        step: "confirming"
-      };
-
-      await this.#executeConfirming(row, confirmingDetail, auth, cookie);
-      return;
-    }
-
-    // 阶段 2：逐首移除不再属于新组的旧歌曲
-    const songsToRemove = originalSongIds.filter(id => !targetSongIds.includes(id) && !removedSongIds.includes(id));
-    if (songsToRemove.length > 0) {
-      const songToRemove = songsToRemove[0];
-
-      // 若当前快照中已无该歌曲（如外部已删），直接记入 removedSongIds
-      if (!currentSongIds.includes(songToRemove)) {
-        const newRemoved = [...removedSongIds, songToRemove];
-        this.database.update(publicPlaylistReplacement).set({
-          removedSongIds: JSON.stringify(newRemoved),
-          currentAction: null,
-          currentSongId: null,
-          step: "verified"
-        }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
-        this.#queue(row.id, "verified");
-        return;
-      }
-
+    // 阶段 1：批量清空当前公共歌单歌曲（若歌单非空且尚未清空）
+    if (originalSongIds.length > 0 && removedSongIds.length === 0) {
       this.database.update(publicPlaylistReplacement).set({
         step: "sending",
         currentAction: "remove",
-        currentSongId: songToRemove
+        currentSongId: null
       }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
 
       const sendingDetail: ReplacementDetail = {
         ...detail,
         step: "sending",
         currentAction: "remove",
-        currentSongId: songToRemove
+        currentSongId: null
       };
 
       const removeResult = await this.adapter.call({
         operation: "trackRemove",
         cookie,
         playlistId: detail.playlistId,
-        songId: songToRemove
+        songIds: originalSongIds
       });
 
       if (!this.#stillCurrent(row, sendingDetail)) return;
@@ -474,8 +375,83 @@ export class PublicPlaylistReplacement {
       return;
     }
 
-    // 阶段 3：目标歌曲已全集确认且旧歌已全部移除，执行打标并终结
-    await this.#executeTagging(row, detail);
+    // 阶段 2：批量添加目标歌曲（若尚未添加）
+    if (addedSongIds.length === 0 && targetSongIds.length > 0) {
+      // 发送前核验来源依据有效性（成员仍在、绑定未变、歌曲仍在来源歌单中）
+      const sources = JSON.parse(detail.sources) as SourceBasis[];
+      for (const track of targetTracks) {
+        const source = sources.find(s => s.memberId === track.sourceMemberId);
+        if (source) {
+          const member = this.database.select().from(roomMembership).where(and(
+            eq(roomMembership.id, source.memberId),
+            eq(roomMembership.roomId, row.roomId)
+          )).get();
+          const currentBinding = this.database.select().from(personalPlaylistBinding).where(and(
+            eq(personalPlaylistBinding.id, source.bindingId),
+            eq(personalPlaylistBinding.generation, source.bindingGeneration)
+          )).get();
+          const inSource = currentBinding ? this.database.select().from(playlistTrack).where(and(
+            eq(playlistTrack.accountId, currentBinding.accountId),
+            eq(playlistTrack.playlistId, currentBinding.playlistId),
+            eq(playlistTrack.songId, track.songId)
+          )).get() : null;
+
+          if (!member || !currentBinding || !inSource) {
+            this.#finish(row.id, "stopped", "PLAYLIST_CONFLICT");
+            return;
+          }
+        }
+      }
+
+      this.database.update(publicPlaylistReplacement).set({
+        step: "sending",
+        currentAction: "add",
+        currentSongId: null
+      }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+
+      const sendingDetail: ReplacementDetail = {
+        ...detail,
+        step: "sending",
+        currentAction: "add",
+        currentSongId: null
+      };
+
+      const addResult = await this.adapter.call({
+        operation: "trackAdd",
+        cookie,
+        playlistId: detail.playlistId,
+        songIds: targetSongIds
+      });
+
+      if (!this.#stillCurrent(row, sendingDetail)) return;
+
+      if (!addResult.ok) {
+        if (addResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
+        if (addResult.error.outcome === "failed") {
+          this.#failure(row, sendingDetail, addResult.error.code, true);
+          return;
+        }
+        this.#awaitConfirmation(row, sendingDetail, addResult.error.code);
+        return;
+      }
+
+      this.database.update(publicPlaylistReplacement).set({
+        step: "confirming"
+      }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+
+      const confirmingDetail: ReplacementDetail = {
+        ...sendingDetail,
+        step: "confirming"
+      };
+
+      await this.#executeConfirming(row, confirmingDetail, auth, cookie);
+      return;
+    }
+
+    // 阶段 3：如果目标歌曲已经确认，执行打标并终结
+    if (addedSongIds.length > 0 || targetSongIds.length === 0) {
+      await this.#executeTagging(row, detail);
+    }
   }
 
   async #executeConfirming(
@@ -517,56 +493,95 @@ export class PublicPlaylistReplacement {
     const targetTracks = JSON.parse(detail.targetTracks) as SelectedTrack[];
     const targetSongIds = targetTracks.map(t => t.songId);
     const originalSongIds = JSON.parse(detail.originalSongIds) as string[];
-    const addedSongIds = JSON.parse(detail.addedSongIds) as string[];
-    const removedSongIds = JSON.parse(detail.removedSongIds) as string[];
 
-    if (detail.currentAction === "add" && detail.currentSongId) {
-      if (data.songIds.includes(detail.currentSongId)) {
-        const newAdded = addedSongIds.includes(detail.currentSongId) ? addedSongIds : [...addedSongIds, detail.currentSongId];
+    if (detail.currentAction === "remove") {
+      // 确认批量清空结果
+      const remainingOldSongs = originalSongIds.filter(id => data.songIds.includes(id));
+      const unexpectedSongs = data.songIds.filter(id => !originalSongIds.includes(id));
+
+      if (unexpectedSongs.length > 0) {
+        // 规格："外部并发导致集合变化时据实反馈，不通过清理意外歌曲掩盖冲突。"
         this.database.update(publicPlaylistReplacement).set({
-          addedSongIds: JSON.stringify(newAdded),
-          currentAction: null,
-          currentSongId: null,
-          checkRound: 0,
-          nextCheckAt: null,
-          step: "verified"
+          step: "stopped"
         }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
-        this.#queue(row.id, "verified");
-      } else {
-        this.#awaitConfirmation(row, detail, null);
+        this.#finish(row.id, "stopped", "PLAYLIST_CONFLICT");
+        return;
       }
-    } else if (detail.currentAction === "remove" && detail.currentSongId) {
-      if (!data.songIds.includes(detail.currentSongId)) {
-        // 规格："读回出现未预期歌曲或外部变化时停止自动删除、展示最新状态，不反复覆盖争夺目标集合。"
-        const unexpectedSong = data.songIds.find(id => !originalSongIds.includes(id) && !targetSongIds.includes(id));
-        const missingTarget = targetSongIds.find(id => !data.songIds.includes(id));
-        if (unexpectedSong || missingTarget) {
-          const newRemoved = removedSongIds.includes(detail.currentSongId) ? removedSongIds : [...removedSongIds, detail.currentSongId];
-          this.database.update(publicPlaylistReplacement).set({
-            removedSongIds: JSON.stringify(newRemoved),
+
+      if (remainingOldSongs.length === 0) {
+        // 清空已完整确认！
+        // 规格："清空确认移除后结束旧标签生命周期；重新加入歌曲仅按本轮最终来源成员记录标签"
+        this.database.transaction(tx => {
+          tx.delete(requesterTag).where(and(
+            eq(requesterTag.roomId, row.roomId),
+            eq(requesterTag.bindingGeneration, detail.bindingGeneration)
+          )).run();
+
+          tx.update(publicPlaylistReplacement).set({
+            removedSongIds: JSON.stringify(originalSongIds),
             currentAction: null,
             currentSongId: null,
-            step: "stopped"
+            checkRound: 0,
+            nextCheckAt: null,
+            step: "verified"
           }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
-          this.#finish(row.id, "stopped", "PLAYLIST_CONFLICT");
-          return;
-        }
+        });
 
-        const newRemoved = removedSongIds.includes(detail.currentSongId) ? removedSongIds : [...removedSongIds, detail.currentSongId];
+        this.#queue(row.id, "verified");
+      } else {
+        // 旧歌尚未全清（可能写入未抵达）
+        this.#awaitConfirmation(row, detail, null);
+      }
+    } else if (detail.currentAction === "add") {
+      // 确认批量添加结果
+      const unexpectedSongs = data.songIds.filter(id => !targetSongIds.includes(id));
+      if (unexpectedSongs.length > 0) {
+        // 外部并发修改
         this.database.update(publicPlaylistReplacement).set({
-          removedSongIds: JSON.stringify(newRemoved),
+          step: "stopped"
+        }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+        this.#finish(row.id, "stopped", "PLAYLIST_CONFLICT");
+        return;
+      }
+
+      const presentTargetSongs = targetSongIds.filter(id => data.songIds.includes(id));
+      const missingTargetSongs = targetSongIds.filter(id => !data.songIds.includes(id));
+
+      if (missingTargetSongs.length === 0) {
+        // 全部目标歌曲已读回确认！
+        this.database.update(publicPlaylistReplacement).set({
+          addedSongIds: JSON.stringify(targetSongIds),
           currentAction: null,
           currentSongId: null,
           checkRound: 0,
           nextCheckAt: null,
           step: "verified"
         }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
-        this.#queue(row.id, "verified");
+
+        const updatedDetail = {
+          ...detail,
+          addedSongIds: JSON.stringify(targetSongIds),
+          currentAction: null,
+          currentSongId: null,
+          step: "verified" as const
+        };
+        await this.#executeTagging(row, updatedDetail);
       } else {
-        this.#awaitConfirmation(row, detail, null);
+        // 存在缺失歌曲
+        if (detail.checkRound < 3) {
+          this.#awaitConfirmation(row, detail, null);
+        } else {
+          // 3 轮补查结束，仍不完整
+          if (presentTargetSongs.length > 0) {
+            // 规格："批量部分成功据实展示，停止后续写入，不自动重放缺失歌曲。"
+            await this.#executePartialSuccess(row, detail, presentTargetSongs);
+          } else {
+            this.#status(row.id, "awaitingConfirmation", null);
+          }
+        }
       }
     } else {
-      // 无正在确认的单曲动作，重新回到 verified 判断下一步
+      // 无正在确认的动作，重入 verified
       this.database.update(publicPlaylistReplacement).set({
         checkRound: 0,
         nextCheckAt: null,
@@ -574,6 +589,67 @@ export class PublicPlaylistReplacement {
       }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
       this.#queue(row.id, "verified");
     }
+  }
+
+  async #executePartialSuccess(
+    row: Operation,
+    detail: ReplacementDetail,
+    presentSongIds: string[]
+  ): Promise<void> {
+    const targetTracks = JSON.parse(detail.targetTracks) as SelectedTrack[];
+    const sources = JSON.parse(detail.sources) as SourceBasis[];
+
+    this.database.transaction(tx => {
+      for (const songId of presentSongIds) {
+        const track = targetTracks.find(t => t.songId === songId);
+        if (!track) continue;
+        const source = sources.find(s => s.memberId === track.sourceMemberId);
+        if (!source) continue;
+        const member = tx.select().from(roomMembership).where(and(
+          eq(roomMembership.id, track.sourceMemberId),
+          eq(roomMembership.roomId, row.roomId)
+        )).get();
+        if (!member) continue;
+        const binding = tx.select().from(personalPlaylistBinding).where(and(
+          eq(personalPlaylistBinding.id, source.bindingId),
+          eq(personalPlaylistBinding.generation, source.bindingGeneration),
+          eq(personalPlaylistBinding.roomId, row.roomId)
+        )).get();
+        if (!binding) continue;
+
+        tx.insert(requesterTag).values({
+          roomId: row.roomId,
+          bindingGeneration: detail.bindingGeneration,
+          songId: track.songId,
+          memberId: track.sourceMemberId,
+          createdAt: this.now()
+        }).onConflictDoNothing().run();
+      }
+
+      tx.update(publicPlaylistReplacement).set({
+        addedSongIds: JSON.stringify(presentSongIds),
+        currentAction: null,
+        currentSongId: null,
+        step: "rejected",
+        targetTracks: "[]",
+        originalSongIds: "[]",
+        sources: "[]"
+      }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+
+      tx.update(operation).set({
+        status: "failed",
+        errorCode: "MODULE_ERROR",
+        accountId: null,
+        authorizationId: null,
+        generation: null,
+        updatedAt: this.now(),
+        version: sql`${operation.version} + 1`
+      }).where(eq(operation.id, row.id)).run();
+
+      tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, row.roomId)).run();
+    });
+
+    this.#notify(row.id);
   }
 
   async #executeTagging(row: Operation, detail: ReplacementDetail): Promise<void> {

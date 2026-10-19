@@ -18,8 +18,8 @@ export const adapterInputSchema = z.discriminatedUnion("operation", [
   z.strictObject({ deviceId, operation: z.literal("songDetail"), cookie, songIds: z.array(id).min(1).max(1000) }),
   z.strictObject({ deviceId, operation: z.literal("playlistCreate"), cookie, name: z.string().min(1).max(100) }),
   z.strictObject({ deviceId, operation: z.literal("playlistDelete"), cookie, playlistId: id }),
-  z.strictObject({ deviceId, operation: z.literal("trackAdd"), cookie, playlistId: id, songId: id }),
-  z.strictObject({ deviceId, operation: z.literal("trackRemove"), cookie, playlistId: id, songId: id })
+  z.strictObject({ deviceId, operation: z.literal("trackAdd"), cookie, playlistId: id, songId: id.optional(), songIds: z.array(id).min(1).max(1000).optional() }),
+  z.strictObject({ deviceId, operation: z.literal("trackRemove"), cookie, playlistId: id, songId: id.optional(), songIds: z.array(id).min(1).max(1000).optional() })
 ]);
 export type AdapterInput = z.infer<typeof adapterInputSchema>;
 export type Operation = AdapterInput["operation"];

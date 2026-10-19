@@ -107,6 +107,22 @@ describe("audited vendor through production adapter", () => {
       expect(fixture.outbound).toHaveLength(1);
     } finally { await fixture.close(); }
   });
+  it("sends batch trackAdd with comma-separated IDs", async () => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200 } }));
+    try {
+      expect(await fixture.call({ operation: "trackAdd", cookie: "explicit", playlistId: "playlist", songIds: ["song1", "song2", "song3"] })).toMatchObject({ ok: true, data: { acknowledged: true } });
+      expect(fixture.outbound).toHaveLength(1);
+      expect(fixture.outbound[0].payload).toMatchObject({ pid: "playlist", trackIds: '["song1","song2","song3"]', op: "add" });
+    } finally { await fixture.close(); }
+  });
+  it("sends batch trackRemove with comma-separated IDs", async () => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200 } }));
+    try {
+      expect(await fixture.call({ operation: "trackRemove", cookie: "explicit", playlistId: "playlist", songIds: ["song1", "song2"] })).toMatchObject({ ok: true, data: { acknowledged: true } });
+      expect(fixture.outbound).toHaveLength(1);
+      expect(fixture.outbound[0].payload).toMatchObject({ pid: "playlist", trackIds: '["song1","song2"]', op: "del" });
+    } finally { await fixture.close(); }
+  });
   it("sends the exact desired order once, with opaque IDs serialized as strings", async () => {
     const fixture = await offlineAdapter(() => ({ body: { code: 200 } }));
     try {

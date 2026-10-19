@@ -354,6 +354,19 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(statusBanner).toBeVisible();
     await expect(statusBanner).toContainText("换歌操作已排队");
 
+    // 模拟推进：正在移除旧歌
+    currentOpStatus = {
+      ...currentOpStatus,
+      status: "processing",
+      step: "sending",
+      currentAction: "remove",
+      addedSongIds: [],
+      removedSongIds: ["pub-s1"],
+      version: 2
+    };
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(statusBanner).toContainText("正在从点歌台移除旧歌曲（已移除 1 首）…");
+
     // 模拟推进：正在添加新歌
     currentOpStatus = {
       ...currentOpStatus,
@@ -361,23 +374,11 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       step: "sending",
       currentAction: "add",
       addedSongIds: ["new-s1", "new-s2", "new-s3"],
-      version: 2
-    };
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 3 / 10 首）…");
-
-    // 模拟推进：正在移除旧歌
-    currentOpStatus = {
-      ...currentOpStatus,
-      status: "processing",
-      step: "sending",
-      currentAction: "remove",
-      addedSongIds: mockPreview10.tracks.map(t => t.songId),
-      removedSongIds: ["pub-s1"],
+      removedSongIds: ["pub-s1", "pub-s2"],
       version: 3
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在从点歌台移除旧歌曲（已移除 1 首）…");
+    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 3 / 10 首）…");
 
     // 模拟推进：正在记录点歌人标签
     currentOpStatus = {
