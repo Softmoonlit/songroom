@@ -18,4 +18,6 @@ Status: resolved
 - 用户指出本人“查看歌单”重复已有入口，明确选择移除。
 - 实现：成员按钮仅对他人显示，详情选择排除本人，并删除旧本人昵称编辑分支。回归 fixture 保留真实本人标记，以他人成员验证详情，通过房间设置验证本人改名。
 - 验证：`pnpm typecheck`、`pnpm build`、`git diff --check` 通过；四个受影响 E2E 文件共 46 项通过（包含双角色入口、改昵称、他人只读查看、移除成员与多视口返回滚动）。首次测试与构建并发导致两个页面加载受干扰，顺序执行完整四文件后全部通过。
-- 实现随本次提交交付，沿用上一轮已授权发布流程更新生产；发布与最终核验记录随后补齐。
+- 实现提交：[10b0719](https://github.com/Softmoonlit/songroom/commit/10b07196e3dc315b7550caaa1a07953c11582357)，已 push 至 `origin/master`。
+- 生产发布：`/opt/songroom/releases/20261019154843-10b0719` 已切为 current；依赖锁文件与旧发布一致，复用依赖。本次无数据库迁移，schema 29 自检通过。
+- 上线核验：systemd active/running、NRestarts=0；公网可信 HTTPS 首页可用，healthz 返回 ready/schema 29；线上所有 JS/CSS 逐字节与本地构建一致。未进行真实歌单写入。剩余事项：无。
