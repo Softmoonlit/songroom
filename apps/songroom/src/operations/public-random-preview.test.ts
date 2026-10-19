@@ -639,4 +639,107 @@ describe("PublicRandomPreview", () => {
       code: "PREVIEW_INVALIDATED"
     }));
   });
+
+  it("generates preview and validates confirmation successfully even when all candidates already exist in public playlist", async () => {
+    const ctx = createTestContext();
+
+    const publicPlaylistId = "pub-pl-all-old";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍公共歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    ctx.database.insert(playlistSnapshot).values({
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      snapshotVersion: 1,
+      syncedAt: ctx.now(),
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    const ownerPlId = "owner-pl-all-old";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: ownerPlId,
+      name: "房主个人歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    const roommatePlId = "roommate-pl-all-old";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.roommateMemberId,
+      accountId: "cloud-owner",
+      playlistId: roommatePlId,
+      name: "室友个人歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    // All songs in personal playlists are already in public playlist
+    const allOldSongs = [
+      { id: "s1", name: "旧歌一", artists: ["A"], album: "Album" },
+      { id: "s2", name: "旧歌二", artists: ["A"], album: "Album" },
+      { id: "s3", name: "旧歌三", artists: ["B"], album: "Album" }
+    ];
+
+    ctx.adapter.detailHandler = (id: string) => {
+      if (id === publicPlaylistId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "公共歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["s1", "s2", "s3"],
+            songs: allOldSongs
+          }
+        };
+      }
+      if (id === ownerPlId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "房主歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["s1", "s2"],
+            songs: allOldSongs.slice(0, 2)
+          }
+        };
+      }
+      if (id === roommatePlId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "室友歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["s3"],
+            songs: allOldSongs.slice(2, 3)
+          }
+        };
+      }
+      throw new Error(`Unknown playlist: ${id}`);
+    };
+
+    // Should succeed without throwing NO_NEW_SONGS
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    expect(preview.actualCount).toBe(3);
+    expect(preview.tracks).toHaveLength(3);
+    expect(preview.tracks.every(t => !t.isNew)).toBe(true);
+
+    // Validate confirmation must pass as well
+    const validated = ctx.randomPreview.validate(ctx.ownerUserId, ctx.roomId, preview.previewId);
+    expect(validated.previewId).toBe(preview.previewId);
+    expect(validated.tracks.map(t => t.songId).sort()).toEqual(["s1", "s2", "s3"]);
+  });
 });

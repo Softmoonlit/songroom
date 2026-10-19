@@ -2,7 +2,6 @@ import type { RandomReplacementOperationView } from "../shared/public-playlist-c
 import { errorMessageForCode } from "./room-http.js";
 
 const replacementErrorMessages: Record<string, string> = {
-  NO_NEW_SONGS: "暂无新歌曲可换。所有成员候选歌曲均已存在于当前点歌台中。",
   EMPTY_CANDIDATES: "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。",
   PREVIEW_INVALIDATED: "点歌台或成员个人歌单已发生变更，请重新生成预览。",
   PREVIEW_NOT_FOUND: "换歌预览已过期或不存在，请重新生成预览。",
@@ -40,7 +39,7 @@ export function getFriendlyReplacementOperationStatus(
         description = "正在核对点歌台与各成员来源…";
       } else if (op.step === "sending") {
         if (op.currentAction === "add") {
-          description = `正在添加新歌曲到点歌台（已添加 ${op.addedSongIds.length} / ${op.targetCount} 首）…`;
+          description = `正在添加歌曲到点歌台（已添加 ${op.addedSongIds.length} / ${op.targetCount} 首）…`;
         } else if (op.currentAction === "remove") {
           description = `正在从点歌台移除旧歌曲（已移除 ${op.removedSongIds.length} 首）…`;
         } else {

@@ -8,9 +8,6 @@ import {
 describe("random-replacement-messages", () => {
   describe("getFriendlyReplacementErrorMessage", () => {
     it("returns friendly text for known error codes", () => {
-      expect(getFriendlyReplacementErrorMessage("NO_NEW_SONGS")).toBe(
-        "暂无新歌曲可换。所有成员候选歌曲均已存在于当前点歌台中。"
-      );
       expect(getFriendlyReplacementErrorMessage("EMPTY_CANDIDATES")).toBe(
         "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。"
       );
@@ -89,7 +86,7 @@ describe("random-replacement-messages", () => {
           addedSongIds: ["s1", "s2", "s3"],
           targetCount: 10
         }).description
-      ).toBe("正在添加新歌曲到点歌台（已添加 3 / 10 首）…");
+      ).toBe("正在添加歌曲到点歌台（已添加 3 / 10 首）…");
 
       expect(
         getFriendlyReplacementOperationStatus({

@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { BusinessError } from "../shared/errors.js";
 import { selectFairRandomTracks, type CandidateMember } from "./random-selector.js";
 
+// 线性同余发生器 (Linear Congruential Generator, Numerical Recipes 参数：a=1664525, c=1013904223, m=2^32)
+// 用于提供完全可控、无外部依赖的伪随机数序列，使测试完全可重现且不依赖随机碰运气。
+function createMockRandom(seed = 123456789) {
+  let state = seed;
+  return () => {
+    state = (state * 1664525 + 1013904223) % 4294967296;
+    return state / 4294967296;
+  };
+}
+
 describe("selectFairRandomTracks", () => {
   it("throws EMPTY_CANDIDATES when all member candidate track lists are empty", () => {
     const members: CandidateMember[] = [
@@ -21,37 +31,109 @@ describe("selectFairRandomTracks", () => {
     }));
   });
 
-  it("throws NO_NEW_SONGS when all candidate tracks already exist in public playlist", () => {
+  it("filters out members with empty tracks, keeping only members with candidates", () => {
+    const members: CandidateMember[] = [
+      { memberId: "m1", nickname: "Alice", tracks: [] },
+      {
+        memberId: "m2",
+        nickname: "Bob",
+        tracks: [
+          { id: "s1", name: "Song 1", artists: ["A"], album: "Album" },
+          { id: "s2", name: "Song 2", artists: ["A"], album: "Album" }
+        ]
+      }
+    ];
+
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 5,
+        publicSongIds: [],
+        members
+      },
+      createMockRandom(42)
+    );
+
+    expect(result.actualCount).toBe(2);
+    expect(result.memberContributions).toEqual([
+      { memberId: "m1", nickname: "Alice", count: 0 },
+      { memberId: "m2", nickname: "Bob", count: 2 }
+    ]);
+  });
+
+  it("succeeds and selects tracks when all candidate tracks already exist in public playlist (no NO_NEW_SONGS requirement)", () => {
     const members: CandidateMember[] = [
       {
         memberId: "m1",
         nickname: "Alice",
         tracks: [
-          { id: "s1", name: "Song 1", artists: ["A1"], album: "Album 1" }
+          { id: "s1", name: "Song 1", artists: ["A1"], album: "Album 1" },
+          { id: "s2", name: "Song 2", artists: ["A1"], album: "Album 1" }
         ]
       },
       {
         memberId: "m2",
         nickname: "Bob",
         tracks: [
-          { id: "s2", name: "Song 2", artists: ["A2"], album: "Album 2" }
+          { id: "s3", name: "Song 3", artists: ["A2"], album: "Album 2" },
+          { id: "s4", name: "Song 4", artists: ["A2"], album: "Album 2" }
         ]
       }
     ];
 
-    expect(() => {
-      selectFairRandomTracks({
+    const result = selectFairRandomTracks(
+      {
         targetCount: 10,
-        publicSongIds: ["s1", "s2"],
+        publicSongIds: ["s1", "s2", "s3", "s4"],
         members
-      });
-    }).toThrowError(expect.objectContaining({
-      status: 409,
-      code: "NO_NEW_SONGS"
-    }));
+      },
+      createMockRandom(42)
+    );
+
+    expect(result.actualCount).toBe(4);
+    expect(result.tracks).toHaveLength(4);
+    // Every selected track is marked isNew: false since all are already in public playlist
+    expect(result.tracks.every(t => !t.isNew)).toBe(true);
+    expect(result.memberContributions).toEqual(expect.arrayContaining([
+      { memberId: "m1", nickname: "Alice", count: 2 },
+      { memberId: "m2", nickname: "Bob", count: 2 }
+    ]));
   });
 
-  it("fairly distributes overlapping candidates non-greedily (A={X}, B={X, Y} -> A=X, B=Y)", () => {
+  it("does not prioritize new songs over old songs within a member's candidates", () => {
+    // Member has 2 old songs and 2 new songs.
+    // We pick a seed where the shuffled order of candidate songs puts old songs first.
+    // Target count is 2. The algorithm must select the first 2 without forcing new songs.
+    const member: CandidateMember = {
+      memberId: "m1",
+      nickname: "Alice",
+      tracks: [
+        { id: "old1", name: "Old 1", artists: ["A"], album: "Album" },
+        { id: "old2", name: "Old 2", artists: ["A"], album: "Album" },
+        { id: "new1", name: "New 1", artists: ["A"], album: "Album" },
+        { id: "new2", name: "New 2", artists: ["A"], album: "Album" }
+      ]
+    };
+
+    // Constant mock random that keeps array order unchanged during Fisher-Yates
+    // (returns 0.9999 so j = i, i.e., elements stay in initial track order [old1, old2, new1, new2])
+    const noSwapRandom = () => 0.999999;
+
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 2,
+        publicSongIds: ["old1", "old2"],
+        members: [member]
+      },
+      noSwapRandom
+    );
+
+    expect(result.actualCount).toBe(2);
+    // Both selected tracks should be old songs because new songs are not prioritized
+    expect(result.tracks.map(t => t.songId)).toEqual(["old1", "old2"]);
+    expect(result.tracks.every(t => !t.isNew)).toBe(true);
+  });
+
+  it("fairly distributes overlapping candidates non-greedily with controlled PRNG (A={X}, B={X, Y} -> A=X, B=Y)", () => {
     const memberA: CandidateMember = {
       memberId: "mA",
       nickname: "Alice",
@@ -69,11 +151,14 @@ describe("selectFairRandomTracks", () => {
     };
 
     // Even if random sequence tries B before A, A must get X and B must get Y
-    const result = selectFairRandomTracks({
-      targetCount: 5,
-      publicSongIds: [],
-      members: [memberA, memberB]
-    });
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 5,
+        publicSongIds: [],
+        members: [memberA, memberB]
+      },
+      createMockRandom(100)
+    );
 
     expect(result.actualCount).toBe(2);
     expect(result.tracks).toHaveLength(2);
@@ -93,7 +178,7 @@ describe("selectFairRandomTracks", () => {
     ]));
   });
 
-  it("fairly divides target count among members with remainder (4 members, 10 tracks -> 3, 3, 2, 2)", () => {
+  it("fairly divides target count among members with remainder using controlled PRNG (4 members, 10 tracks -> 3, 3, 2, 2)", () => {
     const makeMember = (id: string, name: string): CandidateMember => ({
       memberId: id,
       nickname: name,
@@ -112,18 +197,21 @@ describe("selectFairRandomTracks", () => {
       makeMember("m4", "Dave")
     ];
 
-    const result = selectFairRandomTracks({
-      targetCount: 10,
-      publicSongIds: [],
-      members
-    });
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 10,
+        publicSongIds: [],
+        members
+      },
+      createMockRandom(999)
+    );
 
     expect(result.actualCount).toBe(10);
     const counts = result.memberContributions.map(c => c.count).sort((a, b) => b - a);
     expect(counts).toEqual([3, 3, 2, 2]);
   });
 
-  it("fairly selects members when member count exceeds target count (15 members, target 5 -> 5 get 1, 10 get 0)", () => {
+  it("fairly selects members when member count exceeds target count using controlled PRNG (15 members, target 5 -> 5 get 1, 10 get 0)", () => {
     const members: CandidateMember[] = Array.from({ length: 15 }, (_, i) => ({
       memberId: `m${i}`,
       nickname: `Member ${i}`,
@@ -132,11 +220,14 @@ describe("selectFairRandomTracks", () => {
       ]
     }));
 
-    const result = selectFairRandomTracks({
-      targetCount: 5,
-      publicSongIds: [],
-      members
-    });
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 5,
+        publicSongIds: [],
+        members
+      },
+      createMockRandom(777)
+    );
 
     expect(result.actualCount).toBe(5);
     const counts = result.memberContributions.map(c => c.count);
@@ -144,70 +235,6 @@ describe("selectFairRandomTracks", () => {
     const zeros = counts.filter(c => c === 0).length;
     expect(ones).toBe(5);
     expect(zeros).toBe(10);
-  });
-
-  it("prioritizes new songs within each member's quota and fills remainder with old songs", () => {
-    const member: CandidateMember = {
-      memberId: "m1",
-      nickname: "Alice",
-      tracks: [
-        { id: "new1", name: "New 1", artists: ["A"], album: "Album" },
-        { id: "new2", name: "New 2", artists: ["A"], album: "Album" },
-        { id: "old1", name: "Old 1", artists: ["A"], album: "Album" },
-        { id: "old2", name: "Old 2", artists: ["A"], album: "Album" },
-        { id: "old3", name: "Old 3", artists: ["A"], album: "Album" }
-      ]
-    };
-
-    // Public has old1, old2, old3
-    const result = selectFairRandomTracks({
-      targetCount: 5, // target is 5, but member only has 5 songs total
-      publicSongIds: ["old1", "old2", "old3"],
-      members: [member]
-    });
-
-    expect(result.actualCount).toBe(5);
-    const newCount = result.tracks.filter(t => t.isNew).length;
-    const oldCount = result.tracks.filter(t => !t.isNew).length;
-    expect(newCount).toBe(2);
-    expect(oldCount).toBe(3);
-  });
-
-  it("guarantees at least one new song when candidates have new songs, without degrading fairness", () => {
-    // 6 members, target 5.
-    // First 5 members only have old songs. Member 6 has a new song.
-    // The selection must adjust so Member 6 gets 1 song and results in at least 1 new song.
-    const oldOnlyMembers: CandidateMember[] = Array.from({ length: 5 }, (_, i) => ({
-      memberId: `old_m${i}`,
-      nickname: `OldMember ${i}`,
-      tracks: [
-        { id: `old_song_${i}`, name: `Old Song ${i}`, artists: ["A"], album: "Album" }
-      ]
-    }));
-
-    const newMember: CandidateMember = {
-      memberId: "new_m",
-      nickname: "NewMember",
-      tracks: [
-        { id: "brand_new_song", name: "New Song", artists: ["A"], album: "Album" }
-      ]
-    };
-
-    const publicSongIds = oldOnlyMembers.map(m => m.tracks[0].id);
-
-    // Use a fixed random function that puts newMember last
-    const members = [...oldOnlyMembers, newMember];
-    const result = selectFairRandomTracks({
-      targetCount: 5,
-      publicSongIds,
-      members
-    });
-
-    expect(result.actualCount).toBe(5);
-    expect(result.tracks.some(t => t.isNew)).toBe(true);
-    expect(result.tracks.some(t => t.songId === "brand_new_song")).toBe(true);
-    const counts = result.memberContributions.map(c => c.count).sort((a, b) => b - a);
-    expect(counts).toEqual([1, 1, 1, 1, 1, 0]);
   });
 
   it("redistributes remaining quota when a member has fewer candidates than quota", () => {
@@ -233,11 +260,14 @@ describe("selectFairRandomTracks", () => {
       }))
     };
 
-    const result = selectFairRandomTracks({
-      targetCount: 5,
-      publicSongIds: [],
-      members: [memberA, memberB]
-    });
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 5,
+        publicSongIds: [],
+        members: [memberA, memberB]
+      },
+      createMockRandom(123)
+    );
 
     expect(result.actualCount).toBe(5);
     const contribA = result.memberContributions.find(c => c.memberId === "mA")!;
@@ -263,26 +293,84 @@ describe("selectFairRandomTracks", () => {
     };
 
     // Target is 10, but only 2 unique songs exist.
-    const result = selectFairRandomTracks({
-      targetCount: 10,
-      publicSongIds: [],
-      members: [memberA, memberB]
-    });
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 10,
+        publicSongIds: [],
+        members: [memberA, memberB]
+      },
+      createMockRandom(555)
+    );
 
     expect(result.actualCount).toBe(2);
     expect(result.totalUniqueCandidates).toBe(2);
     expect(result.tracks).toHaveLength(2);
   });
 
-  it("produces deterministic selection results given a controlled pseudo-random generator", () => {
-    function createMockRandom(seed = 123456789) {
-      let s = seed;
-      return () => {
-        s = (s * 1664525 + 1013904223) % 4294967296;
-        return s / 4294967296;
-      };
+  it("shuffles the entire selected track set across members without forcing member interleaving", () => {
+    // 2 members with 5 songs each, target 10.
+    const memberA: CandidateMember = {
+      memberId: "mA",
+      nickname: "Alice",
+      tracks: Array.from({ length: 5 }, (_, i) => ({
+        id: `A_${i}`,
+        name: `Song A ${i}`,
+        artists: ["Artist A"],
+        album: "Album A"
+      }))
+    };
+    const memberB: CandidateMember = {
+      memberId: "mB",
+      nickname: "Bob",
+      tracks: Array.from({ length: 5 }, (_, i) => ({
+        id: `B_${i}`,
+        name: `Song B ${i}`,
+        artists: ["Artist B"],
+        album: "Album B"
+      }))
+    };
+
+    // Use a controlled PRNG
+    const result = selectFairRandomTracks(
+      {
+        targetCount: 10,
+        publicSongIds: [],
+        members: [memberA, memberB]
+      },
+      createMockRandom(42)
+    );
+
+    expect(result.actualCount).toBe(10);
+    expect(result.tracks).toHaveLength(10);
+
+    // Verify all 10 tracks retain their accurate source attribution
+    for (const track of result.tracks) {
+      if (track.songId.startsWith("A_")) {
+        expect(track.sourceMemberId).toBe("mA");
+        expect(track.sourceMemberNickname).toBe("Alice");
+      } else {
+        expect(track.sourceMemberId).toBe("mB");
+        expect(track.sourceMemberNickname).toBe("Bob");
+      }
     }
 
+    // Verify whole-set shuffle allows same-member tracks to appear adjacent
+    const memberSequence = result.tracks.map(t => t.sourceMemberId);
+    let hasAdjacentSameMember = false;
+    for (let i = 0; i < memberSequence.length - 1; i++) {
+      if (memberSequence[i] === memberSequence[i + 1]) {
+        hasAdjacentSameMember = true;
+        break;
+      }
+    }
+    expect(hasAdjacentSameMember).toBe(true);
+
+    // Verify the sequence is not simply all A's then all B's (it is shuffled)
+    const allAThenB = memberSequence.slice(0, 5).every(m => m === "mA") && memberSequence.slice(5).every(m => m === "mB");
+    expect(allAThenB).toBe(false);
+  });
+
+  it("produces deterministic selection and whole-set shuffle results given identical controlled pseudo-random generator", () => {
     const members: CandidateMember[] = Array.from({ length: 4 }, (_, mIdx) => ({
       memberId: `m${mIdx}`,
       nickname: `Member ${mIdx}`,
@@ -306,5 +394,12 @@ describe("selectFairRandomTracks", () => {
     expect(run1.actualCount).toBe(10);
     expect(run1.tracks.map(t => t.songId)).toEqual(run2.tracks.map(t => t.songId));
     expect(run1.tracks.map(t => t.sourceMemberId)).toEqual(run2.tracks.map(t => t.sourceMemberId));
+
+    // A different seed produces a different shuffle
+    const run3 = selectFairRandomTracks(
+      { targetCount: 10, publicSongIds: [], members },
+      createMockRandom(99999)
+    );
+    expect(run1.tracks.map(t => t.songId)).not.toEqual(run3.tracks.map(t => t.songId));
   });
 });

@@ -135,7 +135,7 @@ export function RandomReplacementDialog({
                 随机点歌
               </AlertDialog.Title>
               <AlertDialog.Description id="random-replacement-desc" className="invite-modal-desc">
-                从房间所有配置了个人歌单的成员中，尽量均分抽选歌曲，新歌优先。
+                从房间所有配置了个人歌单的成员中，尽量均分随机抽选歌曲并打散整组顺序。
               </AlertDialog.Description>
             </div>
             <AlertDialog.Cancel asChild>
@@ -284,7 +284,7 @@ export function RandomReplacementDialog({
 
                 {/* 替换说明与官方客户端重新载入提示 */}
                 <p className="random-confirm-guidance">
-                  确认后将替换点歌台中的全部旧歌曲。换歌完成后，请在网易云官方客户端重新载入该歌单并点击「播放全部」以开始播放新列表。
+                  确认后将替换点歌台中的全部歌曲，最终顺序以网易云实际读回为准。换歌完成后，请在网易云官方客户端重新载入该歌单并点击「播放全部」以开始播放新列表。
                 </p>
               </div>
             ) : null}

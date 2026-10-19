@@ -66,44 +66,29 @@ export function selectFairRandomTracks(
     throw new BusinessError(422, "EMPTY_CANDIDATES", "暂无可用的候选歌曲");
   }
 
-  // 2. 收集全房间候选歌曲与新旧分类
-  let hasAnyNewSong = false;
+  // 2. 收集全房间候选歌曲
   const allUniqueCandidateIds = new Set<string>();
   const songDetails = new Map<string, CandidateTrack>();
-  const memberNewSongs = new Map<string, string[]>();
-  const memberOldSongs = new Map<string, string[]>();
+  const memberCandidateSongs = new Map<string, string[]>();
 
   for (const member of activeMembers) {
-    const newSongs: string[] = [];
-    const oldSongs: string[] = [];
-    const memberUniqueSongs = new Set<string>();
+    const uniqueSongs: string[] = [];
+    const memberSeen = new Set<string>();
 
     for (const track of member.tracks) {
-      if (memberUniqueSongs.has(track.id)) continue;
-      memberUniqueSongs.add(track.id);
+      if (memberSeen.has(track.id)) continue;
+      memberSeen.add(track.id);
+      uniqueSongs.push(track.id);
       allUniqueCandidateIds.add(track.id);
       if (!songDetails.has(track.id)) {
         songDetails.set(track.id, track);
       }
-
-      if (publicSongSet.has(track.id)) {
-        oldSongs.push(track.id);
-      } else {
-        newSongs.push(track.id);
-        hasAnyNewSong = true;
-      }
     }
 
-    memberNewSongs.set(member.memberId, newSongs);
-    memberOldSongs.set(member.memberId, oldSongs);
+    memberCandidateSongs.set(member.memberId, uniqueSongs);
   }
 
-  // 3. 规格：没有新歌时不换
-  if (!hasAnyNewSong) {
-    throw new BusinessError(409, "NO_NEW_SONGS", "暂无新歌曲可换");
-  }
-
-  // 4. 计算初始基础配额与余数分配
+  // 3. 计算初始基础配额与余数分配
   const effectiveTargetCount = Math.min(targetCount, allUniqueCandidateIds.size);
   const memberCount = activeMembers.length;
   const shuffledMembers = shuffleArray(activeMembers, random);
@@ -123,39 +108,22 @@ export function selectFairRandomTracks(
     }
   } else {
     // 成员数多于有效目标首数：随机选 effectiveTargetCount 名成员各分 1 首
-    let newSongEnsured = false;
     for (let i = 0; i < effectiveTargetCount; i++) {
-      const member = shuffledMembers[i];
-      targetQuota.set(member.memberId, 1);
-      if (memberNewSongs.get(member.memberId)!.length > 0) {
-        newSongEnsured = true;
-      }
+      targetQuota.set(shuffledMembers[i].memberId, 1);
     }
     for (let i = effectiveTargetCount; i < memberCount; i++) {
       targetQuota.set(shuffledMembers[i].memberId, 0);
     }
-
-    // 规格："候选有新歌时最终预览包含新歌，不为追求变化降低已经可以达到的成员均分程度"
-    if (!newSongEnsured) {
-      const memberWithNewIndex = shuffledMembers.findIndex((member, idx) => idx >= effectiveTargetCount && memberNewSongs.get(member.memberId)!.length > 0);
-      if (memberWithNewIndex !== -1) {
-        const swapInMember = shuffledMembers[memberWithNewIndex];
-        const swapOutMember = shuffledMembers[0];
-        targetQuota.set(swapInMember.memberId, 1);
-        targetQuota.set(swapOutMember.memberId, 0);
-      }
-    }
   }
 
-  // 5. 为每位成员生成偏好序列（内部洗牌：新歌在前，旧歌在后）
+  // 4. 为每位成员生成偏好序列（内部随机洗牌，不区分新旧）
   const memberOrderedPreferences = new Map<string, string[]>();
   for (const member of activeMembers) {
-    const shuffledNew = shuffleArray(memberNewSongs.get(member.memberId)!, random);
-    const shuffledOld = shuffleArray(memberOldSongs.get(member.memberId)!, random);
-    memberOrderedPreferences.set(member.memberId, [...shuffledNew, ...shuffledOld]);
+    const shuffledSongs = shuffleArray(memberCandidateSongs.get(member.memberId)!, random);
+    memberOrderedPreferences.set(member.memberId, shuffledSongs);
   }
 
-  // 6. 二分图多重匹配与增广路径分配（公平分配、支持交叉调整归属）
+  // 5. 二分图多重匹配与增广路径分配（公平分配、支持交叉调整归属）
   const songAssignedTo = new Map<string, string>(); // songId -> memberId
   const memberAssignedSongs = new Map<string, Set<string>>();
   for (const member of activeMembers) {
@@ -250,7 +218,7 @@ export function selectFairRandomTracks(
     }
   }
 
-  // 7. 候选不足时的剩余配额重分配：
+  // 6. 候选不足时的剩余配额重分配：
   // 若部分成员候选不足以填满配额，而其他成员还有剩余候选歌曲，在其他成员间继续均分分配直到全房间总数达到 targetCount 或无更多可用歌曲
   let currentTotalAssigned = Array.from(memberAssignedSongs.values()).reduce((sum, set) => sum + set.size, 0);
 
@@ -279,51 +247,7 @@ export function selectFairRandomTracks(
     currentTotalAssigned++;
   }
 
-  // 8. 确保最终结果包含至少一首新歌（如果全房间候选中有新歌）
-  let totalNewSongsInResult = 0;
-  for (const [songId] of songAssignedTo) {
-    if (!publicSongSet.has(songId)) {
-      totalNewSongsInResult++;
-    }
-  }
-
-  if (totalNewSongsInResult === 0 && hasAnyNewSong) {
-    // 若当前结果中全是旧歌，但在候选中有新歌未被选中，
-    // 寻找一个拥有未选中新歌的成员，用该新歌替换该成员或其他成员的一首旧歌
-    const allAssignedOldSongs = Array.from(songAssignedTo.entries()).filter(([songId]) => publicSongSet.has(songId));
-
-    if (allAssignedOldSongs.length > 0) {
-      let replaced = false;
-      for (const member of activeMembers) {
-        const spareNewSongs = (memberNewSongs.get(member.memberId) ?? []).filter(songId => !songAssignedTo.has(songId));
-        if (spareNewSongs.length > 0) {
-          const newSongId = spareNewSongs[0];
-          // 优先替换该成员自己的旧歌
-          const memberAssignedOld = Array.from(memberAssignedSongs.get(member.memberId)!).filter(songId => publicSongSet.has(songId));
-          if (memberAssignedOld.length > 0) {
-            const oldSongId = memberAssignedOld[0];
-            memberAssignedSongs.get(member.memberId)!.delete(oldSongId);
-            memberAssignedSongs.get(member.memberId)!.add(newSongId);
-            songAssignedTo.delete(oldSongId);
-            songAssignedTo.set(newSongId, member.memberId);
-            replaced = true;
-            break;
-          } else {
-            // 替换其他成员的一首旧歌
-            const [oldSongId, oldOwnerId] = allAssignedOldSongs[0];
-            memberAssignedSongs.get(oldOwnerId)!.delete(oldSongId);
-            songAssignedTo.delete(oldSongId);
-            memberAssignedSongs.get(member.memberId)!.add(newSongId);
-            songAssignedTo.set(newSongId, member.memberId);
-            replaced = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // 9. 组装输出结果
+  // 7. 组装输出结果并整组洗牌
   const memberMap = new Map(activeMembers.map(member => [member.memberId, member]));
   const resultTracks: SelectedTrack[] = [];
 
@@ -341,6 +265,9 @@ export function selectFairRandomTracks(
     });
   }
 
+  // 对确定好的整组歌曲洗牌，不保证成员交错，允许同一成员歌曲相邻
+  const finalTracks = shuffleArray(resultTracks, random);
+
   const memberContributions: MemberContribution[] = members.map(member => ({
     memberId: member.memberId,
     nickname: member.nickname,
@@ -348,8 +275,8 @@ export function selectFairRandomTracks(
   }));
 
   return {
-    actualCount: resultTracks.length,
-    tracks: resultTracks,
+    actualCount: finalTracks.length,
+    tracks: finalTracks,
     memberContributions,
     totalUniqueCandidates: allUniqueCandidateIds.size
   };

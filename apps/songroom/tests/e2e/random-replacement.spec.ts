@@ -282,15 +282,14 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(page.locator(".track-name", { hasText: "红豆" })).toBeVisible();
   });
 
-  test("候选异常反馈：暂无新歌 (NO_NEW_SONGS) 与空候选 (EMPTY_CANDIDATES)", async ({ page }) => {
+  test("候选异常反馈：空候选 (EMPTY_CANDIDATES)", async ({ page }) => {
     await setupRoom(page, true);
     await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: initialPublicView }));
 
-    let errorToReturn = "NO_NEW_SONGS";
     await page.route(randomPreviewEndpoint, route =>
       route.fulfill({
-        status: 409,
-        json: { error: { code: errorToReturn, message: "暂无新歌曲可换" } }
+        status: 422,
+        json: { error: { code: "EMPTY_CANDIDATES", message: "暂无可用的候选歌曲" } }
       })
     );
 
@@ -299,13 +298,6 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
-    await expect(modal.locator(".error-banner")).toContainText(
-      "暂无新歌曲可换。所有成员候选歌曲均已存在于当前点歌台中。"
-    );
-
-    // 切换为空候选错误
-    errorToReturn = "EMPTY_CANDIDATES";
-    await modal.getByRole("button", { name: "重试" }).click();
     await expect(modal.locator(".error-banner")).toContainText(
       "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。"
     );
@@ -372,7 +364,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 2
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在添加新歌曲到点歌台（已添加 3 / 10 首）…");
+    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 3 / 10 首）…");
 
     // 模拟推进：正在移除旧歌
     currentOpStatus = {
@@ -546,7 +538,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 页面初次载入即可见恢复的操作状态
     const statusBanner = page.locator(".replacement-status-banner");
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("正在添加新歌曲到点歌台（已添加 4 / 10 首）…");
+    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 4 / 10 首）…");
 
     // 切换到「我的歌单」
     await page.getByRole("button", { name: "我的歌单" }).click();
@@ -555,14 +547,14 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 切回「公共歌单」
     await page.getByRole("button", { name: "点歌台" }).click();
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("正在添加新歌曲到点歌台（已添加 4 / 10 首）…");
+    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 4 / 10 首）…");
 
     // 刷新页面
     await page.reload();
     await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.locator(".replacement-status-banner")).toBeVisible();
     await expect(page.locator(".replacement-status-banner")).toContainText(
-      "正在添加新歌曲到点歌台（已添加 4 / 10 首）…"
+      "正在添加歌曲到点歌台（已添加 4 / 10 首）…"
     );
   });
 
