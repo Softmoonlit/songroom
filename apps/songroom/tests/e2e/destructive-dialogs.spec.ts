@@ -156,7 +156,7 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
     await expect(dialog.getByText("不可撤销", { exact: true })).toBeVisible();
     await expect(dialog.getByText("立即生效", { exact: true })).toBeVisible();
     await expect(dialog.getByText("云端歌单清理", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("专用公共歌单“songroom-测试音乐间-公共”将启动网易云删除清理。", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("专用点歌台“songroom-测试音乐间-公共”将启动网易云删除清理。", { exact: true })).toBeVisible();
     await expect(dialog.getByText("全部成员的 2 份专用个人歌单（包含房主）将启动网易云删除清理。", { exact: true })).toBeVisible();
     await expect(dialog.getByText("本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。", { exact: true })).toBeVisible();
 
@@ -230,7 +230,7 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
     await page.goto(`/rooms/${roomId}`);
 
     await page.getByRole("button", { name: "房间成员" }).click();
-    await page.getByRole("button", { name: "查看成员：室友小张" }).click();
+    await page.getByRole("button", { name: "查看室友小张的歌单" }).click();
 
     const removeBtn = page.getByRole("button", { name: "移除成员" });
     await expect(removeBtn).toBeVisible();
@@ -244,7 +244,7 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
 
     // 2. 核心单句风险描述
     await expect(
-      dialog.getByText("确定要将“室友小张”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在公共歌单上的点歌人标签。")
+      dialog.getByText("确定要将“室友小张”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在点歌台上的点歌人标签。")
     ).toBeVisible();
 
     // 3. 关键危险标签

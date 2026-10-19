@@ -146,10 +146,8 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       await expect(page.getByText(/不影响你直接搜索点歌/)).toHaveCount(0);
       await expect(page.getByRole("button", { name: /绑定个人歌单|更换歌单|解除绑定/ })).toHaveCount(0);
       await page.getByRole("button", { name: "创建专用个人歌单" }).click();
-      await expect(page.getByRole("heading", { name: createdView.playlist!.name })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "我的歌单", exact: true })).toBeVisible();
       expect(createPayload).toEqual({ idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/) });
-      await expect(page.getByText("专用歌单", { exact: true })).toBeVisible();
-      await expect(page.getByText("可维护", { exact: true })).toBeVisible();
       await expect(page.getByText("稻香", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "创建专用个人歌单" })).toHaveCount(0);
     });
@@ -229,29 +227,28 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       await page.route(`${memberEndpoint}/refresh`, route => route.fulfill({ json: view }));
       await page.goto(`/rooms/${roomId}`);
       await page.getByRole("button", { name: "房间成员" }).click();
-      await page.getByRole("button", { name: `查看成员：${nickname}` }).click();
+      await page.getByRole("button", { name: `查看${nickname}的歌单` }).click();
       const detail = page.getByRole("region", { name: "成员详情", exact: true });
       await expect(detail.getByRole("heading", { name: nickname, exact: true })).toBeVisible();
       await expect(detail.getByText(`songroom-测试音乐间-${nickname}`, { exact: true })).toBeVisible();
-      await expect(detail.getByText("专用（仅本人可维护）")).toBeVisible();
       await expect(detail.getByText("稻香", { exact: true })).toBeVisible();
       await expect(detail.getByRole("button", { name: /创建|绑定|解绑|更换|同步|点歌|添加|删除/ })).toHaveCount(0);
     });
   }
 
   for (const width of [320, 900, 1440]) {
-    test(`${width}px 我的专用歌单复用现有四入口导航，无横向溢出且通过 Axe`, async ({ page }) => {
+    test(`${width}px 我的歌单复用五入口导航，无横向溢出且通过 Axe`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       await setupRoom(page);
       await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: dedicatedPersonalView }));
       await page.route(refreshEndpoint, route => route.fulfill({ json: dedicatedPersonalView }));
       await page.goto(`/rooms/${roomId}`);
       const nav = page.getByRole("navigation", { name: "房间导航" });
-      await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "公共歌单", "我的歌单", "房间成员", "房间设置"]);
+      await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "我的歌单", "点歌台", "房间成员", "房间设置"]);
       await nav.getByRole("button", { name: "我的歌单" }).click();
       await expect(nav.getByRole("button", { name: "我的歌单" })).toHaveAttribute("aria-current", "page");
-      await expect(page.getByRole("heading", { name: "songroom-测试音乐间-房主小林" })).toBeVisible();
-      await expect(page.getByText("共 2 首歌曲")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "我的歌单", exact: true })).toBeVisible();
+      await expect(page.getByLabel("共 2 首歌曲", { exact: true })).toBeVisible();
       await expect(page.getByText("夜曲", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: /绑定个人歌单|解除绑定|更换歌单/ })).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

@@ -9,13 +9,13 @@ describe("random-replacement-messages", () => {
   describe("getFriendlyReplacementErrorMessage", () => {
     it("returns friendly text for known error codes", () => {
       expect(getFriendlyReplacementErrorMessage("NO_NEW_SONGS")).toBe(
-        "暂无新歌曲可换。所有成员候选歌曲均已存在于当前公共歌单中。"
+        "暂无新歌曲可换。所有成员候选歌曲均已存在于当前点歌台中。"
       );
       expect(getFriendlyReplacementErrorMessage("EMPTY_CANDIDATES")).toBe(
         "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。"
       );
       expect(getFriendlyReplacementErrorMessage("PREVIEW_INVALIDATED")).toBe(
-        "公共歌单或成员个人歌单已发生变更，请重新生成预览。"
+        "点歌台或成员个人歌单已发生变更，请重新生成预览。"
       );
       expect(getFriendlyReplacementErrorMessage("PREVIEW_NOT_FOUND")).toBe(
         "换歌预览已过期或不存在，请重新生成预览。"
@@ -24,7 +24,7 @@ describe("random-replacement-messages", () => {
         "网易云账号已暂停，请联系管理员恢复。"
       );
       expect(getFriendlyReplacementErrorMessage("PLAYLIST_CONFLICT")).toBe(
-        "当前公共歌单正在执行其他写入操作，请稍候再试。"
+        "当前点歌台正在执行其他写入操作，请稍候再试。"
       );
       expect(getFriendlyReplacementErrorMessage("CONCURRENT_OPERATION_LIMIT_EXCEEDED")).toBe(
         "你在该房间已有未完成的写操作，请稍候再试。"
@@ -78,7 +78,7 @@ describe("random-replacement-messages", () => {
     it("handles processing steps", () => {
       expect(
         getFriendlyReplacementOperationStatus({ ...baseOp, status: "processing", step: "verified" }).description
-      ).toContain("正在核对公共歌单与各成员来源");
+      ).toContain("正在核对点歌台与各成员来源");
 
       expect(
         getFriendlyReplacementOperationStatus({
@@ -89,7 +89,7 @@ describe("random-replacement-messages", () => {
           addedSongIds: ["s1", "s2", "s3"],
           targetCount: 10
         }).description
-      ).toBe("正在添加新歌曲到公共歌单（已添加 3 / 10 首）…");
+      ).toBe("正在添加新歌曲到点歌台（已添加 3 / 10 首）…");
 
       expect(
         getFriendlyReplacementOperationStatus({
@@ -99,7 +99,7 @@ describe("random-replacement-messages", () => {
           currentAction: "remove",
           removedSongIds: ["old1", "old2"]
         }).description
-      ).toBe("正在从公共歌单移除旧歌曲（已移除 2 首）…");
+      ).toBe("正在从点歌台移除旧歌曲（已移除 2 首）…");
 
       expect(
         getFriendlyReplacementOperationStatus({ ...baseOp, status: "processing", step: "confirming" }).description

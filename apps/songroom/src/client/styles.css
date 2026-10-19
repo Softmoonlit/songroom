@@ -2253,7 +2253,6 @@ h1 {
   min-height: 72px;
   text-align: left;
   color: var(--text-main);
-  cursor: pointer;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -2263,20 +2262,13 @@ h1 {
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-sm);
   font-weight: 650;
-  transition: background-color var(--transition-fast),
-              border-color var(--transition-fast),
-              box-shadow var(--transition-fast),
-              transform var(--transition-fast);
 }
 
-.member-card:hover {
-  border-color: var(--border-medium);
-  background: var(--bg-subtle);
-  box-shadow: var(--shadow-md);
-}
-
-.member-card:active {
-  transform: scale(var(--scale-active));
+.member-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .member-card-left {
@@ -3579,7 +3571,7 @@ h1 {
 
 .playlist-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding: 0.25rem 0 1rem;
@@ -3600,7 +3592,7 @@ h1 {
   flex-wrap: wrap;
 }
 
-.playlist-name {
+.playlist-page-title {
   margin: 0;
   font-size: var(--font-xl);
   font-weight: 700;
@@ -3629,7 +3621,24 @@ h1 {
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.35rem;
-  min-height: 1.25rem;
+}
+
+.playlist-header-meta:empty {
+  display: none;
+}
+
+.random-replacement-button {
+  height: 32px;
+  padding: 0 12px;
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: #fff;
+  font-size: var(--font-sm);
+}
+
+.random-replacement-button:hover:not(:disabled) {
+  background: #6d28d9;
+  border-color: #6d28d9;
 }
 
 .sync-micro-status {
@@ -3659,6 +3668,7 @@ h1 {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 /* 歌单元数据提示气泡 */
@@ -5210,17 +5220,8 @@ h1 {
 }
 
 @media (max-width: 768px) {
-  .public-playlist-title-heading {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
+  .member-card { flex-wrap: wrap; padding: 14px; gap: 12px; }
+  .member-card-actions { margin-left: auto; }
   .playlist-tracks-header-bar, .track-item {
     grid-template-columns: 1.5rem minmax(0, 1fr) clamp(72px, 24vw, 104px);
     gap: 6px 8px;

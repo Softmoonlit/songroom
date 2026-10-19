@@ -91,7 +91,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
 
       // 验证导航五标签顺序与默认激活
       const nav = page.getByRole("navigation", { name: "房间导航" });
-      await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "公共歌单", "我的歌单", "房间成员", "房间设置"]);
+      await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "我的歌单", "点歌台", "房间成员", "房间设置"]);
       await expect(nav.getByRole("button", { name: "搜索歌曲" })).toHaveAttribute("aria-current", "page");
 
       // 验证搜索歌曲页面主标题
@@ -157,7 +157,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     await expect(page.getByText("七里香", { exact: true })).toBeVisible();
 
     // 候选歌曲的添加按钮全部禁用
-    const addBtn1 = page.getByRole("button", { name: "添加《晴天》（尚未配置个人歌单）" });
+    const addBtn1 = page.getByRole("button", { name: "添加《晴天》到我的歌单（尚未配置个人歌单）" });
     await expect(addBtn1).toBeVisible();
     await expect(addBtn1).toBeDisabled();
 
@@ -242,7 +242,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     await expect(page.getByText("找到 3 首候选歌曲")).toBeVisible();
 
     // 1. 点击已在个人歌单的《晴天》
-    const addQingtianBtn = page.getByRole("button", { name: "添加《晴天》到个人歌单" });
+    const addQingtianBtn = page.getByRole("button", { name: "添加《晴天》到我的歌单" });
     await expect(addQingtianBtn).toBeEnabled();
     await addQingtianBtn.click();
     expect(addedSongId).toBe("song-101");
@@ -250,7 +250,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     await expect(page.getByText("《晴天》已在个人歌单")).toBeVisible();
 
     // 2. 点击新歌《七里香》
-    const addQilixiangBtn = page.getByRole("button", { name: "添加《七里香》到个人歌单" });
+    const addQilixiangBtn = page.getByRole("button", { name: "添加《七里香》到我的歌单" });
     await expect(addQilixiangBtn).toBeEnabled();
     await addQilixiangBtn.click();
     expect(addedSongId).toBe("song-102");
@@ -336,7 +336,7 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     await page.getByRole("button", { name: "搜索", exact: true }).click();
 
     // 点击添加
-    await page.getByRole("button", { name: "添加《晴天》到个人歌单" }).click();
+    await page.getByRole("button", { name: "添加《晴天》到我的歌单" }).click();
 
     // 出现排队状态横幅
     await expect(page.getByText("《晴天》已排队，等待添加到个人歌单…")).toBeVisible();
@@ -407,8 +407,8 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     expect(scrollPosBefore).toBeGreaterThan(50);
 
     // 依次切换全部一级标签页
-    await page.getByRole("button", { name: "公共歌单" }).click();
-    await expect(page.getByRole("button", { name: "公共歌单" })).toHaveAttribute("aria-current", "page");
+    await page.getByRole("button", { name: "点歌台" }).click();
+    await expect(page.getByRole("button", { name: "点歌台" })).toHaveAttribute("aria-current", "page");
 
     await page.getByRole("button", { name: "我的歌单" }).click();
     await expect(page.getByRole("button", { name: "我的歌单" })).toHaveAttribute("aria-current", "page");
@@ -442,44 +442,135 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     // 默认依然是搜索歌曲页，但现场已清空
     await expect(page.getByRole("button", { name: "搜索歌曲" })).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("searchbox", { name: "搜索歌曲" })).toHaveValue("");
-    await expect(page.getByText("搜索并存入个人歌单")).toBeVisible();
+    await expect(page.getByText("搜索并添加到我的歌单")).toBeVisible();
     await expect(page.getByText("找到 30 首候选歌曲")).toHaveCount(0);
   });
 
-  test("公共歌单页彻底移除全网点歌按钮与抽屉，保留筛选、同步、播放指示与随机换歌", async ({ page }) => {
-    await setupRoom(page, "owner");
+  for (const width of [320, 1440]) {
+    test(`${width}px 我的歌单按歌名和歌手筛选，保留原序号并从筛选行点歌`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await setupRoom(page);
+      const personalView: PersonalPlaylistView = {
+        playlist: { id: "pl-personal-filter", name: "songroom-测试音乐间-室友小明" },
+        snapshot: {
+          version: 1, syncedAt: Date.now(), trackCount: 3,
+          tracks: [
+            { position: 0, songId: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
+            { position: 1, songId: "s-2", name: "红豆", artists: ["王菲"], album: "唱游" },
+            { position: 2, songId: "s-3", name: "稻香", artists: ["周杰伦"], album: "魔杰座" }
+          ]
+        },
+        lastRefreshError: null, operation: null,
+        allowedActions: ["refreshPersonalPlaylist"], disabledReason: null, version: 1
+      };
+      await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: personalView }));
+      await page.route(`${personalPlaylistEndpoint}/refresh`, route => route.fulfill({ json: personalView }));
+      await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: {
+        playlist: { id: "pl-public-filter", name: "songroom-测试音乐间-公共" },
+        snapshot: { version: 1, syncedAt: Date.now(), trackCount: 0, tracks: [] },
+        lastRefreshError: null, operation: null,
+        allowedActions: ["refreshPublicPlaylist"], disabledReason: null, version: 1
+      } satisfies PublicPlaylistView }));
+      const requests: unknown[] = [];
+      await page.route(`**/api/rooms/${roomId}/song-requests`, route => {
+        requests.push(route.request().postDataJSON());
+        return route.fulfill({ json: { replay: false, operation: {
+          id: v7(), roomId, songId: "s-3", name: "稻香", artists: ["周杰伦"], album: "魔杰座",
+          status: "succeeded", step: "succeeded", errorCode: null,
+          songConfirmed: true, tagConfirmed: true, version: 1
+        } } });
+      });
+      await page.goto(`/rooms/${roomId}`);
+      await page.getByRole("button", { name: "我的歌单", exact: true }).click();
+      const pane = page.getByRole("region", { name: "我的歌单", exact: true });
+      const rows = pane.getByRole("listitem");
+      await expect(rows).toHaveCount(3);
+      await expect(pane.getByLabel("共 3 首歌曲", { exact: true })).toBeVisible();
+      await pane.getByRole("button", { name: "展开搜索筛选" }).click();
+      const search = pane.getByRole("searchbox", { name: "搜索歌名或歌手" });
+      await search.fill(" 稻香 ");
+      await expect(rows).toHaveCount(1);
+      await expect(rows.locator(".track-index")).toHaveText("3");
+      await expect(pane.getByLabel("筛选出 1 首，共 3 首歌曲", { exact: true })).toBeVisible();
+      await rows.getByRole("button", { name: "点播《稻香》到点歌台", exact: true }).click();
+      await expect.poll(() => requests.length).toBe(1);
+      expect(requests[0]).toMatchObject({ sourcePlaylistId: "pl-personal-filter", songId: "s-3", name: "稻香" });
+      await expect(rows.getByRole("button", { name: "从个人歌单删除《稻香》", exact: true })).toBeVisible();
+      await search.fill("周杰伦");
+      await expect(rows).toHaveCount(2);
+      await expect(rows.locator(".track-index")).toHaveText(["1", "3"]);
+      await expect(pane.getByLabel("筛选出 2 首，共 3 首歌曲", { exact: true })).toBeVisible();
+      await search.fill("不存在的歌手");
+      await expect(rows).toHaveCount(0);
+      await expect(pane.getByLabel("筛选出 0 首，共 3 首歌曲", { exact: true })).toBeVisible();
+      await expect(pane.getByText("未找到匹配的歌曲", { exact: true })).toBeVisible();
+      await pane.getByRole("button", { name: "清除筛选条件" }).click();
+      await expect(search).toHaveValue("");
+      await expect(rows.locator(".track-index")).toHaveText(["1", "2", "3"]);
+      await expect(pane.getByLabel("共 3 首歌曲", { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+  }
 
-    const publicView: PublicPlaylistView = {
-      playlist: { id: "pl-public-1", name: "songroom-测试音乐间-公共" },
-      snapshot: {
-        version: 1,
-        syncedAt: Date.now() - 5000,
-        trackCount: 1,
-        tracks: [
-          { position: 0, songId: "s-1", name: "稻香", artists: ["周杰伦"], album: "魔杰座", requesters: ["房主小林"] }
-        ]
-      },
-      lastRefreshError: null,
-      operation: null,
-      allowedActions: ["refreshPublicPlaylist", "replacePublicPlaylist"],
-      disabledReason: null,
-      version: 1
-    };
-    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: publicView }));
+  for (const width of [320, 1440]) {
+    test(`${width}px 点歌台切页不自动同步，手动同步一次并保留筛选、播放指示与随机点歌`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await setupRoom(page, "owner");
 
-    await page.goto(`/rooms/${roomId}`);
+      const publicView: PublicPlaylistView = {
+        playlist: { id: "pl-public-1", name: "songroom-测试音乐间-公共" },
+        snapshot: {
+          version: 1,
+          syncedAt: Date.now() - 5000,
+          trackCount: 1,
+          tracks: [
+            { position: 0, songId: "s-1", name: "稻香", artists: ["周杰伦"], album: "魔杰座", requesters: ["房主小林"] }
+          ]
+        },
+        lastRefreshError: null,
+        operation: null,
+        allowedActions: ["refreshPublicPlaylist", "replacePublicPlaylist"],
+        disabledReason: null,
+        version: 1
+      };
+      await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: publicView }));
+      let refreshPosts = 0;
+      await page.route(`${publicPlaylistEndpoint}/refresh`, route => {
+        expect(route.request().method()).toBe("POST");
+        refreshPosts += 1;
+        return route.fulfill({ json: publicView });
+      });
+      const personalView: PersonalPlaylistView = {
+        playlist: null, snapshot: null, lastRefreshError: null, operation: null,
+        allowedActions: ["createPersonalPlaylist"], disabledReason: null, version: 1
+      };
+      await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: personalView }));
 
-    // 切换到「公共歌单」
-    await page.getByRole("button", { name: "公共歌单" }).click();
+      await page.goto(`/rooms/${roomId}`);
 
-    // 验证公共歌单功能健全
-    await expect(page.getByRole("button", { name: "定位到正在播放" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "同步歌单" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "展开搜索筛选" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "随机换一组" })).toBeVisible();
+      // 切换到「公共歌单」
+      await page.getByRole("button", { name: "点歌台" }).click();
 
-    // 验证彻底不存在全网点歌主按钮与抽屉面板
-    await expect(page.getByRole("button", { name: /网易云点歌|全网点歌|\+ 点歌/ })).toHaveCount(0);
-    await expect(page.getByRole("dialog", { name: "网易云点歌" })).toHaveCount(0);
-  });
+      // 验证公共歌单功能健全
+      await expect(page.getByRole("button", { name: "定位到正在播放" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "同步歌单" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "展开搜索筛选" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "随机点歌" })).toBeVisible();
+
+      for (const tab of ["我的歌单", "搜索歌曲", "我的歌单"]) {
+        await page.getByRole("button", { name: tab, exact: true }).click();
+        await expect(page.getByRole("button", { name: tab, exact: true })).toHaveAttribute("aria-current", "page");
+        await page.getByRole("button", { name: "点歌台", exact: true }).click();
+        await expect(page.getByText("稻香", { exact: true })).toBeVisible();
+      }
+      expect(refreshPosts).toBe(0);
+      await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+      await expect(page.getByText("歌单已同步", { exact: true })).toBeVisible();
+      expect(refreshPosts).toBe(1);
+
+      // 验证彻底不存在全网点歌主按钮与抽屉面板
+      await expect(page.getByRole("button", { name: /网易云点歌|全网点歌|\+ 点歌/ })).toHaveCount(0);
+      await expect(page.getByRole("dialog", { name: "网易云点歌" })).toHaveCount(0);
+    });
+  }
 });

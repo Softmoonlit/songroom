@@ -90,14 +90,14 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
     await page.getByRole("button", { name: "我的歌单" }).click();
 
     // 看到个人歌单信息
-    await expect(page.getByText("songroom-测试宿舍-室友小明")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "我的歌单", exact: true })).toBeVisible();
     await expect(page.getByText("晴天")).toBeVisible();
 
     // 看到未创建公共歌单的提示
-    await expect(page.getByText("房间尚未创建公共歌单，无法发起点歌。可在房主创建公共歌单后点歌。")).toBeVisible();
+    await expect(page.getByText("房间尚未创建点歌台，无法发起点歌。可在房主创建点歌台后点歌。")).toBeVisible();
 
     // 歌曲右侧的点歌按钮应禁用
-    const requestBtn = page.getByRole("button", { name: "点播《晴天》到公共歌单" });
+    const requestBtn = page.getByRole("button", { name: "点播《晴天》到点歌台" });
     await expect(requestBtn).toBeVisible();
     await expect(requestBtn).toBeDisabled();
   });
@@ -183,7 +183,7 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
     await expect(page.getByText("七里香", { exact: true })).toBeVisible();
 
     // 点击点歌
-    const requestBtn = page.getByRole("button", { name: "点播《七里香》到公共歌单" });
+    const requestBtn = page.getByRole("button", { name: "点播《七里香》到点歌台" });
     await expect(requestBtn).toBeEnabled();
     await requestBtn.click();
 
@@ -195,10 +195,10 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
     });
 
     // 成功 Toast 弹出
-    await expect(page.getByText("《七里香》已成功加入公共歌单并记录你的标签！")).toBeVisible();
+    await expect(page.getByText("《七里香》已成功加入点歌台并记录你的标签！")).toBeVisible();
 
     // 切回公共歌单，验证七里香已展示，且带有“室友小明”点歌人标签
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.getByText("七里香", { exact: true })).toBeVisible();
     await expect(page.getByTitle("点歌人：室友小明")).toBeVisible();
   });
@@ -288,13 +288,13 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
     await page.getByRole("button", { name: "我的歌单" }).click();
 
     // 点击第一首歌的点歌
-    await page.getByRole("button", { name: "点播《晴天》到公共歌单" }).click();
+    await page.getByRole("button", { name: "点播《晴天》到点歌台" }).click();
 
     // 看到正在处理的状态横幅
     await expect(page.getByText(/正在为房间添加《晴天》/)).toBeVisible();
 
     // 第二首歌的点歌按钮此时应被禁用
-    const otherBtn = page.getByRole("button", { name: "点播《枫》到公共歌单" });
+    const otherBtn = page.getByRole("button", { name: "点播《枫》到点歌台" });
     await expect(otherBtn).toBeDisabled();
 
     // 推进状态到 succeeded
@@ -302,7 +302,7 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
     await page.waitForTimeout(3000);
 
     // 成功 Toast 弹出，横幅消除
-    await expect(page.getByText("《晴天》点歌成功！已加入公共歌单并记录你的标签。")).toBeVisible();
+    await expect(page.getByText("《晴天》点歌成功！已加入点歌台并记录你的标签。")).toBeVisible();
     await expect(page.getByText(/正在为房间添加《晴天》/)).toHaveCount(0);
   });
 
@@ -368,7 +368,7 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: "我的歌单" }).click();
 
-    await page.getByRole("button", { name: "点播《已移除的歌》到公共歌单" }).click();
+    await page.getByRole("button", { name: "点播《已移除的歌》到点歌台" }).click();
 
     // 出现友好的错误提示
     await expect(page.getByText("该歌曲已从你的个人歌单中移除，无法发起点歌。")).toBeVisible();
@@ -416,8 +416,7 @@ test.describe("个人来源公共点歌与交互正反馈（工单 03）", () =>
       await page.goto(`/rooms/${roomId}`);
       await page.getByRole("button", { name: "我的歌单" }).click();
 
-      await expect(page.getByText("专用歌单")).toBeVisible();
-      await expect(page.getByRole("button", { name: "点播《晴天（长标题测试版本超长歌曲名称示范）》到公共歌单" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "点播《晴天（长标题测试版本超长歌曲名称示范）》到点歌台" })).toBeVisible();
 
       const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
       const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);

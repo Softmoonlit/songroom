@@ -216,7 +216,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
   await page.getByRole("button", { name: "房间成员" }).click();
 
   // 点击室友小张进入成员详情
-  await page.getByRole("button", { name: "查看成员：室友小张" }).click();
+  await page.getByRole("button", { name: "查看室友小张的歌单" }).click();
   await expect(page.getByText("角色室友")).toBeVisible();
 
   // 点击“移除成员”
@@ -227,7 +227,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
   // 二次确认对话框打开，检查文案及影响范围
   const removeDialog = page.getByRole("alertdialog");
   await expect(removeDialog.getByRole("heading", { name: "移除成员“室友小张”？" })).toBeVisible();
-  await expect(removeDialog.getByText("确定要将“室友小张”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在公共歌单上的点歌人标签。")).toBeVisible();
+  await expect(removeDialog.getByText("确定要将“室友小张”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在点歌台上的点歌人标签。")).toBeVisible();
   await expect(removeDialog.getByText("权限立即撤销")).toBeVisible();
   await expect(removeDialog.getByText("清除点歌标签")).toBeVisible();
   await expect(removeDialog.getByText("释放昵称“室友小张”")).toBeVisible();
@@ -240,8 +240,8 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
 
   // 验证调用了 remove API 并回到成员列表，且列表中不再有室友小张
   expect(removeCalled).toBe(true);
-  await expect(page.getByRole("button", { name: "查看成员：房主阿林" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "查看成员：室友小张" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "查看房主阿林的歌单" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看室友小张的歌单" })).toHaveCount(0);
 });
 
 test("房主查看自己不显示“移除成员”按钮；房间设置中房主不显示“退出房间”按钮", async ({ page }) => {
@@ -255,7 +255,7 @@ test("房主查看自己不显示“移除成员”按钮；房间设置中房�
 
   // 检查房间成员：房主查看自己不显示移除成员按钮
   await page.getByRole("button", { name: "房间成员" }).click();
-  await page.getByRole("button", { name: "查看成员：房主阿林" }).click();
+  await page.getByRole("button", { name: "查看房主阿林的歌单" }).click();
   await expect(page.getByRole("button", { name: "移除成员" })).toHaveCount(0);
 });
 
@@ -276,7 +276,7 @@ test("房主移除成员时发生版本冲突，显示错误提示并保持对�
 
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员" }).click();
-  await page.getByRole("button", { name: "查看成员：室友小张" }).click();
+  await page.getByRole("button", { name: "查看室友小张的歌单" }).click();
   await page.getByRole("button", { name: "移除成员" }).click();
 
   await page.getByRole("button", { name: "确认移除" }).click();

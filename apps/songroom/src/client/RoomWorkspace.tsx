@@ -4,6 +4,7 @@ import { ArrowLeft, Bell, ListMusic, Music2, Search, Settings, UserPlus, Users }
 import { Link, useNavigate, useParams } from "react-router";
 import { v7 } from "uuid";
 import { publicPlaylistView } from "../shared/public-playlist-contracts";
+import { personalPlaylistView } from "../shared/personal-playlist-contracts";
 import { roomLeaveResult, roomMembersView, roomShellView, roomDeletionView, roomDeleteResult } from "../shared/room-contracts";
 import { errorMessage, queryOptions, request, RoomRequestError } from "./room-http";
 import { QueryError } from "./RoomQueryError";
@@ -104,7 +105,7 @@ function DeleteRoomDialog({
         <>
           {deletion.publicPlaylist && (
             <p className="destructive-dialog-note">
-              专用公共歌单“{deletion.publicPlaylist.name}”将启动网易云删除清理。
+              专用点歌台“{deletion.publicPlaylist.name}”将启动网易云删除清理。
             </p>
           )}
           {deletion.personalPlaylistCount > 0 && (
@@ -212,19 +213,19 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           </button>
           <button
             type="button"
-            aria-current={active === "public" ? "page" : undefined}
-            onClick={() => selectTab("public")}
-          >
-            <Music2 size={18} aria-hidden="true" />
-            公共歌单
-          </button>
-          <button
-            type="button"
             aria-current={active === "personal" ? "page" : undefined}
             onClick={() => selectTab("personal")}
           >
             <ListMusic size={18} aria-hidden="true" />
             我的歌单
+          </button>
+          <button
+            type="button"
+            aria-current={active === "public" ? "page" : undefined}
+            onClick={() => selectTab("public")}
+          >
+            <Music2 size={18} aria-hidden="true" />
+            点歌台
           </button>
           <button
             type="button"
@@ -255,7 +256,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             onNavigateToPersonal={() => selectTab("personal")}
           />
         </section>
-        <section hidden={active !== "public"} aria-label="公共歌单">
+        <section hidden={active !== "public"} aria-label="点歌台">
           <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
         </section>
         <section hidden={active !== "personal"} aria-label="我的歌单">
@@ -350,7 +351,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                   <div className="danger-action-row">
                     <div className="danger-action-info">
                       <strong>删除房间</strong>
-                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动公共歌单及全部成员专用个人歌单清理。</p>
+                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动点歌台及全部成员专用个人歌单清理。</p>
                     </div>
                     <div className="danger-action-trigger">
                       <DeleteRoomDialog
@@ -436,7 +437,6 @@ function MembersPane({
             <ArrowLeft size={17} aria-hidden="true" />
             返回成员列表
           </button>
-          <span>{selected.nickname}</span>
         </nav>
         <h1>{selected.nickname}</h1>
         {selected.isSelf && selected.allowedActions.includes("renameNickname") && <IdentityForm sessionId={sessionId} roomId={roomId} field="nickname" current={selected.nickname} disabledReason={selected.disabledReasons.renameNickname} />}
@@ -458,7 +458,7 @@ function MembersPane({
             <DestructiveConfirmDialog
               triggerText="移除成员"
               title={`移除成员“${selected.nickname}”？`}
-              descriptionText={`确定要将“${selected.nickname}”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在公共歌单上的点歌人标签。`}
+              descriptionText={`确定要将“${selected.nickname}”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在点歌台上的点歌人标签。`}
               badges={[
                 { label: "权限立即撤销", variant: "danger" },
                 { label: "清除点歌标签", variant: "danger" },
@@ -542,15 +542,7 @@ function MembersPane({
       <ul className="member-list">
         {query.data.members.map(member => (
           <li key={member.id}>
-            <button
-              className="member-card"
-              type="button"
-              aria-label={`查看成员：${member.nickname}`}
-              onClick={() => {
-                listScroll.current = window.scrollY;
-                setMemberId(member.id);
-              }}
-            >
+            <div className="member-card">
               <div className="member-card-left">
                 <span className="member-avatar" aria-hidden="true">
                   {member.nickname.slice(0, 1).toUpperCase()}
@@ -560,10 +552,23 @@ function MembersPane({
                   {member.isSelf && <span className="member-self-tag">（我）</span>}
                 </span>
               </div>
-              <span className={`status-pill role-${member.role}`}>
-                {roleLabels[member.role]}
-              </span>
-            </button>
+              <div className="member-card-actions">
+                <span className={`status-pill role-${member.role}`}>
+                  {roleLabels[member.role]}
+                </span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  aria-label={`查看${member.nickname}的歌单`}
+                  onClick={() => {
+                    listScroll.current = window.scrollY;
+                    setMemberId(member.id);
+                  }}
+                >
+                  查看歌单
+                </button>
+              </div>
+            </div>
           </li>
         ))}
       </ul>
@@ -595,13 +600,25 @@ function PlaylistDetails({ sessionId, roomId, active }: { sessionId: string; roo
     enabled: active,
     ...queryOptions
   });
-  if (!query.data?.playlist) return null;
-  return <div className="room-settings-section">
-    <div className="room-settings-section-header"><h2>公共歌单详情</h2></div>
-    <dl className="settings-card netease-identity">
-      <div><dt>网易云歌单名称</dt><dd>{query.data.playlist.name}</dd></div>
-      <div><dt>网易云歌单 ID</dt><dd>{query.data.playlist.id}</dd></div>
-      {query.data.snapshot?.syncedAt && <div><dt>快照时间</dt><dd>{new Date(query.data.snapshot.syncedAt).toLocaleString("zh-CN", { hour12: false })}</dd></div>}
-    </dl>
-  </div>;
+  const personalQuery = useQuery({
+    queryKey: ["room-personal-playlist", sessionId, roomId],
+    queryFn: ({ signal }) => request(`/${roomId}/personal-playlist`, personalPlaylistView, signal),
+    enabled: active,
+    ...queryOptions
+  });
+  return <>
+    {[
+      { title: "点歌台详情", data: query.data },
+      { title: "我的歌单详情", data: personalQuery.data }
+    ].map(({ title, data }) => data?.playlist && (
+      <div className="room-settings-section" key={title}>
+        <div className="room-settings-section-header"><h2>{title}</h2></div>
+        <dl className="settings-card netease-identity">
+          <div><dt>网易云歌单名称</dt><dd>{data.playlist.name}</dd></div>
+          <div><dt>网易云歌单 ID</dt><dd>{data.playlist.id}</dd></div>
+          {data.snapshot?.syncedAt && <div><dt>快照时间</dt><dd>{new Date(data.snapshot.syncedAt).toLocaleString("zh-CN", { hour12: false })}</dd></div>}
+        </dl>
+      </div>
+    ))}
+  </>;
 }

@@ -71,7 +71,7 @@ export function RandomReplacementDialog({
     onError: failure => {
       const code = failure instanceof RoomRequestError ? failure.code : null;
       if (code === "PREVIEW_INVALIDATED" || code === "PREVIEW_NOT_FOUND") {
-        setConfirmError("公共歌单或成员来源已变更，当前预览已失效，请重新生成预览。");
+        setConfirmError("点歌台或成员来源已变更，当前预览已失效，请重新生成预览。");
       } else {
         setConfirmError(getFriendlyReplacementErrorMessage(code));
       }
@@ -132,7 +132,7 @@ export function RandomReplacementDialog({
             <div>
               <AlertDialog.Title className="invite-modal-title">
                 <Shuffle size={18} aria-hidden="true" style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
-                随机换一组
+                随机点歌
               </AlertDialog.Title>
               <AlertDialog.Description id="random-replacement-desc" className="invite-modal-desc">
                 从房间所有配置了个人歌单的成员中，尽量均分抽选歌曲，新歌优先。
@@ -142,7 +142,7 @@ export function RandomReplacementDialog({
               <button
                 type="button"
                 className="invite-modal-close"
-                aria-label="关闭随机换歌窗口"
+                aria-label="关闭随机点歌窗口"
                 disabled={confirmMutation.isPending}
               >
                 <X size={18} aria-hidden="true" />
@@ -229,7 +229,7 @@ export function RandomReplacementDialog({
                       )}
                     </span>
                     <span className="stats-replace-scope">
-                      将替换公共歌单全部 <strong>{preview.oldTrackCount}</strong> 首旧歌曲
+                      将替换点歌台全部 <strong>{preview.oldTrackCount}</strong> 首旧歌曲
                       {preview.oldTracksWithRequesterCount > 0 && (
                         <>（其中 {preview.oldTracksWithRequesterCount} 首带点歌人标签）</>
                       )}
@@ -284,7 +284,7 @@ export function RandomReplacementDialog({
 
                 {/* 替换说明与官方客户端重新载入提示 */}
                 <p className="random-confirm-guidance">
-                  确认后将替换公共歌单中的全部旧歌曲。换歌完成后，请在网易云官方客户端重新载入该歌单并点击「播放全部」以开始播放新列表。
+                  确认后将替换点歌台中的全部旧歌曲。换歌完成后，请在网易云官方客户端重新载入该歌单并点击「播放全部」以开始播放新列表。
                 </p>
               </div>
             ) : null}

@@ -44,7 +44,7 @@ export const errorMessages: Record<string, string> = {
   INVALID_INPUT: "请输入有效的房间名称和昵称。",
   IDEMPOTENCY_CONFLICT: "此次操作内容已变化，请重新填写后提交。",
   IDEMPOTENCY_KEY_EXPIRED: "此次操作标识已过期，请重新填写后提交。",
-  PUBLIC_PLAYLIST_NOT_FOUND: "房间尚未创建公共歌单，无法发起点歌。可在房主创建公共歌单后重试。",
+  PUBLIC_PLAYLIST_NOT_FOUND: "房间尚未创建点歌台，无法发起点歌。可在房主创建点歌台后重试。",
   PERSONAL_PLAYLIST_NOT_FOUND: "尚未配置个人歌单，无法发起点歌。",
   SOURCE_PLAYLIST_FORBIDDEN: "只能从自己的专用个人歌单发起点歌。",
   SOURCE_SONG_REMOVED: "该歌曲已从你的个人歌单中移除，无法发起点歌。",

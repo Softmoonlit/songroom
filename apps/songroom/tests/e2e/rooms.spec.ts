@@ -89,8 +89,8 @@ test("确认本地网易云身份后建房，进入房间默认搜索歌曲而�
   await expect(page.getByRole("heading", { name: "搜索歌曲", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "房间导航" }).getByRole("button")).toHaveText([
     "搜索歌曲",
-    "公共歌单",
     "我的歌单",
+    "点歌台",
     "房间成员",
     "房间设置"
   ]);
@@ -114,11 +114,20 @@ for (const width of [320, 900, 1440]) {
     await expect(page.getByText(`房间：${room.name}`, { exact: true })).toBeVisible();
     await expect(page.getByText("房主", { exact: true })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "房间导航" });
-    await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "公共歌单", "我的歌单", "房间成员", "房间设置"]);
+    await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "我的歌单", "点歌台", "房间成员", "房间设置"]);
     await expect(nav.getByRole("button", { name: "搜索歌曲" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("button", { name: "房间成员" }).click();
-    await expect(page.getByRole("button", { name: "查看成员：室友1", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "查看成员：室友1", exact: true }).click();
+    const memberCard = page.locator(".member-card").filter({ has: page.getByRole("button", { name: "查看室友1的歌单", exact: true }) });
+    await expect(memberCard).toBeVisible();
+    await expect(memberCard).not.toHaveAttribute("role", /button|link/);
+    await expect(memberCard).not.toHaveAttribute("tabindex", /.+/);
+    await memberCard.locator(".member-nickname").click();
+    await expect(page.getByRole("region", { name: "成员详情", exact: true })).toHaveCount(0);
+    await expect(nav.getByRole("button", { name: "房间成员", exact: true })).toHaveAttribute("aria-current", "page");
+    const viewPlaylist = memberCard.getByRole("button", { name: "查看室友1的歌单", exact: true });
+    await viewPlaylist.focus();
+    await expect(viewPlaylist).toBeFocused();
+    await viewPlaylist.press("Enter");
     await expect(page.getByRole("heading", { name: "室友1", exact: true })).toBeVisible();
     await expect(page.getByText("室友", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "成员详情" })).not.toContainText("room-ui@example.com");
@@ -128,7 +137,7 @@ for (const width of [320, 900, 1440]) {
     await nav.getByRole("button", { name: "房间成员" }).click();
     await expect(page.getByRole("heading", { name: "室友1", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "返回成员列表" }).click();
-    await page.getByRole("button", { name: "查看成员：室友10" }).scrollIntoViewIfNeeded();
+    await page.getByRole("button", { name: "查看室友10的歌单" }).scrollIntoViewIfNeeded();
     const before = await page.evaluate(() => window.scrollY);
     expect(before).toBeGreaterThan(100);
     await expect(nav).toBeInViewport();
@@ -141,7 +150,7 @@ for (const width of [320, 900, 1440]) {
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeCloseTo(before, 0);
     await nav.getByRole("button", { name: "房间成员" }).click();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
-    await page.getByRole("button", { name: "查看成员：室友1", exact: true }).click();
+    await page.getByRole("button", { name: "查看室友1的歌单", exact: true }).click();
     await nav.getByRole("button", { name: "房间成员" }).click();
     await expect(page.getByRole("heading", { name: "室友1", exact: true })).toBeVisible();
     await expect
@@ -191,7 +200,7 @@ test("完整应用：注册扫码绑定后创建同名房间，身份规范化�
     const nav = page.getByRole("navigation", { name: "房间导航" });
     await nav.getByRole("button", { name: "房间成员" }).click();
     await page
-      .getByRole("button", { name: `查看成员：${nickname.trim().normalize("NFC")}`, exact: true })
+      .getByRole("button", { name: `查看${nickname.trim().normalize("NFC")}的歌单`, exact: true })
       .click();
     await expect(page.getByRole("region", { name: "成员详情" })).toContainText(
       nickname === " e\u0301 " ? "é" : nickname.trim()
@@ -281,7 +290,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
   );
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
-  await page.getByRole("button", { name: "查看成员：小林", exact: true }).click();
+  await page.getByRole("button", { name: "查看小林的歌单", exact: true }).click();
   await expect(page.getByRole("region", { name: "成员详情" })).toBeVisible();
   await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
   await page.getByRole("link", { name: `进入房间：${other.name}` }).click();
@@ -293,7 +302,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
   await page.getByRole("button", { name: "房间成员", exact: true }).click();
   await expect(page.getByRole("heading", { name: "房间成员", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "成员详情" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "查看成员：室友昵称" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看室友昵称的歌单" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 });
 
@@ -376,10 +385,11 @@ for (const width of [320, 900, 1440]) {
     await signedIn(page);
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: "房间成员", exact: true }).click();
-    await page.getByRole("button", { name: "查看成员：小林", exact: true }).click();
+    await page.getByRole("button", { name: "查看小林的歌单", exact: true }).click();
     const context = page.getByRole("navigation", { name: "成员详情导航" });
     await expect(context).toBeVisible();
-    await expect(context).toContainText("小林");
+    await expect(context.getByRole("button", { name: "返回成员列表", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "成员详情", exact: true }).getByRole("heading", { name: "小林", exact: true })).toBeVisible();
     await context.evaluate(element => {
       const top = element.getBoundingClientRect().top + window.scrollY;
       window.scrollTo({ top: top + 30, behavior: "instant" });

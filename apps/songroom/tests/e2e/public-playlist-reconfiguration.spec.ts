@@ -77,13 +77,13 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       });
 
       await page.goto(`/rooms/${roomId}`);
-      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+      await page.getByRole("button", { name: "点歌台", exact: true }).click();
 
       // 验证失效状态文案清晰展示
-      const invalidCard = page.getByRole("region", { name: "公共歌单失效状态" });
-      await expect(invalidCard.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
+      const invalidCard = page.getByRole("region", { name: "点歌台失效状态" });
+      await expect(invalidCard.getByRole("heading", { name: "点歌台已确认失效" })).toBeVisible();
       await expect(invalidCard.getByText(/已从网易云删除.*已确认失效/)).toBeVisible();
-      await expect(invalidCard.getByRole("button", { name: "重新创建公共歌单" })).toBeVisible();
+      await expect(invalidCard.getByRole("button", { name: "重新创建点歌台" })).toBeVisible();
 
       // 不出现个人歌单、导入或换号入口
       await expect(invalidCard.getByText("个人歌单")).toHaveCount(0);
@@ -94,8 +94,8 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
       // 房主点击重新创建
-      await invalidCard.getByRole("button", { name: "重新创建公共歌单" }).click();
-      await expect(page.getByRole("status")).toContainText("已排队，等待创建公共歌单。");
+      await invalidCard.getByRole("button", { name: "重新创建点歌台" }).click();
+      await expect(page.getByRole("status")).toContainText("已排队，等待创建点歌台。");
     });
 
     test(`${width}px 室友视角：确认失效展示最后核查状态与等待房主重新创建，无创建入口，无横向溢出`, async ({ page }) => {
@@ -123,14 +123,14 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       });
 
       await page.goto(`/rooms/${roomId}`);
-      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+      await page.getByRole("button", { name: "点歌台", exact: true }).click();
 
       // 验证失效状态与等待房主说明
-      await expect(page.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
-      await expect(page.getByText(/已确认失效，等待房主重新创建公共歌单/)).toBeVisible();
+      await expect(page.getByRole("heading", { name: "点歌台已确认失效" })).toBeVisible();
+      await expect(page.getByText(/已确认失效，等待房主重新创建点歌台/)).toBeVisible();
 
       // 室友无创建按钮
-      await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /创建点歌台|重新创建点歌台/ })).toHaveCount(0);
 
       // 无横向溢出
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -158,7 +158,7 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
 
     await page.route(endpoint, route => route.fulfill({ json: publicPlaylistView.parse(readFailedView) }));
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
 
     await expect(page.getByText(/暂时读取失败.*已保留上次快照/)).toBeVisible();
     await expect(page.getByText("晴天")).toBeVisible();
@@ -181,10 +181,10 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
 
     await page.route(endpoint, route => route.fulfill({ json: publicPlaylistView.parse(awaitingConfirmationView) }));
     await page.reload();
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
 
     await expect(page.getByRole("status")).toContainText(/创建结果待核查/);
-    await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /创建点歌台|重新创建点歌台/ })).toHaveCount(0);
   });
 
   test("真实运行应用（无 route 拦截）：经历公开刷新核查失效并成功重建为新代次", async ({ page }) => {
@@ -276,17 +276,18 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       await page.getByRole("button", { name: "创建并进入房间" }).click();
 
       // 1. 创建初始公共歌单
-      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-      await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
-      await page.getByRole("button", { name: "创建公共歌单" }).click();
+      await page.getByRole("button", { name: "点歌台", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "尚未创建点歌台" })).toBeVisible();
+      await page.getByRole("button", { name: "创建点歌台" }).click();
       await expect.poll(async () => {
         const res = await page.request.get(`${page.url().replace("/rooms/", "/api/rooms/")}/public-playlist`);
         return (await res.json()).playlist?.id;
       }, { timeout: 15_000 }).toBe("cloud-pl-v1");
 
-      await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
-      // 等待首次进入歌单的自动同步完成
+      await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
+      // 显式同步后核查快照，进入页面不再自动发起云端刷新
       await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "同步歌单", exact: true }).click();
       await expect(page.getByText("歌单已同步")).toBeVisible();
 
       // 2. 模拟网易云端歌单被删除，用户点击同步歌单
@@ -294,22 +295,22 @@ test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {
       await page.getByRole("button", { name: "同步歌单", exact: true }).click();
 
       // 3. 验证页面更新为已确认失效，并出现重新创建按钮
-      await expect(page.getByRole("heading", { name: "公共歌单已确认失效" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "重新创建公共歌单" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "点歌台已确认失效" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "重新创建点歌台" })).toBeVisible();
 
       // 4. 房主点击重新创建公共歌单
       playlistState = "recreated";
-      await page.getByRole("button", { name: "重新创建公共歌单" }).click();
+      await page.getByRole("button", { name: "重新创建点歌台" }).click();
       await expect.poll(async () => {
         const res = await page.request.get(`${page.url().replace("/rooms/", "/api/rooms/")}/public-playlist`);
         return (await res.json()).playlist?.id;
       }, { timeout: 15_000 }).toBe("cloud-pl-v2");
 
       // 5. 验证新歌单绑定生效
-      await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "房间设置", exact: true }).click();
       await expect(page.getByText("cloud-pl-v2")).toBeVisible();
-      await expect(page.getByRole("button", { name: /创建公共歌单|重新创建公共歌单/ })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /创建点歌台|重新创建点歌台/ })).toHaveCount(0);
     } finally {
       await app?.close();
       await fixture.close();

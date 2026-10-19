@@ -104,7 +104,7 @@ test.describe("Ticket 08: 房间创建与设置模块化及多平台授权抽象
 
     // 1. 音乐平台授权专区标题与说明
     await expect(page.getByRole("heading", { name: "音乐平台授权" })).toBeVisible();
-    await expect(page.getByText("绑定音乐平台账号作为房间点歌与公共歌单的同步播放源。")).toBeVisible();
+    await expect(page.getByText("绑定音乐平台账号作为房间点歌与点歌台的同步播放源。")).toBeVisible();
 
     // 2. 已绑定的网易云音乐卡片
     await expect(page.getByRole("heading", { name: "网易云账号" })).toBeVisible();

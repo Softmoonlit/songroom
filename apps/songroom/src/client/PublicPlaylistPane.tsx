@@ -22,12 +22,12 @@ import {
 } from "./random-replacement-messages.js";
 
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
-  queued: "已排队，等待创建公共歌单。",
-  processing: "正在创建公共歌单。",
+  queued: "已排队，等待创建点歌台。",
+  processing: "正在创建点歌台。",
   awaitingConfirmation: "创建结果待确认（创建结果待核查），可能已在网易云创建。请勿重试创建。",
   waitingAuthorization: "正在等待房主恢复网易云授权。",
   needsAdministrator: "创建结果未知，需要管理员处理，已阻止该房间再次创建。",
-  succeeded: "公共歌单已创建并绑定。",
+  succeeded: "点歌台已创建并绑定。",
   failed: "创建明确失败，请查看当前可用操作。",
   stopped: "创建操作已停止。"
 };
@@ -35,9 +35,9 @@ const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["st
 export function getOperationMessage(op: NonNullable<PublicPlaylistView["operation"]>): string {
   if (op.step === "confirming") {
     if (op.recovered) {
-      return "具体 ID 已恢复，正在核验并完成公共歌单关联。";
+      return "具体 ID 已恢复，正在核验并完成点歌台关联。";
     }
-    return "已获 ID 待关联，正在建立房间公共歌单绑定。";
+    return "已获 ID 待关联，正在建立房间点歌台绑定。";
   }
   if (op.step === "unknown" || op.status === "needsAdministrator") {
     return "创建结果未知，需要管理员处理，已阻止该房间再次创建。";
@@ -65,9 +65,9 @@ function getPlaylistRefreshErrorMessage(code: string): string {
 }
 
 const disabledMessages = {
-  OWNER_ONLY: "只有房主可以创建公共歌单。",
+  OWNER_ONLY: "只有房主可以创建点歌台。",
   NETEASE_AUTH_REQUIRED: "请房主先在账号设置中绑定有效的网易云账号。",
-  PUBLIC_PLAYLIST_EXISTS: "此房间已经绑定公共歌单。",
+  PUBLIC_PLAYLIST_EXISTS: "此房间已经绑定点歌台。",
   ACCOUNT_PAUSED: "网易云账号因风控或频繁请求已暂停，请联系管理员恢复。",
   TARGET_BLOCKED: "当前目标有待确认的写入操作，其他房间可继续使用。",
   UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
@@ -289,7 +289,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       setActiveReplacementOperationId(null);
       setToast({
         id: uuidv7(),
-        message: "换歌成功！已更新公共歌单。请在网易云官方客户端重新载入歌单并点击「播放全部」。",
+        message: "换歌成功！已更新点歌台。请在网易云官方客户端重新载入歌单并点击「播放全部」。",
         type: "success"
       });
       void client.invalidateQueries({ queryKey });
@@ -298,23 +298,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     }
   }, [replacementOperationQuery.data, client, queryKey]);
 
-  // 进入页面触发一次独立显式刷新
-  const refreshedOnEnter = useRef<string | null>(null);
-  useEffect(() => {
-    const currentView = query.data;
-    if (active && currentView?.playlist && currentView.allowedActions.includes("refreshPublicPlaylist")) {
-      const key = `${roomId}:${currentView.playlist.id}`;
-      if (refreshedOnEnter.current !== key) {
-        refreshedOnEnter.current = key;
-        refreshMutation.mutate();
-      }
-    } else if (!active) {
-      refreshedOnEnter.current = null;
-    }
-  }, [active, query.data?.playlist?.id, query.data?.allowedActions]);
-
-  if (query.isPending) return <><h1 className="public-playlist-title-heading">公共歌单</h1><p role="status">正在读取公共歌单状态…</p></>;
-  if (query.isError) return <><h1 className="public-playlist-title-heading">公共歌单</h1><QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} /></>;
+  if (query.isPending) return <><h1 className="playlist-page-title">点歌台</h1><p role="status">正在读取点歌台状态…</p></>;
+  if (query.isError) return <><h1 className="playlist-page-title">点歌台</h1><QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} /></>;
   if (!query.data) return null;
   const view = query.data;
 
@@ -337,18 +322,18 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   };
 
   return <>
-    <h1 className="public-playlist-title-heading">公共歌单</h1>
+    {!view.playlist && <h1 className="playlist-page-title">点歌台</h1>}
     {!view.playlist ? (
       view.invalidatedTarget ? (
-        <div className="playlist-empty-state-card invalidated" role="region" aria-label="公共歌单失效状态">
+        <div className="playlist-empty-state-card invalidated" role="region" aria-label="点歌台失效状态">
           <div className="empty-state-icon-wrapper danger">
             <Music2 size={28} aria-hidden="true" />
           </div>
-          <h3>公共歌单已确认失效</h3>
+          <h3>点歌台已确认失效</h3>
           <p className="field-help" role="alert">
-            原公共歌单「{view.invalidatedTarget.name}」（ID: {view.invalidatedTarget.playlistId}）已从网易云删除。最后核查状态：已确认失效（{formatTime(view.invalidatedTarget.checkedAt)}）。
+            原点歌台「{view.invalidatedTarget.name}」（ID: {view.invalidatedTarget.playlistId}）已从网易云删除。最后核查状态：已确认失效（{formatTime(view.invalidatedTarget.checkedAt)}）。
           </p>
-          {view.disabledReason === "OWNER_ONLY" && <p className="field-help" role="status">已确认失效，等待房主重新创建公共歌单。</p>}
+          {view.disabledReason === "OWNER_ONLY" && <p className="field-help" role="status">已确认失效，等待房主重新创建点歌台。</p>}
           {view.operation && view.operation.status !== "succeeded" && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
           {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
           {view.disabledReason && view.disabledReason !== "OWNER_ONLY" && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
@@ -359,18 +344,18 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               disabled={mutation.isPending || query.isFetching || view.disabledReason !== null}
               onClick={handleCreatePlaylist}
             >
-              {mutation.isPending ? "正在提交创建…" : "重新创建公共歌单"}
+              {mutation.isPending ? "正在提交创建…" : "重新创建点歌台"}
             </button>
           )}
           {message && <p className="form-message" role="alert">{message}</p>}
         </div>
       ) : (
-        <div className="playlist-empty-state-card uncreated" role="region" aria-label="创建公共歌单">
+        <div className="playlist-empty-state-card uncreated" role="region" aria-label="创建点歌台">
           <div className="empty-state-icon-wrapper">
             <Music2 size={28} aria-hidden="true" />
           </div>
-          <h3>尚未创建公共歌单</h3>
-          <p className="empty-state-desc">创建房间不会自动创建公共歌单。由房主按需创建此房间专用的公共歌单，名称为 songroom-房间名-公共。</p>
+          <h3>尚未创建点歌台</h3>
+          <p className="empty-state-desc">由房主创建房间歌单，成员从「我的歌单」点歌。</p>
           {view.operation && view.operation.status !== "succeeded" && <p className="netease-status" role="status">{getOperationMessage(view.operation)}</p>}
           {view.operation?.errorCode && <p className="field-help">{errorMessageForCode(view.operation.errorCode)}</p>}
           {view.disabledReason && <p className="field-help">{disabledMessages[view.disabledReason]}</p>}
@@ -381,7 +366,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               disabled={mutation.isPending || query.isFetching || view.disabledReason !== null}
               onClick={handleCreatePlaylist}
             >
-              {mutation.isPending ? "正在提交创建…" : "创建公共歌单"}
+              {mutation.isPending ? "正在提交创建…" : "创建点歌台"}
             </button>
           )}
           {message && <p className="form-message" role="alert">{message}</p>}
@@ -392,6 +377,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
         <header className="playlist-header">
           <div className="playlist-header-left">
             <div className="playlist-title-row">
+              <h1 className="playlist-page-title">点歌台</h1>
               {view.snapshot && (
                 <span className="playlist-track-badge" aria-label={isFilterActive ? `筛选出 ${filteredTracks.length} 首，共 ${view.snapshot.trackCount} 首歌曲` : `共 ${view.snapshot.trackCount} 首歌曲`}>
                   {isFilterActive ? (
@@ -403,9 +389,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               )}
             </div>
             <div className="playlist-header-meta">
-              {refreshMutation.isPending ? (
-                <span className="sync-micro-status status-pending" role="status">正在同步歌单…</span>
-              ) : view.lastRefreshError ? (
+              {view.lastRefreshError ? (
                 <span className="sync-micro-status status-error" role="alert">
                   暂时读取失败（刷新未成功：{getPlaylistRefreshErrorMessage(view.lastRefreshError)}），已保留上次快照
                 </span>
@@ -417,12 +401,6 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
 
           <div className="playlist-header-right">
-            <button type="button" className="secondary-button locate-playback-button"
-              disabled={!playback.anchorSongId} onClick={() => playback.anchorSongId && setHighlight({ songId: playback.anchorSongId, id: uuidv7() })}>
-              <LocateFixed size={14} aria-hidden="true" />
-              <span>定位到正在播放</span>
-            </button>
-
             {view.allowedActions.includes("refreshPublicPlaylist") && (
               <button
                 className="secondary-button sync-playlist-button"
@@ -453,18 +431,24 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               </button>
             )}
 
+            <button type="button" className="secondary-button locate-playback-button"
+              disabled={!playback.anchorSongId} onClick={() => playback.anchorSongId && setHighlight({ songId: playback.anchorSongId, id: uuidv7() })}>
+              <LocateFixed size={14} aria-hidden="true" />
+              <span>定位到正在播放</span>
+            </button>
+
             {view.allowedActions.includes("replacePublicPlaylist") && (
               <button
                 type="button"
-                className="secondary-button random-replacement-button"
+                className="primary-button random-replacement-button"
                 disabled={isReplacementBusy || Boolean(activeReplacementOperationId) || view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
                 onClick={() => setIsRandomDialogOpen(true)}
                 aria-haspopup="dialog"
                 aria-expanded={isRandomDialogOpen}
-                title="随机换一组歌曲"
+                title="随机点歌"
               >
                 <Shuffle size={14} aria-hidden="true" />
-                <span>随机换一组</span>
+                <span>随机点歌</span>
               </button>
             )}
           </div>
@@ -566,7 +550,9 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
 
         {(!view.snapshot || view.snapshot.syncedAt === null) ? (
           <div className="initial-sync-card">
-            <p>正在进行首次同步，请稍候…</p>
+            <p>{view.allowedActions.includes("refreshPublicPlaylist")
+              ? "尚未同步，请点击「同步歌单」读取歌曲。"
+              : "尚未同步，恢复同步条件后可读取歌曲。"}</p>
           </div>
         ) : view.snapshot.trackCount === 0 ? (
           <div className="empty-playlist-card" role="region" aria-label="空歌单提示">

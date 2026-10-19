@@ -109,11 +109,11 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
     await setupMocks(page, mockCleanups);
     // 1. 房间列表主视图彻底移出公共歌单清理
     await page.goto("/rooms");
-    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "点歌台清理" })).toHaveCount(0);
 
     // 2. 归入账号高级设置中展示
     await page.goto("/account");
-    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "点歌台清理" })).toBeVisible();
 
     // 1. 等待重新授权
     await expect(page.getByText("网易云歌单 ID：pl-wait-auth")).toBeVisible();
@@ -138,7 +138,7 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
     // 5. 已完成删除
     await expect(page.getByText("网易云歌单 ID：pl-done")).toBeVisible();
     await expect(page.getByText("已完成删除")).toBeVisible();
-    await expect(page.getByText("专用公共歌单已在网易云成功删除，清理已完成。")).toBeVisible();
+    await expect(page.getByText("专用点歌台已在网易云成功删除，清理已完成。")).toBeVisible();
 
     // 验证不暴露敏感内部证据和凭据
     await expect(page.getByText("MUSIC_U")).toHaveCount(0);
@@ -167,7 +167,7 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
     await expect(page.getByRole("heading", { name: "网易云账号" })).toBeVisible();
 
     // 账号设置中也展示公共歌单清理摘要
-    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "点歌台清理" })).toBeVisible();
     await expect(page.getByText("网易云歌单 ID：pl-account-ctx")).toBeVisible();
     await expect(page.getByText("等待重新授权")).toBeVisible();
   });
@@ -192,7 +192,7 @@ test.describe("公共歌单清理状态展示与账号上下文 (ticket 18)", ()
       await page.setViewportSize({ width, height: 800 });
       await page.goto("/account");
 
-      await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "点歌台清理" })).toBeVisible();
       await expect(page.getByText("网易云歌单 ID：pl-responsive")).toBeVisible();
 
       const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);

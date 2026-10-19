@@ -12,7 +12,7 @@ export const MUSIC_PLATFORMS: readonly MusicPlatformInfo[] = [
   {
     id: "netease",
     name: "网易云音乐",
-    description: "当前主播放源，支持房间公共歌单与逐首点歌",
+    description: "当前主播放源，支持房间点歌台与逐首点歌",
     status: "active",
     statusText: "已支持"
   },

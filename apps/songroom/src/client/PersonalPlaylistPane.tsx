@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, Info, ListMusic, Plus, RotateCw, Trash2 } from "lucide-react";
+import { AlertCircle, Info, ListMusic, Plus, RotateCw, Search, Trash2, X } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   personalPlaylistView,
@@ -82,7 +82,9 @@ function PersonalTrackList({
   songRequestDisabledReason,
   onRemoveSong,
   removingSongId,
-  songRemovalDisabledReason
+  songRemovalDisabledReason,
+  isFilterActive = false,
+  onClearFilter
 }: {
   tracks: PersonalPlaylistTrack[];
   active: boolean;
@@ -92,6 +94,8 @@ function PersonalTrackList({
   onRemoveSong?: (track: PersonalPlaylistTrack) => void;
   removingSongId?: string | null;
   songRemovalDisabledReason?: string | null;
+  isFilterActive?: boolean;
+  onClearFilter?: () => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -116,7 +120,7 @@ function PersonalTrackList({
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [active]);
+  }, [active, tracks.length]);
 
   const isRequestDisabled = Boolean(requestingSongId || songRequestDisabledReason);
 
@@ -128,8 +132,13 @@ function PersonalTrackList({
         {(onRequestSong || onRemoveSong) && <span className="tracks-header-col col-actions" style={{ textAlign: "right" }}>操作</span>}
       </div>
       {tracks.length === 0 ? (
-        <div className="playlist-tracks-empty" role="status">
-          <p>歌单内暂无歌曲</p>
+        <div className={isFilterActive ? "playlist-tracks-empty-filter" : "playlist-tracks-empty"} role="status">
+          <p>{isFilterActive ? "未找到匹配的歌曲" : "歌单内暂无歌曲"}</p>
+          {isFilterActive && onClearFilter && (
+            <button type="button" className="secondary-button" onClick={onClearFilter}>
+              清除筛选条件
+            </button>
+          )}
         </div>
       ) : (
         <div
@@ -180,8 +189,8 @@ function PersonalTrackList({
                       className="secondary-button request-song-btn"
                       disabled={isRequestDisabled || Boolean(removingSongId)}
                       onClick={() => onRequestSong(track)}
-                      aria-label={`点播《${track.name}》到公共歌单`}
-                      title={songRequestDisabledReason ?? "点歌到公共歌单"}
+                      aria-label={`点播《${track.name}》到点歌台`}
+                      title={songRequestDisabledReason ?? "点歌到点歌台"}
                     >
                       <Plus size={14} aria-hidden="true" />
                       <span>{isThisTrackRequesting ? "点歌中…" : "点歌"}</span>
@@ -221,6 +230,8 @@ export function PersonalPlaylistPane({
 }) {
   const queryClient = useQueryClient();
   const [createError, setCreateError] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [requestingSongId, setRequestingSongId] = useState<string | null>(null);
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
   const [operationBanner, setOperationBanner] = useState<{ message: string; type: "info" | "warning" } | null>(null);
@@ -279,7 +290,7 @@ export function PersonalPlaylistPane({
           id: uuidv7(),
           message: op.songConfirmed && !op.tagConfirmed
             ? `《${op.name}》网易云已确认，但点歌人标签待补记。`
-            : `《${op.name}》点歌成功！已加入公共歌单并记录你的标签。`,
+            : `《${op.name}》点歌成功！已加入点歌台并记录你的标签。`,
           type: "success"
         });
         void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
@@ -365,7 +376,7 @@ export function PersonalPlaylistPane({
       if (res.operation.status === "succeeded") {
         setToast({
           id: uuidv7(),
-          message: `《${track.name}》已成功加入公共歌单并记录你的标签！`,
+          message: `《${track.name}》已成功加入点歌台并记录你的标签！`,
           type: "success"
         });
         void queryClient.invalidateQueries({ queryKey: ["room-public-playlist", sessionId, roomId] });
@@ -511,107 +522,138 @@ export function PersonalPlaylistPane({
 
   const tracks = data.snapshot?.tracks ?? [];
   const trackCount = data.snapshot?.trackCount ?? tracks.length;
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const isFilterActive = Boolean(normalizedSearch);
+  const filteredTracks = isFilterActive
+    ? tracks.filter(track =>
+      track.name.toLowerCase().includes(normalizedSearch) ||
+      track.artists.some(artist => artist.toLowerCase().includes(normalizedSearch)))
+    : tracks;
 
   return (
     <div className="personal-playlist-pane">
-      <div className="playlist-header">
-        <div className="playlist-header-main">
-          <div className="playlist-title-group">
-            <h1 className="playlist-name">{playlist.name}</h1>
-            <div className="playlist-badges">
-              <span className="status-pill role-member">专用歌单</span>
-              <span className="candidate-playlist-note">可维护</span>
-            </div>
+      <header className="playlist-header">
+        <div className="playlist-header-left">
+          <div className="playlist-title-row">
+            <h1 className="playlist-page-title">我的歌单</h1>
+            <span className="playlist-track-badge" aria-label={isFilterActive ? `筛选出 ${filteredTracks.length} 首，共 ${trackCount} 首歌曲` : `共 ${trackCount} 首歌曲`}>
+              {isFilterActive ? (
+                <>筛选出 <strong>{filteredTracks.length}</strong> / 共 {trackCount} 首</>
+              ) : (
+                <>{trackCount} 首歌曲</>
+              )}
+            </span>
           </div>
+        </div>
+        <div className="playlist-header-right">
+          {canRefresh && (
+            <button
+              type="button"
+              className="secondary-button sync-playlist-button"
+              title="同步歌单最新歌曲"
+              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
+              disabled={refreshMutation.isPending}
+              onClick={() => refreshMutation.mutate()}
+            >
+              <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
+              <span>{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
+            </button>
+          )}
+          {tracks.length > 0 && (
+            <button
+              type="button"
+              className={`secondary-button search-toggle-button ${isSearchOpen || isFilterActive ? "active" : ""}`}
+              onClick={() => setIsSearchOpen(prev => !prev)}
+              aria-label={isSearchOpen ? "收起搜索筛选" : "展开搜索筛选"}
+              aria-expanded={isSearchOpen}
+            >
+              <Search size={14} aria-hidden="true" />
+              <span>搜索</span>
+            </button>
+          )}
+        </div>
+      </header>
 
-          <div className="playlist-actions-row">
-            {canRefresh && (
-              <button
-                type="button"
-                className="secondary-button icon-button-text"
-                title="同步歌单最新歌曲"
-                aria-label="同步个人歌单"
-                disabled={refreshMutation.isPending}
-                onClick={() => refreshMutation.mutate()}
-              >
-                <RotateCw
-                  size={16}
-                  className={refreshMutation.isPending ? "spin-icon" : ""}
-                  aria-hidden="true"
-                />
-                <span>{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
+      {(isSearchOpen || isFilterActive) && (
+        <div className="playlist-filter-bar" role="search" aria-label="歌单内搜索与筛选">
+          <div className="playlist-search-input-wrap">
+            <Search size={14} className="search-input-icon" aria-hidden="true" />
+            <input
+              type="search"
+              className="playlist-search-input"
+              placeholder="搜索歌名或歌手…"
+              value={searchQuery}
+              onChange={event => setSearchQuery(event.target.value)}
+              aria-label="搜索歌名或歌手"
+            />
+            {searchQuery && (
+              <button type="button" className="search-clear-btn" onClick={() => setSearchQuery("")} aria-label="清空搜索词">
+                <X size={14} aria-hidden="true" />
               </button>
             )}
           </div>
         </div>
+      )}
 
-        <div className="playlist-meta-bar">
-          <span className="playlist-count-badge">共 {trackCount} 首歌曲</span>
-          {data.snapshot?.syncedAt && (
-            <span className="playlist-sync-time">
-              同步于 {new Date(data.snapshot.syncedAt).toLocaleString("zh-CN", { hour12: false })}
-            </span>
-          )}
+      {data.lastRefreshError && (
+        <div className="error-banner" role="alert">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>
+            刷新失败：{getRefreshErrorMessage(data.lastRefreshError)}。已保留当前歌单快照。
+          </span>
         </div>
+      )}
 
-        {data.lastRefreshError && (
-          <div className="error-banner" role="alert">
-            <AlertCircle size={16} aria-hidden="true" />
-            <span>
-              刷新失败：{getRefreshErrorMessage(data.lastRefreshError)}。已保留当前歌单快照。
-            </span>
-          </div>
-        )}
+      {!hasPublicPlaylist && (
+        <div className="info-banner" role="status" style={{ marginTop: "0.5rem" }}>
+          <Info size={16} aria-hidden="true" />
+          <span>房间尚未创建点歌台，无法发起点歌。可在房主创建点歌台后点歌。</span>
+        </div>
+      )}
 
-        {!hasPublicPlaylist && (
-          <div className="info-banner" role="status" style={{ marginTop: "0.5rem" }}>
-            <Info size={16} aria-hidden="true" />
-            <span>房间尚未创建公共歌单，无法发起点歌。可在房主创建公共歌单后点歌。</span>
-          </div>
-        )}
+      {operationBanner && (
+        <div
+          className={`operation-status-banner ${operationBanner.type}`}
+          role="status"
+          style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.5rem" }}
+        >
+          <RotateCw className="spin-icon" size={16} aria-hidden="true" />
+          <span>{operationBanner.message}</span>
+        </div>
+      )}
 
-        {operationBanner && (
-          <div
-            className={`operation-status-banner ${operationBanner.type}`}
-            role="status"
-            style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.5rem" }}
-          >
-            <RotateCw className="spin-icon" size={16} aria-hidden="true" />
-            <span>{operationBanner.message}</span>
-          </div>
-        )}
+      {songOperationPending && songOperation?.action === "remove" && (
+        <div className="operation-status-banner warning" role="status">
+          {songOperation.status === "queued"
+            ? `《${songOperation.name}》删除已排队。`
+            : songOperation.status === "processing"
+              ? `正在从个人歌单删除《${songOperation.name}》并确认结果…`
+              : songOperation.status === "awaitingConfirmation"
+                ? `《${songOperation.name}》删除结果待确认，请勿重复删除。可同步歌单继续确认。`
+                : songOperation.status === "waitingAuthorization"
+                  ? "删除操作正在等待房主恢复网易云授权。"
+                  : "删除结果需要管理员协助确认。"}
+        </div>
+      )}
 
-        {songOperationPending && songOperation?.action === "remove" && (
-          <div className="operation-status-banner warning" role="status">
-            {songOperation.status === "queued"
-              ? `《${songOperation.name}》删除已排队。`
-              : songOperation.status === "processing"
-                ? `正在从个人歌单删除《${songOperation.name}》并确认结果…`
-                : songOperation.status === "awaitingConfirmation"
-                  ? `《${songOperation.name}》删除结果待确认，请勿重复删除。可同步歌单继续确认。`
-                  : songOperation.status === "waitingAuthorization"
-                    ? "删除操作正在等待房主恢复网易云授权。"
-                    : "删除结果需要管理员协助确认。"}
-          </div>
-        )}
+      {removeError && (
+        <div className="error-banner" role="alert">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>{removeError}</span>
+        </div>
+      )}
 
-        {removeError && (
-          <div className="error-banner" role="alert">
-            <AlertCircle size={16} aria-hidden="true" />
-            <span>{removeError}</span>
-          </div>
-        )}
-
-        {requestError && (
-          <div className="error-banner" role="alert">
-            <AlertCircle size={16} aria-hidden="true" />
-            <span>{requestError}</span>
-          </div>
-        )}
-      </div>
+      {requestError && (
+        <div className="error-banner" role="alert">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>{requestError}</span>
+        </div>
+      )}
 
       <PersonalTrackList
-        tracks={tracks}
+        tracks={filteredTracks}
+        isFilterActive={isFilterActive}
+        onClearFilter={() => setSearchQuery("")}
         active={active}
         onRequestSong={track => requestSongMutation.mutate(track)}
         requestingSongId={requestingSongId}
@@ -628,11 +670,11 @@ export function PersonalPlaylistPane({
           songOperationPending || removeMutation.isPending
             ? "当前有未完成的个人歌单操作，请稍候"
             : !hasPublicPlaylist
-            ? "房间尚未创建公共歌单，无法发起点歌"
+            ? "房间尚未创建点歌台，无法发起点歌"
             : publicDisabledReason === "ACCOUNT_PAUSED"
               ? "网易云账号已暂停，暂时无法点歌"
               : publicDisabledReason === "TARGET_BLOCKED"
-                ? "公共歌单待确认，暂时无法点歌"
+                ? "点歌台待确认，暂时无法点歌"
                 : activeOperationId
                   ? "已有正在处理中的点歌操作，请稍候"
                   : null
@@ -708,10 +750,6 @@ export function MemberPersonalPlaylistSection({
         <div>
           <dt>歌单名称</dt>
           <dd>{data.playlist.name}</dd>
-        </div>
-        <div>
-          <dt>来源属性</dt>
-          <dd>专用（仅本人可维护）</dd>
         </div>
         <div>
           <dt>歌曲数</dt>

@@ -196,7 +196,7 @@ test("320px 重置邀请对话框覆盖导航并捕获键盘，版本冲突留�
     expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
   }
   // The overlay must be the top element even above the fixed mobile navigation.
-  expect(await page.getByRole("button", { name: "公共歌单", exact: true, includeHidden: true }).evaluate(element => {
+  expect(await page.getByRole("button", { name: "点歌台", exact: true, includeHidden: true }).evaluate(element => {
     const rect = element.getBoundingClientRect();
     return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.classList.contains("dialog-overlay");
   })).toBe(true);
@@ -314,7 +314,7 @@ test("完整应用：房主建房邀请，注册与登录回跳申请、撤回�
     expect(await guest.evaluate(() => JSON.stringify([localStorage, sessionStorage, history.state]))).not.toContain(actualCode);
     await expect.poll(() => guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.getByRole("button", { name: "房间成员", exact: true })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByRole("button", { name: "查看成员：房主" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看房主的歌单" })).toBeVisible();
   } finally {
     await guestContext.close();
   }

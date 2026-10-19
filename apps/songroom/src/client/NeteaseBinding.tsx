@@ -170,7 +170,7 @@ export function NeteaseBinding({ sessionId }: { sessionId: string }) {
     <section className="platform-authorizations-section" aria-labelledby="platforms-heading">
       <div className="section-header">
         <h2 id="platforms-heading">音乐平台授权</h2>
-        <p className="section-description">绑定音乐平台账号作为房间点歌与公共歌单的同步播放源。</p>
+        <p className="section-description">绑定音乐平台账号作为房间点歌与点歌台的同步播放源。</p>
       </div>
 
       <div className="platform-cards-grid">

@@ -34,15 +34,11 @@ for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 820 });
     await setup(page);
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    const heading = page.getByRole("heading", { name: "公共歌单", exact: true });
-    await expect(heading).toBeAttached();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    const heading = page.getByRole("heading", { name: "点歌台", exact: true });
+    await expect(heading).toBeVisible();
     const headingBox = await heading.boundingBox();
-    if (width <= 768) {
-      expect(headingBox!.width).toBeLessThanOrEqual(1);
-    } else {
-      expect(headingBox!.width).toBeGreaterThan(10);
-    }
+    expect(headingBox!.width).toBeGreaterThan(10);
     await expect(page.locator(".tracks-header-col.col-title")).toHaveText("歌曲与歌手");
     await expect(page.locator(".tracks-header-col.col-requester")).toBeVisible();
     await expect(page.getByText("房间：343", { exact: true })).toBeVisible();
@@ -64,7 +60,7 @@ for (const width of [320, 390, 1440]) {
     const scroll = await page.evaluate(() => scrollY);
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("云端新名称", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect.poll(() => page.evaluate(() => scrollY)).toBeCloseTo(scroll, -1);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
@@ -82,7 +78,8 @@ for (const width of [320, 390]) {
     await page.route(`**${root}/public-playlist`, route => route.fulfill({ json: multiRequesterView }));
     await page.route(`**${root}/public-playlist/refresh`, route => route.fulfill({ json: multiRequesterView }));
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await page.getByRole("button", { name: "同步歌单", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "歌单已同步" })).toBeVisible();
     const track = page.locator('[data-song-id="1"]');
     await expect(track.locator(".requester-capsule")).toHaveText(requesters);
@@ -120,10 +117,10 @@ test("不展示下一首按钮，已有未确认命令仍可同键查询和恢�
     id: operationId, roomId, songId: "4", anchorSongId: "1", status: "awaitingConfirmation", step: "unknown", errorCode: null, version: 2
   } }));
   await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "查询下一首播放结果" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "随机换一组" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "随机点歌" })).toBeDisabled();
   await page.getByRole("button", { name: "查询下一首播放结果" }).click();
   await expect(page.getByText(/提交结果待确认/)).toBeVisible();
   await page.getByRole("button", { name: "查询下一首播放结果" }).click();
@@ -132,10 +129,10 @@ test("不展示下一首按钮，已有未确认命令仍可同键查询和恢�
   expect(commands[1]).toEqual(savedCommand);
   expect(commands[0]).toEqual(savedCommand);
   await page.reload();
-  await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+  await page.getByRole("button", { name: "点歌台", exact: true }).click();
   await expect(page.getByText(/下一首播放结果待确认/)).toBeVisible();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "随机换一组" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "随机点歌" })).toBeDisabled();
   expect(commands).toHaveLength(2);
 });
 
@@ -147,7 +144,7 @@ test("无锚点与播放读取失败保留禁用定位；手动同步同时刷�
     return route.fulfill({ json: { songId: null, checkedAt: Date.now(), errorCode: "NETWORK_ERROR" } });
   });
   await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
   await expect(page.getByRole("button", { name: "定位到正在播放" })).toBeDisabled();
   await expect(page.getByRole("button", { name: /^下一首播放：/ })).toHaveCount(0);
   await page.getByRole("button", { name: "同步歌单", exact: true }).click();
@@ -167,7 +164,7 @@ test("只在公共页可见时轮询，返回立即读播放，减少动态效�
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install();
   await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
   await expect(page.locator(".playback-indicator")).toBeVisible();
   await expect(page.locator(".playback-indicator i").first()).toHaveCSS("animation-name", "none");
   const initial = reads;
@@ -176,14 +173,14 @@ test("只在公共页可见时轮询，返回立即读播放，减少动态效�
   await page.getByRole("button", { name: "房间设置", exact: true }).click();
   await page.clock.fastForward(60_100);
   expect(reads).toBe(initial + 1);
-  await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+  await page.getByRole("button", { name: "点歌台", exact: true }).click();
   await expect.poll(() => reads).toBe(initial + 2);
 });
 
 test("歌单即时搜索与点歌人下拉筛选、保持绝对序号及复合过滤", async ({ page }) => {
   await setup(page, "401");
   await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
 
   // 初始不展开搜索栏
   await expect(page.getByRole("search", { name: "歌单内搜索与筛选" })).toHaveCount(0);

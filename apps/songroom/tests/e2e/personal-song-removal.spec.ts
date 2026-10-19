@@ -100,7 +100,7 @@ test("删除结果待确认时保留歌曲、禁止重复提交，刷新后仍�
   await expect(page.getByText("《晴天》删除结果待确认，请勿重复删除。可同步歌单继续确认。", { exact: true })).toBeVisible();
   await expect(removeButton).toBeDisabled();
   operation = { ...operation!, status: "succeeded", step: "succeeded", songConfirmed: true, errorCode: null, version: 3 };
-  await page.getByRole("button", { name: "同步个人歌单", exact: true }).click();
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
   await expect(page.getByText("《晴天》已从个人歌单删除", { exact: true })).toBeVisible();
   await expect(page.getByText("歌单内暂无歌曲", { exact: true })).toBeVisible();
   expect(removeRequests).toBe(1);
@@ -116,7 +116,7 @@ for (const width of [320, 390, 1440]) {
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: "我的歌单", exact: true }).click();
     await expect(page.getByRole("button", { name: "从个人歌单删除《晴天》", exact: true })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "点播《晴天》到公共歌单", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "点播《晴天》到点歌台", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
     const axe = await new AxeBuilder({ page }).include(".room-workspace").disableRules(["color-contrast"]).analyze();
     expect(axe.violations).toEqual([]);

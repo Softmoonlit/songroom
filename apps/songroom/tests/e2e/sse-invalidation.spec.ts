@@ -96,11 +96,11 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
   await expect(editInput).toHaveValue("打字中未提交的新名称");
 
   // 6. 公共歌单失效与更新：设备 2 打开公共歌单，设备 1 提交创建，设备 2 自动收到失效拉取最新状态
-  await ownerClient2.getByRole("button", { name: "公共歌单", exact: true }).click();
-  await expect(ownerClient2.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
+  await ownerClient2.getByRole("button", { name: "点歌台", exact: true }).click();
+  await expect(ownerClient2.getByRole("heading", { name: "尚未创建点歌台" })).toBeVisible();
 
-  await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-  await page.getByRole("button", { name: "创建公共歌单", exact: true }).click();
+  await page.getByRole("button", { name: "点歌台", exact: true }).click();
+  await page.getByRole("button", { name: "创建点歌台", exact: true }).click();
   // 两端均以最终绑定为验收，快速 SSE 可以跳过短暂的排队显示。
   await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeVisible();
 

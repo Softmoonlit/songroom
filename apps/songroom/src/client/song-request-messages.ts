@@ -29,7 +29,7 @@ export function getFriendlySongRequestErrorMessage(code?: string | null): string
     case "INTEGRITY_ERROR":
       return "音乐组件执行异常，请联系管理员协助处理。";
     case "PUBLIC_PLAYLIST_NOT_FOUND":
-      return "房间尚未创建公共歌单，无法发起点歌。可在房主创建公共歌单后重试。";
+      return "房间尚未创建点歌台，无法发起点歌。可在房主创建点歌台后重试。";
     case "PERSONAL_PLAYLIST_NOT_FOUND":
       return "尚未配置个人歌单，无法发起点歌。";
     case "SOURCE_PLAYLIST_FORBIDDEN":

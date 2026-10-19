@@ -436,8 +436,8 @@ export function SongSearchPane({
           <div className="search-guide-icon-wrapper" aria-hidden="true">
             <Music size={28} />
           </div>
-          <h2>搜索并存入个人歌单</h2>
-          <p>输入关键词搜索全网歌曲，一键存入你的专用个人歌单，再从「我的歌单」点歌到房间公共歌单。</p>
+          <h2>搜索并添加到我的歌单</h2>
+          <p>搜索歌曲，添加到「我的歌单」后即可点歌到点歌台。</p>
         </div>
       )}
 
@@ -465,7 +465,7 @@ export function SongSearchPane({
                 ? "尚未配置个人歌单，无法添加歌曲"
                 : isAlreadyInPersonal
                 ? "已在个人歌单，再次点击可确认"
-                : "添加到个人歌单";
+                : "添加到我的歌单";
 
               return (
                 <div key={`${song.id}-${index}`} className="search-candidate-item" role="listitem">
@@ -493,8 +493,8 @@ export function SongSearchPane({
                       title={buttonTitle}
                       aria-label={
                         !hasPersonalPlaylist
-                          ? `添加《${song.name}》（尚未配置个人歌单）`
-                          : `添加《${song.name}》到个人歌单`
+                          ? `添加《${song.name}》到我的歌单（尚未配置个人歌单）`
+                          : `添加《${song.name}》到我的歌单`
                       }
                     >
                       {isThisAdding ? (
@@ -505,7 +505,7 @@ export function SongSearchPane({
                       ) : (
                         <>
                           <Plus size={14} aria-hidden="true" />
-                          <span>添加</span>
+                          <span>添加到我的歌单</span>
                         </>
                       )}
                     </button>

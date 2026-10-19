@@ -43,7 +43,7 @@ describe("song-request-messages", () => {
         "尚未配置个人歌单，无法发起点歌。"
       );
       expect(getFriendlySongRequestErrorMessage("PUBLIC_PLAYLIST_NOT_FOUND")).toBe(
-        "房间尚未创建公共歌单，无法发起点歌。可在房主创建公共歌单后重试。"
+        "房间尚未创建点歌台，无法发起点歌。可在房主创建点歌台后重试。"
       );
       expect(getFriendlySongRequestErrorMessage("SOURCE_PLAYLIST_FORBIDDEN")).toBe(
         "只能从自己的专用个人歌单发起点歌。"

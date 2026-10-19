@@ -127,7 +127,7 @@ test.describe("Ticket 06: 房间列表整合工具栏与双轨 Onboarding 指引
     await expect(page.getByText("绑定网易云账号后可以创建自己的房间。")).toHaveCount(0);
 
     // 6. 验证公共歌单清理不出现在房间列表中
-    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "点歌台清理" })).toHaveCount(0);
   });
 
   test("房间列表卡片清晰标示房主与室友角色身份徽标及状态", async ({ page }) => {
@@ -196,13 +196,13 @@ test.describe("Ticket 06: 房间列表整合工具栏与双轨 Onboarding 指引
 
     // 1. 访问房间列表：主视图中绝不展示底层清理进度
     await page.goto("/rooms");
-    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "点歌台清理" })).toHaveCount(0);
     await expect(page.getByText("pl-clean-test")).toHaveCount(0);
 
     // 2. 前往账号设置：在高级设置中展示公共歌单清理
     await page.goto("/account");
     await expect(page.getByRole("heading", { name: "账号设置", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "点歌台清理" })).toBeVisible();
     await expect(page.getByText("网易云歌单 ID：pl-clean-test")).toBeVisible();
     await expect(page.getByText("等待重新授权")).toBeVisible();
   });

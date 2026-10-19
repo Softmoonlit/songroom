@@ -39,10 +39,10 @@ for (const width of [320, 390, 900, 1440]) {
       return route.fulfill({ status: 202, json: view });
     });
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).press("Enter");
-    await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
+    await page.getByRole("button", { name: "点歌台", exact: true }).press("Enter");
+    await expect(page.getByRole("heading", { name: "尚未创建点歌台" })).toBeVisible();
     expect(writes).toBe(0);
-    const create = page.getByRole("button", { name: "创建公共歌单", exact: true });
+    const create = page.getByRole("button", { name: "创建点歌台", exact: true });
     await create.focus();
     await expect(create).toHaveCSS("outline-style", "solid");
     await page.keyboard.press("Enter");
@@ -52,8 +52,8 @@ for (const width of [320, 390, 900, 1440]) {
     const before = reads;
     view = { playlist: { id: "cloud-071", name: "songroom-音乐间-公共" }, operation: { id: operationId, status: "succeeded", errorCode: null, version: 2 }, allowedActions: ["refreshPublicPlaylist"], disabledReason: "PUBLIC_PLAYLIST_EXISTS", version: 3 };
     await page.reload();
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-071", { exact: true })).toBeVisible();
     expect(reads).toBeGreaterThanOrEqual(before + 1);
@@ -76,12 +76,12 @@ for (const [status, text] of [
       return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: { id: operationId, status, errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 }) });
     });
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(text);
-    await expect(page.getByRole("button", { name: /创建公共歌单|重试创建/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /创建点歌台|重试创建/ })).toHaveCount(0);
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByRole("heading", { name: "房间设置", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(text);
     expect(reads).toBe(1);
   });
@@ -99,10 +99,10 @@ for (const [title, op, text] of [
       return route.fulfill({ json: publicPlaylistView.parse({ ...empty, operation: op, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 }) });
     });
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(text);
     await expect(page.getByRole("status")).not.toContainText("创建明确失败");
-    await expect(page.getByRole("button", { name: /创建公共歌单|重试创建/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /创建点歌台|重试创建/ })).toHaveCount(0);
   });
 }
 
@@ -111,9 +111,9 @@ for (const [reason, text] of [["OWNER_ONLY", "只有房主"], ["NETEASE_AUTH_REQ
     await roomPage(page);
     await page.route(endpoint, route => route.fulfill({ json: { ...empty, allowedActions: [], disabledReason: reason } }));
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    await expect(page.getByRole("region", { name: "公共歌单", exact: true })).toContainText(text);
-    await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await expect(page.getByRole("region", { name: "点歌台", exact: true })).toContainText(text);
+    await expect(page.getByRole("button", { name: "创建点歌台", exact: true })).toHaveCount(0);
   });
 }
 
@@ -128,9 +128,9 @@ for (const [code, text] of [
       ...empty, operation: { id: operationId, status: "needsAdministrator", errorCode: code, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1
     }) }));
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    await expect(page.getByRole("region", { name: "公共歌单", exact: true })).toContainText(text);
-    await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await expect(page.getByRole("region", { name: "点歌台", exact: true })).toContainText(text);
+    await expect(page.getByRole("button", { name: "创建点歌台", exact: true })).toHaveCount(0);
   });
 }
 
@@ -145,8 +145,8 @@ test("创建响应丢失后安全重试复用 UUIDv7，明确本地拒绝后刷�
     return route.fulfill({ status: 202, json: { ...empty, operation: { id: operationId, status: "queued", errorCode: null, version: 1 }, allowedActions: [], disabledReason: "OPERATION_PENDING", version: 1 } });
   });
   await page.goto(`/rooms/${roomId}`);
-  await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-  const create = page.getByRole("button", { name: "创建公共歌单", exact: true });
+  await page.getByRole("button", { name: "点歌台", exact: true }).click();
+  const create = page.getByRole("button", { name: "创建点歌台", exact: true });
   await create.click();
   await expect(page.getByRole("alert")).toContainText("暂时无法");
   await create.click();
@@ -189,7 +189,7 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     await app.listen();
     await page.setViewportSize({ width: 320, height: 800 });
     await page.goto(`${baseUrl}/register`);
-    await page.getByLabel("账号称呼").fill("公共歌单房主");
+    await page.getByLabel("账号称呼").fill("点歌台房主");
     await page.getByLabel("邮箱").fill("public-offline@example.com");
     await page.getByLabel("密码").fill("correct horse battery staple");
     await page.getByRole("button", { name: "注册并进入房间列表" }).click();
@@ -204,35 +204,37 @@ test("完整离线应用：建房不创建歌单，主动创建只写一次，�
     await page.getByLabel("房间名称").fill("离线音乐间");
     await page.getByLabel("我的房间昵称").fill("房主");
     await page.getByRole("button", { name: "创建并进入房间" }).click();
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "尚未创建公共歌单" })).toBeVisible();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "尚未创建点歌台" })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(0);
     const url = page.url();
-    await page.getByRole("button", { name: "创建公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "创建点歌台", exact: true }).click();
     await expect(page.getByRole("status")).toContainText(/已排队|正在创建|已创建并绑定/);
     // Observe completion via local GET only; this does not initiate another upstream request.
     await expect.poll(async () => {
       const response = await page.request.get(`${url.replace("/rooms/", "/api/rooms/")}/public-playlist`);
       return publicPlaylistView.parse(await response.json()).operation?.status;
     }, { timeout: 15_000 }).toBe("succeeded");
-    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    // 进入歌单后显式刷新歌单详情，确认发生了一次 detail 调用
-    await expect.poll(() => fixture.outbound.filter(call => call.url.includes("playlist/detail")).length).toBe(1);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
+    // 切页只读取本地快照；播放指示仍按进入页面策略读取。
+    expect(fixture.outbound.filter(call => call.url.includes("playlist/detail"))).toHaveLength(0);
+    await expect.poll(() => fixture.outbound.filter(call => call.url.includes("play-record/song/list")).length).toBe(1);
     const count = fixture.outbound.length;
     await page.getByRole("button", { name: "同步歌单", exact: true }).click();
     await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeEnabled();
     // 显式同步发起上游调用（歌单刷新与播放记录刷新各一次）
     await expect.poll(() => fixture.outbound.length).toBe(count + 2);
-    expect(fixture.outbound.filter(call => call.url.includes("playlist/detail"))).toHaveLength(2);
+    expect(fixture.outbound.filter(call => call.url.includes("playlist/detail"))).toHaveLength(1);
     await page.reload();
     await page.getByRole("button", { name: "房间设置", exact: true }).click();
     await expect(page.getByText("cloud-public-071", { exact: true })).toBeVisible();
     expect(fixture.outbound.filter(call => call.url.includes("playlist/create"))).toHaveLength(1);
-    await expect(page.getByRole("button", { name: "创建公共歌单", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "创建点歌台", exact: true })).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally {
     await app?.close();

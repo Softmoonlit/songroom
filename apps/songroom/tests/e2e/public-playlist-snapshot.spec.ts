@@ -34,7 +34,7 @@ const basePlaylist = {
 };
 
 test.describe("公共歌单权威快照与虚拟滚动", () => {
-  test("没有快照时显示首次同步状态，区分于已同步的空歌单", async ({ page }) => {
+  test("没有快照时提示手动同步，区分于已同步的空歌单", async ({ page }) => {
     await setupRoomPage(page);
 
     const initialSyncView: PublicPlaylistView = {
@@ -52,13 +52,18 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
       version: 1
     };
 
+    let refreshPosts = 0;
     await page.route(endpoint, route => route.fulfill({ json: initialSyncView }));
-    await page.route(refreshEndpoint, route => route.fulfill({ json: initialSyncView }));
+    await page.route(refreshEndpoint, route => {
+      expect(route.request().method()).toBe("POST");
+      refreshPosts += 1;
+      return route.fulfill({ json: initialSyncView });
+    });
 
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "公共歌单", exact: true })).toBeVisible();
-    await expect(page.getByText("正在进行首次同步，请稍候…")).toBeVisible();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
+    await expect(page.getByText("尚未同步，请点击「同步歌单」读取歌曲。")).toBeVisible();
     await expect(page.getByText("歌单暂无歌曲")).toHaveCount(0);
 
     // 切换到已同步的空歌单
@@ -72,12 +77,18 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
       }
     };
 
+    expect(refreshPosts).toBe(0);
     await page.route(endpoint, route => route.fulfill({ json: emptySyncView }));
-    await page.route(refreshEndpoint, route => route.fulfill({ json: emptySyncView }));
+    await page.route(refreshEndpoint, route => {
+      expect(route.request().method()).toBe("POST");
+      refreshPosts += 1;
+      return route.fulfill({ json: emptySyncView });
+    });
     await page.getByRole("button", { name: "同步歌单", exact: true }).click();
-    await expect(page.getByText("正在进行首次同步，请稍候…")).toHaveCount(0);
+    await expect(page.getByText("尚未同步，请点击「同步歌单」读取歌曲。")).toHaveCount(0);
     await expect(page.getByText("歌单暂无歌曲")).toBeVisible();
     await expect(page.getByText("歌单已同步")).toBeVisible();
+    expect(refreshPosts).toBe(1);
   });
 
   test("展示歌曲真实顺序与元数据，支持键盘焦点导航，320px/900px/1440px 响应式无横向溢出", async ({ page }) => {
@@ -108,7 +119,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
     for (const width of [320, 900, 1440]) {
       await page.setViewportSize({ width, height: 800 });
       await page.goto(`/rooms/${roomId}`);
-      await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+      await page.getByRole("button", { name: "点歌台", exact: true }).click();
 
       await expect(page.getByText("晴天", { exact: true })).toBeVisible();
       await expect(page.getByText("七里香", { exact: true })).toBeVisible();
@@ -152,7 +163,7 @@ test.describe("公共歌单权威快照与虚拟滚动", () => {
 
     await page.route(endpoint, route => route.fulfill({ json: syncedView }));
     await page.goto(`/rooms/${roomId}`);
-    await page.getByRole("button", { name: "公共歌单", exact: true }).click();
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.getByText("晴天", { exact: true })).toBeVisible();
 
     // 触发刷新返回失败

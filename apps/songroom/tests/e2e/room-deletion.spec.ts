@@ -140,7 +140,7 @@ test("房主进入房间设置，点击删除房间弹窗展示高信噪比核�
   await expect(page.getByText("不可撤销", { exact: true })).toBeVisible();
   await expect(page.getByText("立即生效", { exact: true })).toBeVisible();
   await expect(page.getByText("云端歌单清理", { exact: true })).toBeVisible();
-  await expect(page.getByText("专用公共歌单“songroom-测试音乐间-公共”将启动网易云删除清理。")).toBeVisible();
+  await expect(page.getByText("专用点歌台“songroom-测试音乐间-公共”将启动网易云删除清理。")).toBeVisible();
 
   await expect(page.getByText("全部成员的 2 份专用个人歌单（包含房主）将启动网易云删除清理。")).toBeVisible();
   await expect(page.getByText("本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。")).toBeVisible();
@@ -169,13 +169,13 @@ test("仅有房主个人歌单而无公共歌单，删除前仍显示清理范�
   }));
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间设置" }).click();
-  await expect(page.getByText("永久解散并删除此房间，所有成员将立即失去访问权限，同时启动公共歌单及全部成员专用个人歌单清理。")).toBeVisible();
+  await expect(page.getByText("永久解散并删除此房间，所有成员将立即失去访问权限，同时启动点歌台及全部成员专用个人歌单清理。")).toBeVisible();
   await page.getByRole("button", { name: "删除房间" }).click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog.getByText("云端歌单清理", { exact: true })).toBeVisible();
   await expect(dialog.getByText("全部成员的 1 份专用个人歌单（包含房主）将启动网易云删除清理。")).toBeVisible();
   await expect(dialog.getByText("本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。")).toBeVisible();
-  await expect(dialog.getByText(/专用公共歌单/)).toHaveCount(0);
+  await expect(dialog.getByText(/专用点歌台/)).toHaveCount(0);
 });
 
 test("只有未知在途个人歌单创建时，删除确认说明可能产生云端资源并在晚到后清理", async ({ page }) => {
@@ -200,7 +200,7 @@ test("只有未知在途个人歌单创建时，删除确认说明可能产生�
   await expect(dialog.getByRole("button", { name: "确认永久删除" })).toBeEnabled();
   await expect(dialog.getByText("云端歌单清理", { exact: true })).toBeVisible();
   await expect(dialog.getByText("另有 2 个在途个人歌单创建可能产生云端资源，晚到结果确认后会继续清理。")).toBeVisible();
-  await expect(dialog.getByText(/份专用个人歌单|专用公共歌单/)).toHaveCount(0);
+  await expect(dialog.getByText(/份专用个人歌单|专用点歌台/)).toHaveCount(0);
   await expect(dialog.getByText("本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。")).toBeVisible();
 });
 
@@ -362,11 +362,11 @@ test("删除确认后返回房间列表，房间已移除，且显示独立的�
   await expect(page.getByText("测试音乐间")).toHaveCount(0);
 
   // 房间列表主视图不再展示底层公共歌单清理进度（彻底移出并归入账号高级设置）
-  await expect(page.getByRole("heading", { name: "公共歌单清理" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "点歌台清理" })).toHaveCount(0);
 
   // 移步账号设置，在高级设置中查看独立的公共歌单待清理状态与下一步
   await page.goto("/account");
-  await expect(page.getByRole("heading", { name: "公共歌单清理" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "点歌台清理" })).toBeVisible();
   await expect(page.getByText("网易云歌单 ID：pl-cloud-1")).toBeVisible();
   await expect(page.getByText("等待重新授权")).toBeVisible();
   await expect(page.getByText("原网易云账号授权已失效，请前往账号设置重新授权以继续云端清理。")).toBeVisible();

@@ -13,7 +13,7 @@ const cleanupStatusPresentation: Record<PublicPlaylistCleanupStatus, { label: st
   succeeded: {
     label: "已完成删除",
     badgeClass: "status-badge success",
-    nextStep: "专用公共歌单已在网易云成功删除，清理已完成。"
+    nextStep: "专用点歌台已在网易云成功删除，清理已完成。"
   },
   waitingAuthorization: {
     label: "等待重新授权",
@@ -162,7 +162,7 @@ export function RoomsPage({ sessionId }: { sessionId: string; accountName: strin
                 <h3>加入已有房间</h3>
               </div>
               <p className="onboarding-desc">
-                收到房主分享的邀请码？直接申请加入，随时随地向公共歌单点歌。
+                收到房主分享的邀请码？直接申请加入，随时随地向点歌台点歌。
               </p>
               {query.data.allowedActions.includes("openJoin") && (
                 <Link className="secondary-button onboarding-action" to="/join">
@@ -232,9 +232,9 @@ export function PublicPlaylistCleanups({ sessionId }: { sessionId: string }) {
   return (
     <section className="public-playlist-cleanups" aria-labelledby="cleanups-heading">
       <div className="cleanups-heading-wrap">
-        <h2 id="cleanups-heading">公共歌单清理</h2>
+        <h2 id="cleanups-heading">点歌台清理</h2>
       </div>
-      <p>已删除房间专用公共歌单的网易云清理进度（与已删除房间分离，房间不可恢复）。</p>
+      <p>已删除房间专用点歌台的网易云清理进度（与已删除房间分离，房间不可恢复）。</p>
       <ul className="cleanup-list">
         {query.data.cleanups.map(item => {
           const presentation = getCleanupPresentation(item);
