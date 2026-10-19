@@ -15,12 +15,17 @@ import { PublicPlaylists } from "./public-playlists.js";
 class OrderAdapter implements NeteaseAdapter {
   order = ["a", "b", "c"];
   calls: AdapterInput["operation"][] = [];
+  beforeCall?: (input: AdapterInput) => Promise<void>;
+  recentSongId = "a";
+  unknownWrite = false;
   async call<I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> {
     this.calls.push(input.operation);
+    await this.beforeCall?.(input);
     if (input.operation === "identity") return { ok: true, data: { accountId: "cloud", name: "房主" } } as AdapterResult<I["operation"]>;
-    if (input.operation === "recentSong") return { ok: true, data: { songId: "a" } } as AdapterResult<I["operation"]>;
+    if (input.operation === "recentSong") return { ok: true, data: { songId: this.recentSongId } } as AdapterResult<I["operation"]>;
     if (input.operation === "trackOrder") {
       this.order = input.songIds;
+      if (this.unknownWrite) return { ok: false, error: { code: "NETWORK_ERROR", outcome: "unknown" } } as AdapterResult<I["operation"]>;
       return { ok: true, data: { acknowledged: true } } as AdapterResult<I["operation"]>;
     }
     if (input.operation === "playlistDetail") return {
@@ -37,7 +42,7 @@ class OrderAdapter implements NeteaseAdapter {
   async dispose() {}
 }
 
-type Fixture = { root: string; database: AppDatabase; service: PublicPlaylists; adapter: OrderAdapter; roomId: string };
+type Fixture = { root: string; database: AppDatabase; service: PublicPlaylists; scheduler: UpstreamScheduler; adapter: OrderAdapter; roomId: string };
 const fixtures: Fixture[] = [];
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) {
@@ -72,7 +77,7 @@ function fixture(): Fixture {
   const scheduler = new UpstreamScheduler(database, () => Date.now());
   const service = new PublicPlaylists(database, adapter, vault, scheduler, new EventStreamService());
   service.start();
-  const fixture = { root, database, service, adapter, roomId };
+  const fixture = { root, database, service, scheduler, adapter, roomId };
   fixtures.push(fixture);
   return fixture;
 }
@@ -86,9 +91,70 @@ describe("公共歌单下一首播放持久操作", () => {
     const result = f.service.readPlayNextOperation("member", f.roomId, accepted.operation.id);
     expect(result.status).toBe("succeeded");
     expect(f.adapter.order).toEqual(["a", "c", "b"]);
-    expect(f.adapter.calls.filter(call => call === "trackOrder")).toHaveLength(1);
+    expect(f.adapter.calls).toEqual(["recentSong", "playlistDetail", "trackOrder", "playlistDetail"]);
     expect(f.database.select().from(publicPlaylistBinding).get()?.name).toBe("最新名称");
   }, 20_000);
+
+  it("同账号读取在下一首操作步骤间获得执行机会且不与在途请求重叠", async () => {
+    const f = fixture();
+    let signalEntered!: () => void;
+    const entered = new Promise<void>(resolve => { signalEntered = resolve; });
+    let releaseRequest!: () => void;
+    const release = new Promise<void>(resolve => { releaseRequest = resolve; });
+    let readingAnchor = false;
+    let otherReadRan = false;
+    f.adapter.beforeCall = async input => {
+      if (input.operation === "recentSong") {
+        readingAnchor = true;
+        signalEntered();
+        await release;
+        readingAnchor = false;
+      }
+      if (input.operation === "trackOrder") expect(otherReadRan).toBe(true);
+    };
+    const accepted = f.service.playNext("member", f.roomId, { idempotencyKey: v7(), songId: "c", anchorSongId: "a", snapshotVersion: 1 });
+    await entered;
+    const otherRead = f.scheduler.executeMemoryTask("cloud", async () => {
+      expect(readingAnchor).toBe(false);
+      otherReadRan = true;
+    });
+    expect(otherReadRan).toBe(false);
+    releaseRequest();
+    await otherRead;
+    await f.service.settle();
+    expect(f.service.readPlayNextOperation("member", f.roomId, accepted.operation.id).status).toBe("succeeded");
+    expect(f.adapter.calls).toEqual(["recentSong", "playlistDetail", "trackOrder", "playlistDetail"]);
+  });
+
+  it("播放锚点改变时停止且不发送排序或身份探测", async () => {
+    const f = fixture();
+    f.adapter.recentSongId = "b";
+    const accepted = f.service.playNext("member", f.roomId, { idempotencyKey: v7(), songId: "c", anchorSongId: "a", snapshotVersion: 1 });
+    await f.service.settle();
+    expect(f.service.readPlayNextOperation("member", f.roomId, accepted.operation.id)).toMatchObject({ status: "failed", errorCode: "PLAYBACK_CONFLICT" });
+    expect(f.adapter.calls).toEqual(["recentSong"]);
+  });
+
+  it("授权代次变化后不使用旧加密授权继续操作", async () => {
+    const f = fixture();
+    const accepted = f.service.playNext("member", f.roomId, { idempotencyKey: v7(), songId: "c", anchorSongId: "a", snapshotVersion: 1 });
+    f.database.update(neteaseAuthorization).set({ generation: 2 }).run();
+    await f.service.settle();
+    expect(f.service.readPlayNextOperation("member", f.roomId, accepted.operation.id)).toMatchObject({ status: "waitingAuthorization", errorCode: "AUTH_UNAVAILABLE" });
+    expect(f.adapter.calls).toEqual([]);
+  });
+
+  it("排序结果未知只保留待确认状态，重复读取与幂等重放不重发", async () => {
+    const f = fixture();
+    f.adapter.unknownWrite = true;
+    const command = { idempotencyKey: v7(), songId: "c", anchorSongId: "a", snapshotVersion: 1 };
+    const accepted = f.service.playNext("member", f.roomId, command);
+    await f.service.settle();
+    expect(f.service.readPlayNextOperation("member", f.roomId, accepted.operation.id).status).toBe("awaitingConfirmation");
+    expect(f.service.playNext("member", f.roomId, command).replay).toBe(true);
+    await f.service.settle();
+    expect(f.adapter.calls).toEqual(["recentSong", "playlistDetail", "trackOrder"]);
+  });
 
   it("同一点击重放返回原操作，不接受不同内容", () => {
     const f = fixture();

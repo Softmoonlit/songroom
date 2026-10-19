@@ -30,7 +30,7 @@ type ClaimedTask =
 
 /**
  * 单进程统一上游调度器。
- * 全站最多 2 个请求并行、每个真实账号严格串行且启动间隔至少 1 秒；
+ * 全站最多 2 个请求并行、每个真实账号严格串行；
  * 候选按最久未获得执行机会者 (lastGranted, createdAt, id) 轮转，每次上游请求后让出。
  * 无 Redis、无内存队列真相、无通用工作流引擎，纯 SQLite 短事务认领。
  */
@@ -152,7 +152,7 @@ export class UpstreamScheduler {
     this.#started = true;
     this.#stopped = false;
     this.database.transaction(tx => {
-      // 单实例启动恢复：执行句柄已消失，启动预算与账号暂停仍保留。
+      // 单实例启动恢复：执行句柄已消失，账号暂停仍保留。
       tx.update(upstreamAccount).set({ runningOperationId: null }).run();
       for (const handler of this.#handlers.values()) {
         handler.recover?.();
@@ -176,9 +176,12 @@ export class UpstreamScheduler {
   kick(): void {
     if (!this.#started || this.#stopped) return;
     if (this.#pump) { this.#wake?.(); return; }
-    // 计时器只唤醒已提交的账号启动预算；发送资格与唯一执行权始终由短事务判定。
+    // 完成或新任务唤醒调度；发送资格与唯一执行权始终由短事务判定。
     this.#pump = Promise.resolve().then(async () => {
       while (!this.#stopped) {
+        const queuedBefore = this.database.select({ id: operation.id }).from(operation)
+          .where(eq(operation.status, "queued")).orderBy(operation.id).all();
+        const memoryBefore = this.#memoryQueue.length;
         const claimed = this.#claimNext();
         if (claimed) {
           let task: Promise<void>;
@@ -201,13 +204,15 @@ export class UpstreamScheduler {
           this.#inFlight.add(task);
           continue;
         }
-        const queued = this.database.select().from(operation).where(eq(operation.status, "queued")).all();
+        const queued = this.database.select({ id: operation.id }).from(operation)
+          .where(eq(operation.status, "queued")).orderBy(operation.id).all();
+        // 同步恢复可能增删候选；只在候选集合变化时重扫，相同值 UPDATE 不算进展。
+        if (queued.length !== queuedBefore.length
+          || queued.some((row, index) => row.id !== queuedBefore[index]?.id)
+          || this.#memoryQueue.length !== memoryBefore) continue;
         if (!queued.length && !this.#memoryQueue.length && !this.#inFlight.size) break;
-        const nextStartAt = this.nextStartAt();
         await new Promise<void>(resolve => {
-          const wake = () => { if (timer) clearTimeout(timer); this.#wake = undefined; resolve(); };
-          const timer = nextStartAt !== undefined ? setTimeout(wake, Math.max(1, nextStartAt - this.now())) : undefined;
-          this.#wake = wake;
+          this.#wake = () => { this.#wake = undefined; resolve(); };
         });
       }
       await Promise.all(this.#inFlight);
@@ -223,7 +228,7 @@ export class UpstreamScheduler {
     const accounts = this.database.select().from(upstreamAccount).all();
     const account = accounts.find(row => row.accountId === accountId);
     return accounts.filter(row => row.runningOperationId).length < 2
-      && (allowPaused || !account?.paused) && !account?.runningOperationId && (!account || account.nextStartAt <= this.now());
+      && (allowPaused || !account?.paused) && !account?.runningOperationId;
   }
 
   #claimNext(): ClaimedTask | undefined {
@@ -265,8 +270,8 @@ export class UpstreamScheduler {
 
         if (memoryCandidate && memoryCandidate.lastGranted < row.lastGranted) {
           this.#memoryQueue.splice(memoryCandidateIndex, 1);
-          tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, nextStartAt: this.now() + 1000, runningOperationId: memoryCandidate.id })
-            .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { nextStartAt: this.now() + 1000, runningOperationId: memoryCandidate.id } }).run();
+          tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, runningOperationId: memoryCandidate.id })
+            .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: memoryCandidate.id } }).run();
           return { type: "memory", task: memoryCandidate };
         }
 
@@ -282,8 +287,8 @@ export class UpstreamScheduler {
           updatedAt: this.now()
         }).where(and(eq(operation.id, row.id), eq(operation.status, "queued"))).run();
         if (!claimed.changes) continue;
-        tx.insert(upstreamAccount).values({ accountId: row.accountId!, nextStartAt: this.now() + 1000, runningOperationId: row.id })
-          .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { nextStartAt: this.now() + 1000, runningOperationId: row.id } }).run();
+        tx.insert(upstreamAccount).values({ accountId: row.accountId!, runningOperationId: row.id })
+          .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: row.id } }).run();
         const updatedOp = tx.select({ version: operation.version }).from(operation).where(eq(operation.id, row.id)).get();
         if (updatedOp) {
           this.eventStream?.notifyRoom(this.database, row.roomId, { type: "operation", resourceId: row.id, version: updatedOp.version });
@@ -293,8 +298,8 @@ export class UpstreamScheduler {
 
       if (memoryCandidate) {
         this.#memoryQueue.splice(memoryCandidateIndex, 1);
-        tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, nextStartAt: this.now() + 1000, runningOperationId: memoryCandidate.id })
-          .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { nextStartAt: this.now() + 1000, runningOperationId: memoryCandidate.id } }).run();
+        tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, runningOperationId: memoryCandidate.id })
+          .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: memoryCandidate.id } }).run();
         return { type: "memory", task: memoryCandidate };
       }
 
@@ -305,19 +310,5 @@ export class UpstreamScheduler {
   #release(accountId: string, operationId: string): void {
     this.database.update(upstreamAccount).set({ runningOperationId: null })
       .where(and(eq(upstreamAccount.accountId, accountId), eq(upstreamAccount.runningOperationId, operationId))).run();
-  }
-
-  nextStartAt(): number | undefined {
-    const accounts = this.database.select().from(upstreamAccount).all();
-    if (accounts.filter(account => account.runningOperationId).length >= 2) return undefined;
-    const queuedAccountIds = new Set([
-      ...this.database.select({ accountId: operation.accountId }).from(operation).where(eq(operation.status, "queued")).all().map(r => r.accountId!),
-      ...this.#memoryQueue.map(t => t.accountId)
-    ]);
-    const deadlines = Array.from(queuedAccountIds).flatMap(accountId => {
-      const account = accounts.find(a => a.accountId === accountId);
-      return account && !account.paused && !account.runningOperationId ? [account.nextStartAt] : [];
-    });
-    return deadlines.length ? Math.min(...deadlines) : undefined;
   }
 }

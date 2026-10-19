@@ -4,7 +4,7 @@
   "files": {
     ".gitignore": "3d8895b635204b97c6e9d1783d07420f3232232c2e7bf1e13bed12ae72a6ef6d",
     "LICENSE": "e463bb821c363e6182f16ec1bf24405af3315b4adc72fc1402232fa98b9a0b12",
-    "SOURCE.md": "d3aa11ffff7e6823b7efa5df3743460bf2ff77086093838eeb7d1d2ca88c0c81",
+    "SOURCE.md": "07d13b66503ca75a70da4a7c7209adec470864b21ae41e83d4b03c88c591959e",
     "data/china_ip_ranges.txt": "a4f6c8bd2faaddebd318d22c9e04ba118394b8a49bcec44002fa3501c11788b6",
     "module/cloudsearch.js": "2c831a3a86413c2747b92970041387fcdb934aba5aabf9a6c2f91816ade80657",
     "module/login_qr_check.js": "feffffd29f70fd961fd395c352ab8eb7a9bf402d61dd41af7fb59934bf0f6b09",
@@ -22,7 +22,7 @@
     "module/user_account.js": "2fa3cb37934066edcdc5b528f0a346dbf446a03f6af74ef8e1ce280124ddb388",
     "module/user_playlist.js": "8f67866eb8ac7306f326511bda66e8b18583d74396ffba2d16ebf52f6166bbb3",
     "package.json": "e218a6416bf48deb81804b457474ab61b9ef92043950ece20a7493bcda4c7c23",
-    "production.patch": "e0b3af5eba4128c5fae61438af4c1f67f9d8505eef92dbc11ca1911f98d31e7d",
+    "production.patch": "2393a557750aca60145d0551e54db20425939f979966d18c4f8372ecfb48a09f",
     "upstream-package.json": "2d95e2cf1e2a98777e146b465e154a3b10065ded251b0451560e6ca7c0b47e7e",
     "upstream-pnpm-lock.yaml": "308ae13bd47678fedd413b291697ac88124a2edbaaf05774176f68d058fc2876",
     "util/config.json": "f5716f2d2f1cc27925e731120439137356f2431df5b8244050e864e435fda88e",
@@ -30,6 +30,6 @@
     "util/index.js": "646f9efb73715193ae9b8fe34452555e260759b550783b1c8642ef627b1b7761",
     "util/logger.js": "7e31c13502a92b0cb2783c4666e9d7770c88f40308f856d544465518c24486b4",
     "util/option.js": "76fe33b526ec33f54493052b1ef8dbe12f252d6a350b2ce91739af5027a4f171",
-    "util/request.js": "c117e902bf500b1c879c6353f889ca2d7ba621d7265c984697fa11060991eed3"
+    "util/request.js": "187459735914b62e5ade0bc675d4be136dca69642bfdc8541872ca9066734e43"
   }
 }

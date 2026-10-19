@@ -154,12 +154,6 @@ export class PublicPlayNext {
     const { cookie } = context;
     try {
       if (detail.step === "ready") {
-        const result = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
-        if (!this.#stillCurrent(row, detail)) return;
-        if (!result.ok) { this.#failure(row, detail, result.error.code); return; }
-        if (result.data.accountId !== row.accountId) { this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH"); return; }
-        this.#queue(row.id, "identityVerified");
-      } else if (detail.step === "identityVerified") {
         const result = await this.adapter.call({ operation: "recentSong", cookie });
         if (!this.#stillCurrent(row, detail)) return;
         if (!result.ok) { this.#failure(row, detail, result.error.code); return; }

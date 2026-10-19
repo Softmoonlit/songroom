@@ -18,12 +18,6 @@ const {
 } = require('./index')
 const { URLSearchParams, URL } = require('url')
 const { APP_CONF } = require('./config.json')
-const {
-  getToken: antiCheatTokenV2,
-} = require('../module/register_checktoken_v2')
-const {
-  getToken: antiCheatTokenV3,
-} = require('../module/register_checktoken_v3')
 
 // 预先读取匿名token并缓存
 const anonymous_token = fs.readFileSync(
@@ -201,11 +195,11 @@ const createRequest = async (uri, data, options) => {
   switch (options.checkToken) {
     case 'v2':
       // 每次实时获取反作弊 token，不缓存
-      token = await antiCheatTokenV2()
+      token = await require('../module/register_checktoken_v2').getToken()
       break
     case 'v3':
       // 每次实时获取反作弊 token，不缓存
-      token = await antiCheatTokenV3()
+      token = await require('../module/register_checktoken_v3').getToken()
       break
   }
 

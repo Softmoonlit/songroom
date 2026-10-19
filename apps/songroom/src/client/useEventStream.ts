@@ -39,7 +39,7 @@ export function useEventStream(enabled: boolean): void {
   const trackerRef = useRef<InvalidationTracker>(new InvalidationTracker());
   const isFirstConnect = useRef(true);
 
-  // 监听 queryClient 缓存中的最新版本，保证事件与 JSON 查询竞态时以服务端当前版本为准
+  // search 的版本仅对应自身查询；共享事件仅按已处理事件去重。
   useEffect(() => {
     if (!enabled) return;
 
@@ -51,44 +51,8 @@ export function useEventStream(enabled: boolean): void {
         const firstKey = queryKey[0];
         const tracker = trackerRef.current;
 
-        if (
-          (firstKey === "room-shell" ||
-            firstKey === "room-members" ||
-            firstKey === "room-applications" ||
-            firstKey === "room-invite") &&
-          typeof data.version === "number"
-        ) {
-          const roomId = queryKey[2] as string | undefined;
-          if (roomId) {
-            tracker.recordFromServer("room", roomId, data.version);
-            tracker.recordFromServer("permission", roomId, data.version);
-          }
-        }
-
-        if (firstKey === "join-application" && typeof data.version === "number") {
-          const roomObj = data.room as { id?: string } | undefined;
-          if (roomObj?.id) {
-            tracker.recordFromServer("room", roomObj.id, data.version);
-            tracker.recordFromServer("permission", roomObj.id, data.version);
-          }
-        }
-
-        if (firstKey === "room-public-playlist") {
-          const roomId = queryKey[2] as string | undefined;
-          if (roomId && typeof data.version === "number") {
-            tracker.recordFromServer("room", roomId, data.version);
-            tracker.recordFromServer("snapshot", roomId, data.version);
-          }
-          const operation = data.operation as { id?: string; version?: number } | undefined;
-          if (operation && typeof operation.version === "number" && operation.id) {
-            tracker.recordFromServer("operation", operation.id, operation.version);
-          }
-        }
-
-        if (firstKey === "song-request-operation" && typeof data.version === "number" && typeof data.id === "string") {
-          tracker.recordFromServer("operation", data.id, data.version);
-        }
-
+        // room/snapshot/operation 的事件会刷新多个 read model。单个 JSON 已读到某版本，
+        // 不代表其他查询也已更新，不能用它提前消费这些共享失效事件。
         if (firstKey === "song-search" && typeof data.version === "number") {
           const searchId = queryKey[1] as string | undefined;
           if (searchId) {
@@ -98,7 +62,11 @@ export function useEventStream(enabled: boolean): void {
       } else if (event.type === "updated" && event.action.type === "error") {
         // 查询遇错时不锁定最高版本，允许后续失效事件再次触发重新读取
         const firstKey = event.query.queryKey[0];
-        if (firstKey === "song-request-operation") {
+        if (
+          firstKey === "song-request-operation" ||
+          firstKey === "personal-song-addition-operation" ||
+          firstKey === "random-replacement-operation"
+        ) {
           const opId = event.query.queryKey[1] as string | undefined;
           if (opId) trackerRef.current.reset("operation", opId);
         } else if (firstKey === "song-search") {
@@ -130,6 +98,11 @@ export function useEventStream(enabled: boolean): void {
     let source: EventSource | null = null;
     let cancelled = false;
 
+    function refresh(queryKey: string[]) {
+      // 初次读取没有缓存时也须取消旧请求，确保事件后的读取不会复用旧响应。
+      void queryClient.cancelQueries({ queryKey }).then(() => queryClient.invalidateQueries({ queryKey }));
+    }
+
     function connect() {
       if (cancelled) return;
       source = new EventSource("/api/events");
@@ -137,7 +110,8 @@ export function useEventStream(enabled: boolean): void {
       source.addEventListener("connected", () => {
         // 断线、服务重启或休眠后重连时，完整使当前活跃 read model 失效并重新读取
         if (!isFirstConnect.current) {
-          void queryClient.invalidateQueries({ type: "active" });
+          const active = { type: "active" as const };
+          void queryClient.cancelQueries(active).then(() => queryClient.invalidateQueries(active));
         }
         isFirstConnect.current = false;
       });
@@ -159,38 +133,41 @@ export function useEventStream(enabled: boolean): void {
           // 仅使对应 TanStack Query read model 失效并通过普通 JSON 重新读取
           switch (type) {
             case "room":
-              void queryClient.invalidateQueries({ queryKey: ["rooms"] });
-              void queryClient.invalidateQueries({ queryKey: ["public-playlist-cleanups"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-shell"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-applications"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-invite"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-public-playlist"] });
-              void queryClient.invalidateQueries({ queryKey: ["join-application"] });
-              void queryClient.invalidateQueries({ queryKey: ["join-applications"] });
+              refresh(["rooms"]);
+              refresh(["public-playlist-cleanups"]);
+              refresh(["room-shell"]);
+              refresh(["room-applications"]);
+              refresh(["room-invite"]);
+              refresh(["room-public-playlist"]);
+              refresh(["room-personal-playlist"]);
+              refresh(["join-application"]);
+              refresh(["join-applications"]);
               break;
             case "permission":
-              void queryClient.invalidateQueries({ queryKey: ["room-members"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-shell"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-invite"] });
-              void queryClient.invalidateQueries({ queryKey: ["rooms"] });
-              void queryClient.invalidateQueries({ queryKey: ["join-application"] });
-              void queryClient.invalidateQueries({ queryKey: ["join-applications"] });
+              refresh(["room-members"]);
+              refresh(["room-shell"]);
+              refresh(["room-invite"]);
+              refresh(["rooms"]);
+              refresh(["join-application"]);
+              refresh(["join-applications"]);
               break;
             case "snapshot":
-              void queryClient.invalidateQueries({ queryKey: ["room-public-playlist"] });
+              refresh(["room-public-playlist"]);
+              refresh(["room-personal-playlist"]);
               break;
             case "operation":
-              void queryClient.invalidateQueries({ queryKey: ["song-request-operation"] });
-              void queryClient.invalidateQueries({ queryKey: ["room-public-playlist"] });
+              refresh(["song-request-operation"]);
+              refresh(["personal-song-addition-operation"]);
+              refresh(["random-replacement-operation"]);
+              refresh(["room-personal-playlist"]);
+              refresh(["room-public-playlist"]);
               break;
             case "search": {
-              const queryKey = ["song-search", resourceId];
-              // 首次查询尚无缓存时，invalidateQueries 会复用在途请求；先取消，避免旧响应吞掉完成通知。
-              void queryClient.cancelQueries({ queryKey }).then(() => queryClient.invalidateQueries({ queryKey }));
+              refresh(["song-search", resourceId]);
               break;
             }
             case "cleanup":
-              void queryClient.invalidateQueries({ queryKey: ["public-playlist-cleanups"] });
+              refresh(["public-playlist-cleanups"]);
               break;
           }
         } catch {

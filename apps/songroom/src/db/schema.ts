@@ -260,13 +260,13 @@ export const personalSongMutation = sqliteTable("personal_song_mutation", {
   name: text("name").notNull(),
   artists: text("artists").notNull(),
   album: text("album").notNull(),
-  step: text("step", { enum: ["ready", "verified", "prepared", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
+  step: text("step", { enum: ["ready", "prepared", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
   checkRound: integer("check_round").notNull().default(0),
   nextCheckAt: integer("next_check_at")
 }, table => [
   index("personal_song_mutation_target_index").on(table.playlistId),
   index("personal_song_mutation_member_index").on(table.memberId),
-  check("personal_song_mutation_step_valid", sql`${table.step} IN ('ready', 'verified', 'prepared', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
+  check("personal_song_mutation_step_valid", sql`${table.step} IN ('ready', 'prepared', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
   check("personal_song_mutation_song_id_valid", sql`length(${table.songId}) > 0`),
   check("personal_song_mutation_name_valid", sql`length(${table.name}) > 0`),
   check("personal_song_mutation_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
@@ -274,14 +274,13 @@ export const personalSongMutation = sqliteTable("personal_song_mutation", {
   check("personal_song_mutation_check_round_valid", sql`${table.checkRound} >= 0 AND ${table.checkRound} <= 3`)
 ]);
 
-// 真实账号请求启动预算与风控暂停持久化；执行权在发送前短事务中认领。
+// 真实账号风控暂停持久化；执行权在发送前短事务中认领。
 export const upstreamAccount = sqliteTable("upstream_account", {
   accountId: text("account_id").primaryKey(),
-  nextStartAt: integer("next_start_at").notNull().default(0),
   runningOperationId: text("running_operation_id"),
   paused: integer("paused", { mode: "boolean" }).notNull().default(false),
   pauseReason: text("pause_reason")
-}, table => [check("upstream_account_next_start_valid", sql`${table.nextStartAt} >= 0`)]);
+});
 
 // 按真实账号与具体云端歌单保存权威快照元数据，不推断独立歌曲顺序。
 export const playlistSnapshot = sqliteTable("playlist_snapshot", {
@@ -360,12 +359,12 @@ export const publicPlayNext = sqliteTable("public_play_next", {
   memberId: text("member_id"),
   originalSongIds: text("original_song_ids"),
   targetSongIds: text("target_song_ids"),
-  step: text("step", { enum: ["ready", "identityVerified", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"] }).notNull().default("ready"),
+  step: text("step", { enum: ["ready", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"] }).notNull().default("ready"),
   checkRound: integer("check_round").notNull().default(0),
   nextCheckAt: integer("next_check_at")
 }, table => [
   index("public_play_next_target_index").on(table.playlistId),
-  check("public_play_next_step_valid", sql`${table.step} IN ('ready', 'identityVerified', 'playbackVerified', 'verified', 'sending', 'confirming', 'unknown', 'succeeded', 'rejected', 'stopped')`),
+  check("public_play_next_step_valid", sql`${table.step} IN ('ready', 'playbackVerified', 'verified', 'sending', 'confirming', 'unknown', 'succeeded', 'rejected', 'stopped')`),
   check("public_play_next_generation_valid", sql`${table.bindingGeneration} > 0`),
   check("public_play_next_song_valid", sql`length(${table.songId}) > 0 AND length(${table.anchorSongId}) > 0 AND length(${table.playlistId}) > 0`),
   check("public_play_next_round_valid", sql`${table.checkRound} BETWEEN 0 AND 3`)

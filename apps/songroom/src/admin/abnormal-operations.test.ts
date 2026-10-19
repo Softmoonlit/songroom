@@ -1074,8 +1074,7 @@ describe("Ticket 20: 通过管理命令处置异常操作", () => {
       // 插入处于 paused: true 的风控账号
       db.insert(upstreamAccount).values({
         accountId,
-        paused: true,
-        nextStartAt: 0
+        paused: true
       }).run();
     } finally {
       db.$client.close();

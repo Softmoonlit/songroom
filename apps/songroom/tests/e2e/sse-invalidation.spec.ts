@@ -101,10 +101,11 @@ test("多端可见页面通过 SSE 失效自动更新，不需手动刷新，且
 
   await page.getByRole("button", { name: "公共歌单", exact: true }).click();
   await page.getByRole("button", { name: "创建公共歌单", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText(/已排队|正在创建|已创建并绑定/);
+  // 两端均以最终绑定为验收，快速 SSE 可以跳过短暂的排队显示。
+  await expect(page.getByRole("button", { name: "同步歌单", exact: true })).toBeVisible();
 
-  // 设备 2 绝对不调用 reload()，通过 SSE 失效事件自动感知创建操作或完成绑定
-  await expect(ownerClient2.getByRole("status")).toContainText(/已排队|正在创建|已创建并绑定/);
+  // 设备 2 不 reload，直接通过 SSE 拉取完成后的歌单。
+  await expect(ownerClient2.getByRole("button", { name: "同步歌单", exact: true })).toBeVisible();
 
   await ownerClient2Context.close();
   await guestContext.close();

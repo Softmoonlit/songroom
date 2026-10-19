@@ -48,7 +48,7 @@ export const personalSongOperationView = z.strictObject({
   status: z.enum(["queued", "processing", "awaitingConfirmation", "waitingAuthorization", "needsAdministrator", "succeeded", "failed", "stopped"]),
   songConfirmed: z.boolean(),
   errorCode: z.union([adapterErrorCodeSchema, z.literal("ACCOUNT_PAUSED"), z.literal("CONCURRENT_OPERATION_LIMIT_EXCEEDED")]).nullable(),
-  step: z.enum(["ready", "verified", "prepared", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]),
+  step: z.enum(["ready", "prepared", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"]),
   version: z.number().int().positive()
 });
 export type PersonalSongOperationView = z.infer<typeof personalSongOperationView>;

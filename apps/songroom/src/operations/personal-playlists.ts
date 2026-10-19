@@ -864,7 +864,7 @@ export class PersonalPlaylists {
           const condition = this.#conditionsForSongMutation({ ...op, accountId, authorizationId: authId, generation });
           if (condition === "valid") {
             const nextStatus = (detail.step === "unknown" || op.status === "awaitingConfirmation") ? "awaitingConfirmation" : "queued";
-            if (op.kind === "removePersonalSong" && ["ready", "verified", "prepared"].includes(detail.step)) {
+            if (op.kind === "removePersonalSong" && ["ready", "prepared"].includes(detail.step)) {
               tx.update(personalSongMutation).set({ step: "ready" }).where(eq(personalSongMutation.operationId, op.id)).run();
             }
             tx.update(operation).set({
@@ -1345,21 +1345,7 @@ export class PersonalPlaylists {
     catch { this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE"); return; }
 
     // Every durable step consumes exactly one upstream grant, then yields to the scheduler.
-    if (row.kind === "removePersonalSong" && detail.step === "ready") {
-      let result: AdapterResult<"identity"> | null = null;
-      try { result = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! }); } catch { /* no write sent */ }
-      const after = this.#conditionsForSongMutation(row);
-      if (after !== "valid") { this.#conditionStatusForSongMutation(row, after); return; }
-      if (!result || !result.ok || result.data.accountId !== row.accountId) {
-        const code = !result ? "MODULE_ERROR" : !result.ok ? result.error.code : "ACCOUNT_MISMATCH";
-        this.#rejectUnsentSongMutation(row, code);
-        return;
-      }
-      this.#queueSongMutation(row, "verified");
-      return;
-    }
-
-    if ((row.kind === "addPersonalSong" && ["ready", "verified"].includes(detail.step)) || detail.step === "prepared") {
+    if ((row.kind === "addPersonalSong" && detail.step === "ready") || detail.step === "prepared") {
       this.database.update(personalSongMutation).set({ step: "sending" }).where(eq(personalSongMutation.operationId, row.id)).run();
       let result: AdapterResult<"trackAdd" | "trackRemove"> | null = null;
       try {
@@ -1379,7 +1365,7 @@ export class PersonalPlaylists {
       return;
     }
 
-    const preflight = row.kind === "removePersonalSong" && detail.step === "verified";
+    const preflight = row.kind === "removePersonalSong" && detail.step === "ready";
     const readStartedAt = this.#beginRead();
     let result: AdapterResult<"playlistDetail"> | null = null;
     try { result = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.playlistId }); } catch { /* read failure */ }
@@ -1619,7 +1605,7 @@ export class PersonalPlaylists {
           this.#scheduleSongMutationConfirmationCheck(op.id, Math.max(0, nextCheckAt - this.now()));
         }
       } else {
-        if (op.kind === "removePersonalSong" && ["verified", "prepared"].includes(detail.step)) {
+        if (op.kind === "removePersonalSong" && detail.step === "prepared") {
           this.database.update(personalSongMutation).set({ step: "ready" }).where(eq(personalSongMutation.operationId, op.id)).run();
         }
         if (op.status === "processing") this.#status(op.id, "queued");

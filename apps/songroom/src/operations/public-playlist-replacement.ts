@@ -301,19 +301,7 @@ export class PublicPlaylistReplacement {
     const { auth, cookie } = context;
 
     try {
-      if (detail.step === "ready") {
-        const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
-        if (!this.#stillCurrent(row, detail)) return;
-        if (!identity.ok) {
-          this.#failure(row, detail, identity.error.code);
-          return;
-        }
-        if (identity.data.accountId !== row.accountId) {
-          this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH");
-          return;
-        }
-        this.#queue(row.id, "verified");
-      } else if (detail.step === "verified") {
+      if (detail.step === "ready" || detail.step === "verified") {
         await this.#executeNextReplacementAction(row, detail, auth, cookie);
       } else if (detail.step === "sending") {
         // Crash occurred after sending: never resend, transition to awaitingConfirmation

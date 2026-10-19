@@ -1655,7 +1655,7 @@ export class PublicPlaylists {
     }
 
     const auth = this.#authorization(current.ownerUserId);
-    if (!auth || auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation) return "waitingAuthorization";
+    if (!auth || auth.status !== "active" || !auth.credentials || auth.accountId !== row.accountId || auth.id !== row.authorizationId || auth.generation !== row.generation) return "waitingAuthorization";
     return "valid";
   }
 
@@ -1909,10 +1909,6 @@ export class PublicPlaylists {
           return;
         }
 
-        const identity = await this.adapter.call({ operation: "identity", cookie, expectedAccountId: row.accountId! });
-        if (!identity.ok) { this.#readFailure(row, identity.error.code); return; }
-        if (identity.data.accountId !== row.accountId) { this.#status(row.id, "waitingAuthorization", "ACCOUNT_MISMATCH"); return; }
-
         // 实时完整读取来源个人歌单并确认歌单身份及歌曲仍在；来源变化/读取失败停止，不凭旧快照放行
         const sourceResult = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.sourcePlaylistId });
         if (!sourceResult.ok) {
@@ -1944,6 +1940,11 @@ export class PublicPlaylists {
         const preCheck = this.database.transaction(tx => {
           const currentOp = tx.select().from(operation).where(eq(operation.id, row.id)).get();
           if (!currentOp || currentOp.status !== "processing") return { valid: false as const };
+          const condition = this.#conditionsForSongRequest(row);
+          if (condition !== "valid") {
+            this.#conditionStatus(row, condition);
+            return { valid: false as const };
+          }
 
           const currentDetail = tx.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get();
           if (!currentDetail) return { valid: false as const };

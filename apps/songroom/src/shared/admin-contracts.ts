@@ -37,7 +37,7 @@ export const abnormalOperationSummarySchema = z.object({
   status: z.string(),
   version: z.number().nullable().optional(),
   summary: z.string(),
-  updatedAt: z.number()
+  updatedAt: z.number().nullable()
 });
 export type AbnormalOperationSummary = z.infer<typeof abnormalOperationSummarySchema>;
 
@@ -63,7 +63,7 @@ export const abnormalOperationDetailSchema = z.object({
   candidatePlaylistName: z.string().nullable().optional(),
   pauseReason: z.string().nullable().optional(),
   impactDescription: z.string(),
-  updatedAt: z.number()
+  updatedAt: z.number().nullable()
 });
 export type AbnormalOperationDetail = z.infer<typeof abnormalOperationDetailSchema>;
 

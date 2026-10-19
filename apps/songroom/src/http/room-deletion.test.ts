@@ -615,15 +615,22 @@ it("服务重启恢复：持久化的待清理任务在服务重启后自动调�
   await request(app, `/api/rooms/${roomId}/public-playlist`, owner, { idempotencyKey: v7() });
   await app.playlists.settle();
 
-  // 拦截 playlistDelete，让删除任务停留在 ready/sending 状态，模拟服务突然关闭
-  let deleteBlocked = true;
-  adapter.playlistDelete = async () => {
-    if (deleteBlocked) {
-      // 模拟上游未完成
-      await new Promise(() => {});
-    }
-    return { ok: true, data: { acknowledged: true } };
+  // 占住同账号读取槽，确保删房清理持久化后仍未发送。
+  let signalReadStarted!: () => void;
+  const readStarted = new Promise<void>(resolve => { signalReadStarted = resolve; });
+  let releaseRead!: () => void;
+  const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
+  adapter.playlistDetail = async input => {
+    signalReadStarted();
+    await readGate;
+    return { ok: true, data: {
+      playlist: { id: input.playlistId, name: "公共歌单", creatorId: "test", subscribed: false, status: 0 },
+      songIds: [], songs: []
+    } };
   };
+  const refresh = request(app, `/api/rooms/${roomId}/public-playlist/refresh`, owner, {}).then(response => response);
+  await readStarted;
+  testCleanups.push(async () => { releaseRead(); await refresh; });
 
   const viewRes = await request(app, `/api/rooms/${roomId}/deletion`, owner, undefined, "GET");
   // 发起删房，删房事务已完成并插入了 public_playlist_cleanup
@@ -632,11 +639,16 @@ it("服务重启恢复：持久化的待清理任务在服务重启后自动调�
     version: viewRes.json().version
   });
 
-  // 关闭旧应用，模拟服务重启
+  const pending = await request(app, `/api/cleanups/public-playlists`, owner, undefined, "GET");
+  expect(pending.json().cleanups).toEqual([expect.objectContaining({ playlistId: "cloud-pl-restart", status: "ready" })]);
+  expect(adapter.inputs.filter(input => input.operation === "playlistDelete")).toEqual([]);
+
+  // 先停止新任务认领，再释放已在途的读取，优雅关闭保留未发清理任务。
+  app.drain();
+  releaseRead();
+  await refresh;
   await app.close();
 
-  // 解除上游阻塞
-  deleteBlocked = false;
   const newAdapter = new ScriptedNeteaseAdapter();
   newAdapter.playlistDelete = () => ({ ok: true, data: { acknowledged: true } });
 

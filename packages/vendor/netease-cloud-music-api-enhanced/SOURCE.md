@@ -7,11 +7,13 @@
 - 归档 SHA-256：`d17464cc1a2d4c03bb706ec2897e4af1c38b5c1013e5b2526f23551eccde735b`
 - 许可证：MIT，原文保存在 `LICENSE`。
 
-此目录是从上述固定源码裁剪并审查的 CommonJS 运行包，包含十四种批准操作所需的模块、请求层、加密、选项、工具函数、配置，以及工具函数依赖的中国 IP 数据文件。不提供 app/server/main 入口、通用模块加载器、启动时游客登录或配置下载。两个 check-token 辅助模块仅因上游 `request.js` 静态引用而保留，批准调用始终禁用该能力。构建和测试不会访问真实账号或真实上游。
+此目录是从上述固定源码裁剪并审查的 CommonJS 运行包，包含十四种批准操作所需的模块、请求层、加密、选项、工具函数、配置，以及工具函数依赖的中国 IP 数据文件。不提供 app/server/main 入口、通用模块加载器、启动时游客登录或配置下载。两个 check-token 辅助模块保留上游能力，由 `request.js` 在对应 `v2` / `v3` 请求分支中按需加载；批准调用始终显式禁用该能力，因此普通 worker 请求不加载 jsdom。构建和测试不会访问真实账号或真实上游。
 
 `upstream-package.json` 与 `upstream-pnpm-lock.yaml` 保留上游来源证据，只作为元数据，不作为安装目标或运行入口。此目录的 `package.json` 只保留必需运行依赖，并精确固定直接依赖版本；安装以仓库根目录的 `pnpm-lock.yaml` 为权威。不运行 vendor 的 prepare/install 脚本。部署必须使用仓库冻结锁文件，不得下载替代上游源码或改用 npm 上的 Enhanced 包。
 
-`production.patch` 记录复制的上游运行文件的全部修改。生产补丁删除 `playlist_tracks` 在 512 分支的二次写、隐式 `NETEASE_COOKIE`、全局设备回退和原始诊断输出，保留二维码轮询的原错误，区分解析、传输与普通业务错误，保留真实 HTTP 状态，并禁用 Axios 重定向，防止 307/308 重发写请求。批准调用显式传入 PC 设备信息、Cookie 和 15 秒请求超时。
+`production.patch` 记录复制的上游运行文件的全部修改。生产补丁删除 `playlist_tracks` 在 512 分支的二次写、隐式 `NETEASE_COOKIE`、全局设备回退和原始诊断输出，保留二维码轮询的原错误，区分解析、传输与普通业务错误，保留真实 HTTP 状态，并禁用 Axios 重定向，防止 307/308 重发写请求。批准调用显式传入 PC 设备信息、Cookie 和 15 秒请求超时。冷启动补丁只将两个 token 辅助模块的 require 移到对应分支，仍逐次调用 getToken，不新增 token 缓存、依赖或共享 worker。离线回归保留真实 worker、Axios、加密和 jsdom，仅以本地 HTTP / SDK 响应替代外部网络，覆盖普通请求不加载 jsdom、v2 首次按需加载及连续请求取得新 token。
+
+`production.patch` 统一使用零上下文 unified diff（`diff -U0` / `git diff -U0` 格式），避免补丁中的空白上下文行触发尾随空格检查。GNU `patch -p1 < production.patch` 和 `patch -R -p1 < production.patch` 用法不变；使用 Git 时须显式加 `--unidiff-zero`，例如 `git apply --check --unidiff-zero production.patch`、`git apply --unidiff-zero production.patch`，反向时再加 `--reverse`。在固定上游源码根目录执行这些命令；更新补丁须验证正反向应用无 fuzz/offset，且全部补丁来源文件和应用结果逐字节一致。
 
 `integrity.json` 列出全部受审文件的 SHA-256，包括本文、许可证、数据、上游来源元数据、包配置、补丁和上游依赖锁。清单自身的摘要固定在 SongRoom 的 `integrity.ts` 中。文件清单仅排除自身；`node_modules` 下的依赖安装产物由包管理器冻结锁文件管理，不属于上游受审源码。校验拒绝受审文件的新增、缺失、修改或符号链接。主动更新源码、清单、依赖、补丁或白名单时，必须重新审查并完成同等离线契约及部署验收。
 

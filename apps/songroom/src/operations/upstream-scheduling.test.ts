@@ -121,14 +121,15 @@ it("账号暂停同时隔离属于该账号的所有注册业务类型", async (
   expect(rows.find(r => r.id === opB)?.errorCode).toBe("ACCOUNT_PAUSED");
 });
 
-it("内存任务遵守单账号 1 秒间隔、风控暂停，并与持久操作公平轮转", async () => {
+it("同账号请求严格串行，快速完成后立即推进内存任务，保留风控暂停与公平轮转", async () => {
   vi.useFakeTimers();
-  let time = 1_000;
+  const time = 1_000;
   const { db } = fixture();
   const scheduler = new UpstreamScheduler(db, () => time);
 
   insertRoom(db, "r1", "u1");
   const executed: string[] = [];
+  const firstRequest = gate();
 
   const op1 = v7();
   db.insert(operation).values({
@@ -149,6 +150,7 @@ it("内存任务遵守单账号 1 秒间隔、风控暂停，并与持久操作�
     claim: () => true,
     execute: async row => {
       executed.push(row.id);
+      await firstRequest.promise;
       db.update(operation).set({ status: "succeeded", accountId: null, authorizationId: null, generation: null }).where(eq(operation.id, row.id)).run();
     }
   });
@@ -165,15 +167,13 @@ it("内存任务遵守单账号 1 秒间隔、风控暂停，并与持久操作�
   await vi.advanceTimersByTimeAsync(0);
   expect(executed).toEqual([op1]);
 
-  // 同账号严格串行且启动至少间隔 1 秒：立即推进 500ms 不触发 mem-task
-  time += 500;
-  await vi.advanceTimersByTimeAsync(500);
+  // 上游仍在途时同账号不得重叠；完成后无需推进时钟即可发送下一项。
+  await vi.advanceTimersByTimeAsync(0);
   expect(executed).toEqual([op1]);
-
-  // 满 1000ms 后触发 mem-task
-  time += 500;
-  await vi.advanceTimersByTimeAsync(500);
+  firstRequest.resolve();
+  await vi.advanceTimersByTimeAsync(0);
   expect(executed).toEqual([op1, "mem-task"]);
+  expect(vi.getTimerCount()).toBe(0);
   expect(await memPromise).toBe("result");
 
   // 账号暂停后拒绝新内存任务
@@ -182,4 +182,117 @@ it("内存任务遵守单账号 1 秒间隔、风控暂停，并与持久操作�
 
   scheduler.stop();
   await scheduler.settle();
+});
+
+it("同账号持久请求每次完成后立即让出并按最久未执行顺序公平轮转", async () => {
+  vi.useFakeTimers();
+  const { db } = fixture();
+  const scheduler = new UpstreamScheduler(db, () => 1_000);
+  const order: string[] = [];
+  insertRoom(db, "r1", "u1");
+  insertRoom(db, "r2", "u2");
+  for (const [id, roomId, userId, lastGranted] of [["first", "r1", "u1", 100], ["second", "r2", "u2", 200]] as const) {
+    db.insert(operation).values({ id, kind: "createPublicPlaylist", userId, roomId, accountId: "shared", authorizationId: v7(), generation: 1, lastGranted, createdAt: lastGranted, updatedAt: lastGranted, status: "queued" }).run();
+  }
+  scheduler.register("createPublicPlaylist", {
+    claim: () => true,
+    execute: async row => {
+      order.push(row.id);
+      const finished = order.filter(id => id === row.id).length === 2;
+      db.update(operation).set(finished
+        ? { status: "succeeded", accountId: null, authorizationId: null, generation: null }
+        : { status: "queued" }).where(eq(operation.id, row.id)).run();
+    }
+  });
+
+  scheduler.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(order).toEqual(["first", "second", "first", "second"]);
+  expect(vi.getTimerCount()).toBe(0);
+  scheduler.stop();
+  await scheduler.settle();
+});
+
+it("队满仍拒绝新请求，达到二十项前允许入队", () => {
+  const { db } = fixture();
+  const scheduler = new UpstreamScheduler(db);
+  for (let i = 0; i < 20; i++) {
+    expect(scheduler.admissionCode("shared")).toBeNull();
+    insertRoom(db, `r-${i}`, "owner");
+    db.insert(operation).values({ id: v7(), kind: "createPublicPlaylist", userId: "owner", roomId: `r-${i}`, accountId: "shared", authorizationId: v7(), generation: 1, status: "queued", createdAt: 1, updatedAt: 1 }).run();
+  }
+  expect(scheduler.admissionCode("shared")).toBe("UPSTREAM_QUEUE_FULL");
+  expect(() => scheduler.executeMemoryTask("shared", async () => {})).toThrowError("UPSTREAM_QUEUE_FULL");
+});
+
+it("重启清除已消失的执行权，保留持久暂停且立即允许未暂停账号请求", async () => {
+  vi.useFakeTimers();
+  const { db, dir } = fixture();
+  db.insert(upstreamAccount).values({ accountId: "available", runningOperationId: "lost-handle" }).run();
+  const previous = new UpstreamScheduler(db);
+  previous.pause("paused", "RATE_LIMITED");
+  // 使用重新打开的数据库连接，验证重启后的持久事实。
+  const reopened = openDatabase(path.join(dir, "test.sqlite"));
+  cleanups.push(() => reopened.$client.close());
+  const scheduler = new UpstreamScheduler(reopened, () => 1_000);
+  expect(scheduler.paused("paused")).toBe(true);
+  scheduler.start();
+  expect(() => scheduler.executeMemoryTask("paused", async () => {})).toThrowError("ACCOUNT_PAUSED");
+  const result = scheduler.executeMemoryTask("available", async () => "completed");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await result).toBe("completed");
+  scheduler.resume("paused");
+  const resumed = scheduler.executeMemoryTask("paused", async () => "resumed");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await resumed).toBe("resumed");
+  expect(vi.getTimerCount()).toBe(0);
+  scheduler.stop();
+  await scheduler.settle();
+});
+
+it("认领恢复操作时新增的同账号清理任务立即执行，不丢失唤醒", async () => {
+  vi.useFakeTimers();
+  const { db } = fixture();
+  const scheduler = new UpstreamScheduler(db);
+  insertRoom(db, "recover-room", "owner");
+  db.insert(operation).values({ id: "recover-op", kind: "createPublicPlaylist", userId: "owner", roomId: "recover-room", accountId: "shared", authorizationId: v7(), generation: 1, status: "queued", createdAt: 1, updatedAt: 1 }).run();
+  const completed: string[] = [];
+  scheduler.register("createPublicPlaylist", {
+    claim: row => {
+      void scheduler.executeMemoryTask("shared", async () => { completed.push("cleanup"); }).catch(() => {});
+      db.update(operation).set({ status: "needsAdministrator" }).where(eq(operation.id, row.id)).run();
+      return false;
+    },
+    execute: async () => { throw new Error("恢复操作不得重新发送"); }
+  });
+  scheduler.start();
+  await vi.advanceTimersByTimeAsync(0);
+  try { expect(completed).toEqual(["cleanup"]); }
+  finally { scheduler.stop(); await scheduler.settle(); }
+});
+
+it("queued操作同值更新后无法认领时等待外部唤醒，不忙循环", async () => {
+  vi.useFakeTimers();
+  const { db } = fixture();
+  const scheduler = new UpstreamScheduler(db);
+  insertRoom(db, "blocked-room", "owner");
+  db.insert(operation).values({ id: "blocked-op", kind: "createPublicPlaylist", userId: "owner", roomId: "blocked-room", accountId: "shared", authorizationId: v7(), generation: 1, status: "queued", createdAt: 1, updatedAt: 1 }).run();
+  let claims = 0;
+  scheduler.register("createPublicPlaylist", {
+    claim: row => {
+      if (++claims > 1) {
+        scheduler.stop();
+        throw new Error("无进展却重复认领");
+      }
+      db.update(operation).set({ status: "queued" }).where(eq(operation.id, row.id)).run();
+      return false;
+    },
+    execute: async () => { throw new Error("阻塞操作不得发送"); }
+  });
+  scheduler.start();
+  const drained = scheduler.settle().then(() => null, error => error);
+  await vi.advanceTimersByTimeAsync(0);
+  scheduler.stop();
+  expect(await drained).toBeNull();
+  expect(claims).toBe(1);
 });

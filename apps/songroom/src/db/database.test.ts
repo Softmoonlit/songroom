@@ -444,7 +444,7 @@ it("0027将已有个人加歌明细升级到共享加删表，保持sending与�
   old.close();
   migrateDatabase(filePath);
   const current = openDatabase(filePath);
-  expect(checkDatabase(filePath).schemaVersion).toBe(28);
+  expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_addition'").get()).toBeUndefined();
   expect(current.$client.prepare("SELECT kind, version, status, account_id FROM operation WHERE id = 'op-existing'").get()).toEqual({ kind: "addPersonalSong", version: 7, status: "processing", account_id: "acc" });
   expect(current.$client.prepare("SELECT song_id, binding_generation, step, check_round, next_check_at FROM personal_song_mutation WHERE operation_id = 'op-existing'").get()).toEqual({ song_id: "song", binding_generation: 3, step: "sending", check_round: 2, next_check_at: now + 30000 });
@@ -452,4 +452,56 @@ it("0027将已有个人加歌明细升级到共享加删表，保持sending与�
   current.$client.prepare("INSERT INTO personal_song_mutation (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES ('op-remove', 'member2', 'target2', 1, 'song2', '歌2', '[]', '', 'prepared')").run();
   expect(current.$client.pragma("foreign_key_check")).toEqual([]);
   current.$client.close();
+});
+
+it("0028移除请求间隔与废弃步骤，保留执行权、暂停及个人歌曲和playNext恢复事实", () => {
+  const filePath = temporaryDatabasePath();
+  createOldDatabase(filePath, 28);
+  const old = new Database(filePath);
+  old.exec(`
+    INSERT INTO upstream_account (account_id, next_start_at, running_operation_id, paused, pause_reason) VALUES
+      ('running', 9999999999999, 'op-sending', 0, NULL), ('paused', 9999999999999, NULL, 1, 'RATE_LIMITED');
+  `);
+  const steps = ["ready", "verified", "prepared", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"];
+  for (const step of steps) {
+    old.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, created_at, updated_at) VALUES (?, 'removePersonalSong', ?, 'room', 'running', 'auth', 1, 'processing', 1, 2)").run(`op-${step}`, `actor-${step}`);
+    old.prepare("INSERT INTO personal_song_mutation (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step, check_round, next_check_at) VALUES (?, 'member', 'target', 3, 'song', '歌', '[]', '专', ?, 2, 30000)").run(`op-${step}`, step);
+  }
+  const playNextSteps = ["ready", "identityVerified", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"];
+  for (const step of playNextSteps) {
+    old.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, created_at, updated_at) VALUES (?, 'playNext', ?, 'room', 'running', 'auth', 4, 'processing', 11, 22)").run(`play-${step}`, `player-${step}`);
+    old.prepare("INSERT INTO public_play_next (operation_id, song_id, anchor_song_id, playlist_id, binding_generation, member_id, original_song_ids, target_song_ids, step, check_round, next_check_at) VALUES (?, 'song', 'anchor', 'public-target', 5, 'member', ?, ?, ?, 3, 120000)").run(`play-${step}`, '["song","anchor","other"]', '["anchor","song","other"]', step);
+  }
+  const operations = old.prepare("SELECT * FROM operation ORDER BY id").all();
+  old.close();
+
+  migrateDatabase(filePath);
+  migrateDatabase(filePath);
+
+  const current = openDatabase(filePath);
+  try {
+    expect(current.$client.prepare("SELECT * FROM upstream_account ORDER BY account_id").all()).toEqual([
+      { account_id: "paused", running_operation_id: null, paused: 1, pause_reason: "RATE_LIMITED" },
+      { account_id: "running", running_operation_id: "op-sending", paused: 0, pause_reason: null }
+    ]);
+    expect(current.$client.prepare("SELECT * FROM operation ORDER BY id").all()).toEqual(operations);
+    for (const step of steps) {
+      expect(current.$client.prepare("SELECT * FROM personal_song_mutation WHERE operation_id = ?").get(`op-${step}`)).toEqual({
+        operation_id: `op-${step}`, member_id: "member", playlist_id: "target", binding_generation: 3,
+        song_id: "song", name: "歌", artists: "[]", album: "专", step: step === "verified" ? "ready" : step,
+        check_round: 2, next_check_at: 30000
+      });
+    }
+    expect(() => current.$client.prepare("UPDATE personal_song_mutation SET step = 'verified' WHERE operation_id = 'op-ready'").run()).toThrow(/CHECK constraint/);
+    for (const step of playNextSteps) {
+      expect(current.$client.prepare("SELECT * FROM public_play_next WHERE operation_id = ?").get(`play-${step}`)).toEqual({
+        operation_id: `play-${step}`, song_id: "song", anchor_song_id: "anchor", playlist_id: "public-target", binding_generation: 5,
+        member_id: "member", original_song_ids: '["song","anchor","other"]', target_song_ids: '["anchor","song","other"]',
+        step: step === "identityVerified" ? "ready" : step, check_round: 3, next_check_at: 120000
+      });
+    }
+    expect(() => current.$client.prepare("UPDATE public_play_next SET step = 'identityVerified' WHERE operation_id = 'play-ready'").run()).toThrow(/CHECK constraint/);
+    expect(current.$client.pragma("foreign_key_check")).toEqual([]);
+    expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  } finally { current.$client.close(); }
 });

@@ -321,10 +321,16 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
   const { app, adapter, roommate1, roomId } = await fixture();
 
   const dispatchedOps: string[] = [];
+  let sourceEntered!: () => void;
+  let releaseSource!: () => void;
+  const entered = new Promise<void>(resolve => { sourceEntered = resolve; });
+  const sourceGate = new Promise<void>(resolve => { releaseSource = resolve; });
   const originalCall = adapter.call.bind(adapter);
   adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
     dispatchedOps.push(input.operation);
     if (input.operation === "playlistDetail" && input.playlistId === "pl-rm1") {
+      sourceEntered();
+      await sourceGate;
       return {
         ok: true,
         data: {
@@ -349,8 +355,14 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
   expect([200, 202]).toContain(songReqRes.statusCode);
   const opId = songReqRes.json().operation.id;
 
-  // 室友甲在请求被调度发出前立即主动退出
-  await request(app, `/api/rooms/${roomId}/leave`, roommate1.cookie, { idempotencyKey: v7() });
+  // 来源读取尚未返回时退出，明确保证写入还没有发出。
+  await entered;
+  try {
+    await request(app, `/api/rooms/${roomId}/leave`, roommate1.cookie, { idempotencyKey: v7() });
+  } finally {
+    releaseSource();
+  }
+  await app.scheduler.settle();
 
   // 退出后室友甲不可再查看该操作
   const opQuery = await request(app, `/api/rooms/${roomId}/song-requests/${opId}`, roommate1.cookie, undefined, "GET");

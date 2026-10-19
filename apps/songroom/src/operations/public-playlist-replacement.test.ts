@@ -465,6 +465,9 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     expect(op.status).toBe("succeeded");
     expect(op.step).toBe("succeeded");
     expect(op.tagConfirmed).toBe(true);
+    expect(ctx.adapter.inputs.filter(input => input.operation === "identity")).toHaveLength(0);
+    expect(ctx.adapter.inputs.some(input => input.operation === "playlistDetail" && input.playlistId === "rm1-playlist")).toBe(true);
+    expect(ctx.adapter.inputs.some(input => input.operation === "playlistDetail" && input.playlistId === "rm2-playlist")).toBe(true);
 
     // 验证云端歌单：旧歌 old-song-1, old-song-2 已移除，保留歌 shared-keep-1 依然存在，新歌全部加入
     const cloudSongs = ctx.adapter.playlists.get(ctx.publicPlaylistId)!.songs.map(s => s.id);
@@ -480,6 +483,11 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     const removeCalls = ctx.adapter.inputs.filter(i => i.operation === "trackRemove");
     expect(addCalls.length).toBeGreaterThan(0);
     expect(removeCalls.length).toBe(2); // old-song-1 与 old-song-2
+    for (const [index, input] of ctx.adapter.inputs.entries()) {
+      if (input.operation === "trackAdd" || input.operation === "trackRemove") {
+        expect(ctx.adapter.inputs[index + 1]).toMatchObject({ operation: "playlistDetail", playlistId: ctx.publicPlaylistId });
+      }
+    }
 
     // 验证个人歌单不受影响：tracks 集合与顺序完全原样保留
     const rm1Songs = ctx.adapter.playlists.get("rm1-playlist")!.songs.map(s => s.id);
@@ -504,6 +512,45 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
       expect(tags.some(tag => tag.memberId === t.sourceMemberId)).toBe(true);
     }
   }, 25_000);
+
+  it("同账号读取在逐首换歌间获得执行机会且不与在途写重叠", async () => {
+    const ctx = createTestContext();
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    let signalEntered!: () => void;
+    const entered = new Promise<void>(resolve => { signalEntered = resolve; });
+    let releaseRequest!: () => void;
+    const release = new Promise<void>(resolve => { releaseRequest = resolve; });
+    let writeInFlight = false;
+    let writeCount = 0;
+    let otherReadRan = false;
+    ctx.adapter.trackAddHook = async () => {
+      writeCount++;
+      if (writeCount === 1) {
+        writeInFlight = true;
+        signalEntered();
+        await release;
+        writeInFlight = false;
+      } else if (writeCount >= 3) {
+        // The already-waiting operation may receive its older grant once;
+        // the competing read must run before another write turn.
+        expect(otherReadRan).toBe(true);
+      }
+      return null;
+    };
+    const accepted = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, { idempotencyKey: v7(), previewId: preview.previewId });
+    await entered;
+    const otherRead = ctx.scheduler.executeMemoryTask("acc-owner", async () => {
+      expect(writeInFlight).toBe(false);
+      otherReadRan = true;
+    });
+    expect(otherReadRan).toBe(false);
+    releaseRequest();
+    await otherRead;
+    await ctx.playlists.settle();
+    expect(ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, accepted.operation.id).status).toBe("succeeded");
+    expect(writeCount).toBeGreaterThan(1);
+    expect(ctx.adapter.inputs.filter(input => input.operation === "identity")).toHaveLength(0);
+  });
 
   it("验收清单 7: 发送后中断/超时时不重发，进入 awaitingConfirmation，3轮补查后停止自动请求", async () => {
     const ctx = createTestContext();

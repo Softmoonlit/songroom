@@ -117,7 +117,7 @@ export const playNextOperationView = z.strictObject({
   songId: z.string().min(1),
   anchorSongId: z.string().min(1),
   status: publicPlaylistOperation.shape.status,
-  step: z.enum(["ready", "identityVerified", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"]),
+  step: z.enum(["ready", "playbackVerified", "verified", "sending", "confirming", "unknown", "succeeded", "rejected", "stopped"]),
   errorCode: playNextErrorCode.nullable(),
   version: z.number().int().positive()
 });

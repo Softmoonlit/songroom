@@ -251,6 +251,7 @@ it("公共尚无歌曲时发送一次增加请求并执行写后读回，确认�
   // 验证上游调用：刚好一次 trackAdd
   const trackAddCalls = f.adapter.inputs.filter(i => i.operation === "trackAdd");
   expect(trackAddCalls).toHaveLength(1);
+  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["playlistDetail", "trackAdd", "playlistDetail"]);
 });
 
 it("同一成员在同一房间已有未完成写操作时拒绝第二项不同写入", async () => {
@@ -1311,4 +1312,22 @@ it("幂等重放通知：使用相同幂等键再次请求时，通知的版本�
   expect(resReplay.replay).toBe(true);
   // 验证通知的版本为真实递增的当前版本 5，而不是倒退回 1
   expect(notifiedVersions).toEqual([5]);
+});
+
+it.each(["revoked", "generation"] as const)("来源读取期间授权%s变化，旧凭据不能发出公共写入", async change => {
+  const f = fixture();
+  f.playlists.start();
+  const call = f.adapter.call.bind(f.adapter);
+  f.adapter.call = async <I extends AdapterInput>(input: I): Promise<AdapterResult<I["operation"]>> => {
+    if (input.operation === "playlistDetail" && input.playlistId === "pl-roommate1") {
+      f.database.update(neteaseAuthorization).set(change === "revoked" ? { status: "waitingAuthorization" } : { generation: 2 }).run();
+    }
+    return call(input);
+  };
+  const accepted = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美"
+  });
+  await f.scheduler.settle();
+  expect(f.adapter.inputs.filter(input => input.operation === "trackAdd")).toHaveLength(0);
+  expect(f.playlists.readOperation("roommate1", f.roomId, accepted.operation.id).status).toBe("waitingAuthorization");
 });

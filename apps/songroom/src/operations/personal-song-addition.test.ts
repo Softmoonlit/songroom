@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { v7 } from "uuid";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
 import { and, eq } from "drizzle-orm";
 import {
@@ -28,6 +28,7 @@ import type { AdapterInput, AdapterResult } from "../netease/protocol.js";
 
 const fixtures: Array<{ root: string; database: AppDatabase; scheduler: UpstreamScheduler; playlists: PersonalPlaylists }> = [];
 afterEach(async () => {
+  vi.useRealTimers();
   for (const { root, database, scheduler, playlists } of fixtures.splice(0)) {
     playlists.stop();
     scheduler.stop();
@@ -688,6 +689,7 @@ it("本人单首删除只写一次，完整读回云端顺序并由个人页恢�
   const result = playlists.removeSong("roommate", roomId, command);
   expect(result.operation).toMatchObject({ action: "remove", name: "待删歌曲", status: "queued" });
   await scheduler.settle();
+  expect(adapter.inputs.map(input => input.operation)).toEqual(["playlistDetail", "trackRemove", "playlistDetail"]);
   expect(playlists.readSongOperation("roommate", roomId, result.operation.id)).toMatchObject({ action: "remove", status: "succeeded", songConfirmed: true });
   expect(playlists.read("roommate", roomId)).toMatchObject({ songOperation: { id: result.operation.id, action: "remove", status: "succeeded" },
     snapshot: { tracks: [{ songId: "song-3" }, { songId: "song-2" }] } });
@@ -772,7 +774,8 @@ it("原账号重授权后的 sending 删除只确认原目标，不重复删除"
   expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(0);
 });
 
-it("个人删除每次上游调用让出调度，间隔至少一秒且让同账号其他任务公平执行", async () => {
+it("个人删除每次上游调用让出调度，无固定间隔且让同账号其他任务公平执行", async () => {
+  vi.useFakeTimers();
   const { adapter, playlists, scheduler, roomId } = fixture();
   const calls: Array<{ operation: string; at: number; songId?: string }> = [];
   const original = adapter.call.bind(adapter);
@@ -787,10 +790,11 @@ it("个人删除每次上游调用让出调度，间隔至少一秒且让同账�
   const competing = scheduler.executeMemoryTask("acc-owner", async () => {
     calls.push({ operation: "competing-task", at: Date.now() });
   });
-  await scheduler.settle(); await competing;
+  await vi.advanceTimersByTimeAsync(0);
   expect(playlists.readSongOperation("roommate", roomId, result.operation.id).status).toBe("succeeded");
-  expect(calls.map(call => call.operation)).toEqual(["identity", "competing-task", "playlistDetail", "trackRemove", "playlistDetail"]);
-  for (let i = 1; i < calls.length; i++) expect(calls[i]!.at - calls[i - 1]!.at).toBeGreaterThanOrEqual(1000);
+  await scheduler.settle(); await competing;
+  expect(calls.map(call => call.operation)).toEqual(["playlistDetail", "competing-task", "trackRemove", "playlistDetail"]);
+  expect(new Set(calls.map(call => call.at)).size).toBe(1);
 }, 10000);
 
 it("本人个人删除排队或未知时拒绝公共同源点歌，公共点歌未完时拒绝再删除", async () => {

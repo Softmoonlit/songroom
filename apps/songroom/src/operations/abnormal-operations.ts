@@ -174,7 +174,7 @@ export class AbnormalOperationsService {
         status: "paused",
         version: null,
         summary: `网易云账号已风控暂停 (原因: ${acc.pauseReason ?? "RATE_LIMITED"})`,
-        updatedAt: acc.nextStartAt
+        updatedAt: null
       });
     }
 
@@ -292,7 +292,7 @@ export class AbnormalOperationsService {
         version: null,
         pauseReason: acc.pauseReason ?? "RATE_LIMITED",
         impactDescription: "风控暂停恢复：重新核实当前真实账号与有效授权，解除该账号的上游调度阻塞",
-        updatedAt: acc.nextStartAt
+        updatedAt: null
       };
     }
 

@@ -77,7 +77,7 @@ function fixture() {
   return { database, adapter, eventStream, roomId, module, authorizationId, vault, dbPath, keyPath };
 }
 
-it("每请求公平让出、真实账号串行间隔 1 秒且全站最多两个在途请求", async () => {
+it("每请求公平让出、真实账号严格串行且全站最多两个在途请求", async () => {
   vi.useFakeTimers();
   const f = fixture(); const service = f.module();
   const rooms: Array<{ userId: string; roomId: string }> = [];
@@ -112,16 +112,11 @@ it("每请求公平让出、真实账号串行间隔 1 秒且全站最多两个�
   expect(starts.map(start => start.account)).toEqual(["cloud-owner", "cloud-member"]);
   expect(rooms.filter(item => service.read(item.userId, item.roomId).operation?.status === "processing")).toHaveLength(2);
   held.resolve(); await vi.advanceTimersByTimeAsync(0);
-  expect(starts.map(start => start.account)).toEqual(["cloud-owner", "cloud-member", "cloud-outsider"]);
-  await vi.advanceTimersByTimeAsync(999); expect(starts).toHaveLength(3);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(starts.slice(3).map(start => start.request)).toEqual(["identity", "identity", "identity"]);
-  await vi.runAllTimersAsync(); await service.settle();
+  await service.settle();
   expect(maximum).toBe(2);
   for (const account of ["cloud-owner", "cloud-member", "cloud-outsider"]) {
     const calls = starts.filter(start => start.account === account);
     expect(calls.map(call => call.request)).toEqual(["identity", "identity", "create", "create"]);
-    for (let index = 1; index < calls.length; index++) expect(calls[index].time - calls[index - 1].time).toBeGreaterThanOrEqual(1000);
   }
   for (const item of rooms) expect(service.read(item.userId, item.roomId).operation?.status).toBe("succeeded");
 });
@@ -140,23 +135,23 @@ it("同账号请求超过间隔仍独占执行权，其他目标不能并发进�
   service.stop(); held.resolve({ ok: true, data: { accountId: "cloud-owner", name: "房主" } }); await service.settle();
 });
 
-it("重开 SQLite 后仍等待持久的下一次启动时间，不突发请求", async () => {
-  vi.useFakeTimers();
+it("重开 SQLite 后立即恢复未发送操作，不等待旧启动预算", async () => {
   const f = fixture(); const first = f.module();
+  const entered = gate<void>(); const identity = gate<AdapterResult<"identity">>();
+  f.adapter.identity = async () => { entered.resolve(); return identity.promise; };
   first.create("owner", f.roomId, { idempotencyKey: v7() });
-  first.start(); await vi.advanceTimersByTimeAsync(0);
-  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists"]);
-  first.stop(); await first.settle();
+  first.start(); await entered.promise;
+  first.stop(); identity.resolve({ ok: true, data: { accountId: "cloud-owner", name: "owner" } });
+  await first.settle();
+  expect(first.read("owner", f.roomId).operation?.status).toBe("queued");
+  f.adapter.identity = async () => ({ ok: true, data: { accountId: "cloud-owner", name: "owner" } });
   const reopened = openDatabase(f.dbPath);
   const restartedScheduler = new UpstreamScheduler(reopened);
   const restarted = new PublicPlaylists(reopened, f.adapter, f.vault, restartedScheduler, new EventStreamService());
   try {
-    restarted.start(); await vi.advanceTimersByTimeAsync(999);
-    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists"]);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "identity", "userPlaylists"]);
-    await vi.advanceTimersByTimeAsync(1000); await restarted.settle();
+    restarted.start(); await restarted.settle();
     expect(restarted.read("owner", f.roomId).operation?.status).toBe("succeeded");
+    expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "identity", "userPlaylists", "playlistCreate"]);
   } finally { restarted.stop(); await restarted.settle(); reopened.$client.close(); }
 });
 
@@ -231,37 +226,37 @@ it("发送后风控保留待确认事实并暂停整个账号，未知步骤不�
 });
 
 it("新到达操作不能饿死已核查的旧操作，同一房间所有幂等键保持同一个冲突意图", async () => {
-  vi.useFakeTimers();
   const f = fixture(); const service = f.module();
+  const entered = gate<void>(); const before = gate<AdapterResult<"userPlaylists">>();
+  f.adapter.userPlaylists = async () => { entered.resolve(); return before.promise; };
+  f.adapter.create = async input => ({ ok: true, data: { playlistId: input.name } });
   const first = service.create("owner", f.roomId, { idempotencyKey: v7() });
-  service.start(); await vi.advanceTimersByTimeAsync(0);
-  await vi.advanceTimersByTimeAsync(500);
+  service.start(); await entered.promise;
   const second = extraRoom(f);
   service.create("owner", second, { idempotencyKey: v7() });
   expect(service.create("owner", f.roomId, { idempotencyKey: v7() }).view.operation?.id).toBe(first.view.operation!.id);
-  await vi.advanceTimersByTimeAsync(500);
+  before.resolve({ ok: true, data: { playlists: [], more: false } });
+  await service.settle();
   expect(service.read("owner", f.roomId).operation?.status).toBe("succeeded");
-  expect(service.read("owner", second).operation?.status).toBe("queued");
-  f.adapter.create = async () => ({ ok: true, data: { playlistId: "second" } });
-  await vi.runAllTimersAsync(); await service.settle();
   expect(service.read("owner", second).operation?.status).toBe("succeeded");
-  expect(f.adapter.inputs.map(input => input.operation)).toEqual(["identity", "userPlaylists", "playlistCreate", "identity", "userPlaylists", "playlistCreate"]);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate").map(input => input.name)).toEqual(["songroom-宿舍-公共", "songroom-其他目标-公共"]);
 });
 
-it("执行中和已核查的多请求操作只占一项，等待授权后释放队列容量并保留任务", async () => {
-  vi.useFakeTimers();
+it("执行中的多请求操作只占一项，等待授权后释放队列容量并保留任务", async () => {
   const f = fixture(); const service = f.module();
+  const entered = gate<void>(); const identity = gate<AdapterResult<"identity">>();
+  f.adapter.identity = async () => { entered.resolve(); return identity.promise; };
   const rooms = Array.from({ length: 21 }, () => extraRoom(f));
   for (const id of rooms.slice(0, 20)) service.create("owner", id, { idempotencyKey: v7() });
-  service.start(); await vi.advanceTimersByTimeAsync(0);
-  expect(service.read("owner", rooms[0]).operation?.status).toBe("queued");
+  service.start(); await entered.promise;
+  expect(service.read("owner", rooms[0]).operation?.status).toBe("processing");
   expect(() => service.create("owner", rooms[20], { idempotencyKey: v7() })).toThrowError("UPSTREAM_QUEUE_FULL");
-  f.adapter.identity = async () => ({ ok: false, error: { code: "ACCOUNT_EMPTY", outcome: "failed" } });
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(service.read("owner", rooms[1]).operation).toMatchObject({ status: "waitingAuthorization", errorCode: "ACCOUNT_EMPTY" });
+  identity.resolve({ ok: false, error: { code: "ACCOUNT_EMPTY", outcome: "failed" } });
+  await service.settle();
+  expect(service.read("owner", rooms[0]).operation).toMatchObject({ status: "waitingAuthorization", errorCode: "ACCOUNT_EMPTY" });
   expect(service.create("owner", rooms[20], { idempotencyKey: v7() }).replay).toBe(false);
   service.stop(); await service.settle();
-  expect(service.read("owner", rooms[1]).operation?.status).toBe("waitingAuthorization");
+  expect(service.read("owner", rooms[0]).operation?.status).toBe("waitingAuthorization");
 });
 
 it("真实账号最多受理 20 项业务操作，多请求不会重复占位，重放仍可读取", () => {
