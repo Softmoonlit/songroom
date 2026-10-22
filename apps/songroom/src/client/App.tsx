@@ -12,6 +12,7 @@ import { InviteProvider, JoinEntry, useInviteContext } from "./InviteContext";
 import { JoinPage } from "./JoinPage";
 import { ApplicationPage } from "./ApplicationPage";
 import { useEventStream } from "./useEventStream";
+import { ThemeToggle } from "./ThemeToggle";
 
 type SessionData = {
   session: { id: string; expiresAt: string };
@@ -136,6 +137,7 @@ function AppContent() {
           <span className="brand-name">SongRoom</span>
         </Link>
         <div className="header-actions">
+          <ThemeToggle />
           <HealthStatus query={healthQuery} />
           {sessionQuery.data && <UserCapsule user={sessionQuery.data.user} />}
         </div>

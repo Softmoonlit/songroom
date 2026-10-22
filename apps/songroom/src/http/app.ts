@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import fastifyStatic from "@fastify/static";
@@ -63,6 +64,16 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   }
   const html = await fs.readFile(path.join(staticRoot, "index.html"), "utf8");
   await fs.access(path.join(staticRoot, "assets"));
+  const inlineScriptHashes: string[] = [];
+  const scriptRegex = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  let scriptMatch: RegExpExecArray | null;
+  while ((scriptMatch = scriptRegex.exec(html)) !== null) {
+    const rawContent = scriptMatch[1];
+    if (rawContent.trim().length > 0) {
+      const hash = crypto.createHash("sha256").update(rawContent).digest("base64");
+      inlineScriptHashes.push(`'sha256-${hash}'`);
+    }
+  }
   const credentialKeyPath = await fs.realpath(config.credentialKeyPath);
   const runtimeDir = await fs.realpath(os.tmpdir());
   for (const privatePath of [credentialKeyPath, runtimeDir]) {
@@ -115,7 +126,7 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"], baseUri: ["'self'"], objectSrc: ["'none'"], frameAncestors: ["'none'"],
-          scriptSrc: ["'self'"], styleSrc: ["'self'"], imgSrc: ["'self'", "data:"],
+          scriptSrc: ["'self'", ...inlineScriptHashes], styleSrc: ["'self'"], imgSrc: ["'self'", "data:"],
           // HTTPS 升级由生产入口负责，允许回环 HTTP 浏览器测试。
           upgradeInsecureRequests: config.nodeEnv === "production" ? [] : null
         }
