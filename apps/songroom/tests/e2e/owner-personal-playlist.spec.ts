@@ -46,6 +46,7 @@ async function setupRoom(page: Page, isOwner = true) {
             nickname: "房主小林",
             role: "owner",
             isSelf: isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["renameNickname"] : [],
             disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
           },
@@ -54,6 +55,7 @@ async function setupRoom(page: Page, isOwner = true) {
             nickname: "室友小明",
             role: "roommate",
             isSelf: !isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
             disabledReasons: {}
           }

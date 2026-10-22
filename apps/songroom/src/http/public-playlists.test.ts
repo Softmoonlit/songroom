@@ -262,14 +262,20 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
   const previewUrl = `/api/rooms/${roomId}/public-playlist/random-preview`;
 
   // 1. 未登录 401
-  expect((await request(app, previewUrl, undefined, { count: 10 })).statusCode).toBe(401);
+  expect((await request(app, previewUrl, undefined, { memberIds: [v7()], count: 10 })).statusCode).toBe(401);
 
   // 2. 普通成员调用 403 OWNER_ONLY
-  const memberRes = await request(app, previewUrl, member.cookie, { count: 10 });
+  const memberRes = await request(app, previewUrl, member.cookie, { memberIds: [v7()], count: 10 });
   expect(memberRes.statusCode).toBe(403);
 
-  // 3. 非法 count 400
-  const invalidCountRes = await request(app, previewUrl, owner.cookie, { count: 7 });
+  // 3. 拒绝未提供 memberIds 的旧请求或空 memberIds (400)
+  const legacyRes = await request(app, previewUrl, owner.cookie, { count: 10 });
+  expect(legacyRes.statusCode).toBe(400);
+  const emptyMembersRes = await request(app, previewUrl, owner.cookie, { memberIds: [], count: 10 });
+  expect(emptyMembersRes.statusCode).toBe(400);
+
+  // 非法 count 400
+  const invalidCountRes = await request(app, previewUrl, owner.cookie, { memberIds: [v7()], count: 7 });
   expect(invalidCountRes.statusCode).toBe(400);
 
   // 4. 房主成功生成预览
@@ -322,7 +328,10 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
     };
   };
 
-  const previewRes = await request(app, previewUrl, owner.cookie, { count: 10 });
+  const previewRes = await request(app, previewUrl, owner.cookie, {
+    memberIds: [memberRow.id],
+    count: 10
+  });
   expect(previewRes.statusCode).toBe(200);
   const preview = randomReplacementPreviewView.parse(previewRes.json());
   expect(preview.actualCount).toBe(2);
@@ -392,7 +401,10 @@ it("随机换歌确认与操作轮询路由鉴权、幂等受理与操作读取"
     };
   };
 
-  const previewRes = await request(app, previewUrl, owner.cookie, { count: 10 });
+  const previewRes = await request(app, previewUrl, owner.cookie, {
+    memberIds: [memberRow.id],
+    count: 10
+  });
   expect(previewRes.statusCode).toBe(200);
   const preview = randomReplacementPreviewView.parse(previewRes.json());
 

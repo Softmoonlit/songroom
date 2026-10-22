@@ -44,8 +44,8 @@ async function signedIn(page: Page, includeOtherMember = false) {
       json: roomMembersView.parse({
         version: 1,
         members: [
-          { id: memberId, nickname: "小林", role: "owner", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} },
-          ...(includeOtherMember ? [{ id: "0195cf0d-6a80-7000-8000-000000000015", nickname: "小张", role: "roommate", isSelf: false, allowedActions: [], disabledReasons: {} }] : [])
+          { id: memberId, nickname: "小林", role: "owner", isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname"], disabledReasons: {} },
+          ...(includeOtherMember ? [{ id: "0195cf0d-6a80-7000-8000-000000000015", nickname: "小张", role: "roommate", isSelf: false, hasPersonalPlaylist: true, allowedActions: [], disabledReasons: {} }] : [])
         ], allowedActions: memberListActions, disabledReasons: {}
       })
     })
@@ -108,7 +108,10 @@ for (const width of [320, 900, 1440]) {
       id: `0195cf0d-6a80-7000-8000-${String(index + 100).padStart(12, "0")}`,
       nickname: `室友${index + 1}`,
       role: "roommate",
-      isSelf: false, allowedActions: [], disabledReasons: {}
+      isSelf: false,
+      hasPersonalPlaylist: true,
+      allowedActions: [],
+      disabledReasons: {}
     }));
     await page.route(`**/api/rooms/${roomId}/members`, route =>
       route.fulfill({ json: roomMembersView.parse({ version: 1, members, allowedActions: memberListActions, disabledReasons: {} }) })
@@ -286,7 +289,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
     route.fulfill({
       json: roomMembersView.parse({
         version: 1,
-        members: [{ id: memberId, nickname: "室友昵称", role: "roommate", isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameNickname"], disabledReasons: {}
+        members: [{ id: memberId, nickname: "室友昵称", role: "roommate", isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameNickname"], disabledReasons: {}
       })
     })
   );

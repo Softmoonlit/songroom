@@ -4909,6 +4909,116 @@ h1 {
   padding-right: 2px;
 }
 
+.random-replacement-config {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.random-member-selection-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.random-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.random-section-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.random-select-all-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.random-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.random-checkbox:disabled {
+  cursor: not-allowed;
+}
+
+.random-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.random-member-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.random-member-item:hover:not(.disabled) {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+}
+
+.random-member-item.disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: var(--bg-subtle);
+}
+
+.random-member-nickname {
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.random-member-reason {
+  margin-left: auto;
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.random-member-loading,
+.random-member-empty {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  padding: 8px 0;
+  margin: 0;
+}
+
+.random-selection-hint {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+
 .random-count-selector {
   display: flex;
   align-items: center;

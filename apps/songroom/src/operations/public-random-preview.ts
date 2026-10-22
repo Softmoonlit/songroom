@@ -100,24 +100,40 @@ export class PublicRandomPreview {
       throw new BusinessError(502, "MODULE_ERROR", "公共歌单快照不可用");
     }
 
-    // 2. 查找本房间所有已配置个人歌单的成员
-    const bindings = this.database.select().from(personalPlaylistBinding)
-      .where(eq(personalPlaylistBinding.roomId, roomId)).all();
+    // 2. 验证所选成员集合
+    const rawMemberIds = command.memberIds;
+    const requestedMemberIds = Array.from(new Set(rawMemberIds));
 
     const members = this.database.select().from(roomMembership)
       .where(eq(roomMembership.roomId, roomId)).all();
     const memberMap = new Map(members.map(m => [m.id, m]));
 
-    // 3. 逐一刷新已配置成员的个人歌单
-    // 规格："任何已配置来源读取失败、目标失效或无法证明读取完整时，整次不换歌，保留当前公共歌单，提示具体来源问题；不把读取失败当作空歌单，也不凭旧快照略过该成员。"
+    for (const memberId of requestedMemberIds) {
+      if (!memberMap.has(memberId)) {
+        throw new BusinessError(400, "INVALID_MEMBER", "所选成员不存在或已离开房间");
+      }
+    }
+
+    const bindings = this.database.select().from(personalPlaylistBinding)
+      .where(eq(personalPlaylistBinding.roomId, roomId)).all();
+    const bindingMap = new Map(bindings.map(b => [b.memberId, b]));
+
+    for (const memberId of requestedMemberIds) {
+      if (!bindingMap.has(memberId)) {
+        throw new BusinessError(400, "MEMBER_PLAYLIST_NOT_CONFIGURED", "所选成员尚未配置个人歌单");
+      }
+    }
+
+    // 3. 逐一刷新所选成员的个人歌单
+    // 规格："任一所选来源读取失败、目标失效或无法证明读取完整时，整次预览失败并提示来源问题；不自动跳过，不将失败当作空歌单，也不凭旧快照放行。未选成员的来源故障不影响本次抽选。"
     const candidateMembers: CandidateMember[] = [];
     const sourceBases: SourceBasis[] = [];
 
-    for (const b of bindings) {
-      const memberInfo = memberMap.get(b.memberId);
-      if (!memberInfo) continue;
+    for (const memberId of requestedMemberIds) {
+      const memberInfo = memberMap.get(memberId)!;
+      const b = bindingMap.get(memberId)!;
 
-      const memberView = await this.personalPlaylists.refresh(userId, roomId, b.memberId);
+      const memberView = await this.personalPlaylists.refresh(userId, roomId, memberId);
       if (memberView.lastRefreshError) {
         throw new BusinessError(502, memberView.lastRefreshError, `成员 ${memberInfo.nickname} 个人歌单读取失败: ${memberView.lastRefreshError}`);
       }
@@ -153,7 +169,13 @@ export class PublicRandomPreview {
     const oldTracksWithRequesterCount = publicTracks.filter(t => t.requesters && t.requesters.length > 0).length;
     const publicSongIds = publicTracks.map(t => t.songId);
 
-    // 5. 调用公平随机选歌算法
+    // 5. 检查所选成员歌单是否全部为空
+    const totalCandidateTracks = candidateMembers.reduce((sum, m) => sum + m.tracks.length, 0);
+    if (totalCandidateTracks === 0) {
+      throw new BusinessError(422, "EMPTY_CANDIDATES", "所选成员的歌单暂无歌曲");
+    }
+
+    // 6. 调用公平随机选歌算法
     const selection = selectFairRandomTracks(
       {
         targetCount: command.count,
@@ -163,7 +185,27 @@ export class PublicRandomPreview {
       this.random
     );
 
-    // 6. 存储短命预览记录与完整依据
+    // 7. 规格要求："生成期间所选成员离开或个人歌单失效时，拒绝本次预览"
+    const finalMembers = this.database.select().from(roomMembership)
+      .where(eq(roomMembership.roomId, roomId)).all();
+    const finalMemberIds = new Set(finalMembers.map(m => m.id));
+    for (const memberId of requestedMemberIds) {
+      if (!finalMemberIds.has(memberId)) {
+        throw new BusinessError(400, "INVALID_MEMBER", "生成期间所选成员离开房间");
+      }
+    }
+
+    const finalBindings = this.database.select().from(personalPlaylistBinding)
+      .where(eq(personalPlaylistBinding.roomId, roomId)).all();
+    const finalBindingMap = new Map(finalBindings.map(b => [b.memberId, b]));
+    for (const base of sourceBases) {
+      const currentBinding = finalBindingMap.get(base.memberId);
+      if (!currentBinding || currentBinding.generation !== base.bindingGeneration || currentBinding.id !== base.bindingId) {
+        throw new BusinessError(400, "MEMBER_PLAYLIST_NOT_CONFIGURED", "生成期间所选成员个人歌单已发生变化或失效");
+      }
+    }
+
+    // 8. 存储短命预览记录与完整依据
     const previewId = v7();
     const createdAt = this.now();
     const expiresAt = createdAt + PREVIEW_TTL_MS;

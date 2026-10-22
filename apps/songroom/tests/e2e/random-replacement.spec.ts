@@ -11,6 +11,7 @@ import type {
 const roomId = v7();
 const ownerMemberId = v7();
 const roommateMemberId = v7();
+const roommateWithoutPlId = v7();
 
 const publicPlaylistEndpoint = `**/api/rooms/${roomId}/public-playlist`;
 const randomPreviewEndpoint = `**/api/rooms/${roomId}/public-playlist/random-preview`;
@@ -50,6 +51,7 @@ async function setupRoom(page: Page, isOwner = true) {
             nickname: "房主小林",
             role: "owner",
             isSelf: isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["renameNickname"] : [],
             disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
           },
@@ -58,12 +60,26 @@ async function setupRoom(page: Page, isOwner = true) {
             nickname: "室友小明",
             role: "roommate",
             isSelf: !isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
+            disabledReasons: {}
+          },
+          {
+            id: roommateWithoutPlId,
+            nickname: "室友小华",
+            role: "roommate",
+            isSelf: false,
+            hasPersonalPlaylist: false,
+            allowedActions: isOwner ? ["removeMember"] : [],
             disabledReasons: {}
           }
         ],
-        allowedActions: isOwner ? ["reviewApplications", "inviteRoommate"] : [],
-        disabledReasons: {}
+        allowedActions: isOwner
+          ? ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"]
+          : ["renameNickname", "leaveRoom"],
+        disabledReasons: isOwner
+          ? {}
+          : { renameRoom: "OWNER_ONLY", reviewApplications: "OWNER_ONLY", readInvite: "OWNER_ONLY", deleteRoom: "OWNER_ONLY" }
       }
     })
   );
@@ -152,6 +168,13 @@ const mockPreview5: RandomReplacementPreviewView = {
   ]
 };
 
+async function selectAllAndGeneratePreview(page: Page) {
+  const modal = page.locator(".random-replacement-modal");
+  await modal.getByRole("checkbox", { name: "全选参与成员" }).click();
+  await modal.getByRole("button", { name: "生成预览" }).click();
+  await expect(modal.locator(".random-replacement-content")).toBeVisible();
+}
+
 test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
   test("权限边界：房主端展示「随机换一组」；室友端隐藏换歌按钮且接口拒绝越权", async ({ page }) => {
     // 1. 房主视角
@@ -179,14 +202,14 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(roommateReplaceBtn).toHaveCount(0);
   });
 
-  test("打开换歌弹窗，默认 10 首预览，切换首数及重新抽选", async ({ page }) => {
+  test("打开换歌弹窗：成员默认全不选、禁用未建歌单成员、全选/半选/取消全选、手动生成与返回调整", async ({ page }) => {
     await setupRoom(page, true);
     await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: initialPublicView }));
 
-    let requestedCount = 0;
+    let previewCalls: { memberIds: string[]; count: number }[] = [];
     await page.route(randomPreviewEndpoint, async route => {
-      const body = route.request().postDataJSON() as { count: number };
-      requestedCount = body.count;
+      const body = route.request().postDataJSON() as { memberIds: string[]; count: number };
+      previewCalls.push(body);
       if (body.count === 5) {
         await route.fulfill({ json: mockPreview5 });
       } else {
@@ -198,29 +221,126 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await page.getByRole("button", { name: "随机点歌" }).click();
 
-    // 弹窗可见，默认选中 10 首
     const modal = page.locator(".random-replacement-modal");
     await expect(modal).toBeVisible();
+
+    // 1. 验证未自动生成预览：未向 random-preview 发出请求
+    expect(previewCalls).toHaveLength(0);
+
+    // 2. 默认全不选、未选择提示与生成按钮禁用
+    const generateBtn = modal.getByRole("button", { name: "生成预览" });
+    await expect(generateBtn).toBeDisabled();
+    await expect(modal.getByText("请至少选择一位成员")).toBeVisible();
+
+    // 3. 首数默认 10 首
     await expect(page.getByRole("radio", { name: "10首 (默认)" })).toBeVisible();
     await expect(page.getByRole("radio", { name: "10首 (默认)" })).toHaveClass(/active/);
-    expect(requestedCount).toBe(10);
 
-    // 验证统计与贡献
-    await expect(modal.getByText("本次抽选：10 首")).toBeVisible();
-    await expect(modal.getByText("将替换点歌台全部 2 首旧歌曲")).toBeVisible();
-    await expect(modal.getByText("房主小林：5 首")).toBeVisible();
-    await expect(modal.getByText("室友小明：5 首")).toBeVisible();
+    // 4. 成员列表展示：房主与室友按房间昵称展示；未建歌单的成员禁用并注明原因
+    const ownerCheckbox = modal.getByRole("checkbox", { name: "选择成员 房主小林" });
+    const roommateCheckbox = modal.getByRole("checkbox", { name: "选择成员 室友小明" });
+    const disabledRoommateCheckbox = modal.getByRole("checkbox", { name: "选择成员 室友小华" });
 
-    // 切换为 5 首
+    await expect(ownerCheckbox).toBeVisible();
+    await expect(ownerCheckbox).not.toBeChecked();
+    await expect(ownerCheckbox).toBeEnabled();
+
+    await expect(roommateCheckbox).toBeVisible();
+    await expect(roommateCheckbox).not.toBeChecked();
+    await expect(roommateCheckbox).toBeEnabled();
+
+    await expect(disabledRoommateCheckbox).toBeVisible();
+    await expect(disabledRoommateCheckbox).toBeDisabled();
+    await expect(modal.getByText("未创建歌单")).toBeVisible();
+
+    // 5. 全选 checkbox 初始为未选
+    const selectAllCheckbox = modal.getByRole("checkbox", { name: "全选参与成员" });
+    await expect(selectAllCheckbox).not.toBeChecked();
+
+    // 6. 勾选房主小林 -> 全选变为半选状态 (indeterminate)
+    await ownerCheckbox.click();
+    await expect(ownerCheckbox).toBeChecked();
+    await expect(selectAllCheckbox).toHaveJSProperty("indeterminate", true);
+    await expect(generateBtn).toBeEnabled();
+
+    // 7. 半选状态下点击全选 -> 变为全选可选成员（房主小林与室友小明被选，室友小华保持禁用）
+    await selectAllCheckbox.click();
+    await expect(ownerCheckbox).toBeChecked();
+    await expect(roommateCheckbox).toBeChecked();
+    await expect(disabledRoommateCheckbox).not.toBeChecked();
+    await expect(selectAllCheckbox).toBeChecked();
+    await expect(selectAllCheckbox).toHaveJSProperty("indeterminate", false);
+
+    // 8. 全选状态下再次点击全选 -> 取消全部勾选
+    await selectAllCheckbox.click();
+    await expect(ownerCheckbox).not.toBeChecked();
+    await expect(roommateCheckbox).not.toBeChecked();
+    await expect(selectAllCheckbox).not.toBeChecked();
+    await expect(generateBtn).toBeDisabled();
+    await expect(modal.getByText("请至少选择一位成员")).toBeVisible();
+
+    // 9. 切换首数为 5 首（切换不自动发请求）
     await page.getByRole("radio", { name: "5首", exact: true }).click();
+    expect(previewCalls).toHaveLength(0);
+
+    // 10. 重新勾选全选，点击生成预览
+    await selectAllCheckbox.click();
+    await generateBtn.click();
+
+    // 验证发出带有明确 memberIds 和 count 的请求
+    expect(previewCalls).toHaveLength(1);
+    expect(previewCalls[0].count).toBe(5);
+    expect(previewCalls[0].memberIds).toEqual([ownerMemberId, roommateMemberId]);
+
+    // 11. 预览展示
+    await expect(modal.locator(".random-replacement-content")).toBeVisible();
     await expect(modal.getByText("本次抽选：5 首")).toBeVisible();
     await expect(modal.getByText("房主小林：3 首")).toBeVisible();
     await expect(modal.getByText("室友小明：2 首")).toBeVisible();
-    expect(requestedCount).toBe(5);
 
-    // 点击重新抽选
+    // 12. 重新抽选保留本次成员及首数
     await modal.getByRole("button", { name: "重新抽选预览" }).click();
-    await expect(modal.getByText("本次抽选：5 首")).toBeVisible();
+    expect(previewCalls).toHaveLength(2);
+    expect(previewCalls[1].count).toBe(5);
+    expect(previewCalls[1].memberIds).toEqual([ownerMemberId, roommateMemberId]);
+
+    // 13. 返回调整：清空旧预览，回到选择界面，保持成员和首数，不能确认旧预览
+    await modal.getByRole("button", { name: "返回调整" }).click();
+    await expect(modal.locator(".random-replacement-content")).toHaveCount(0);
+    await expect(ownerCheckbox).toBeChecked();
+    await expect(roommateCheckbox).toBeChecked();
+    await expect(modal.getByRole("button", { name: "确认替换" })).toHaveCount(0);
+
+    // 14. 关闭弹窗后再打开：重置为默认全不选、10首
+    await modal.getByRole("button", { name: "取消" }).click();
+    await expect(modal).not.toBeVisible();
+
+    await page.getByRole("button", { name: "随机点歌" }).click();
+    await expect(modal).toBeVisible();
+    await expect(ownerCheckbox).not.toBeChecked();
+    await expect(roommateCheckbox).not.toBeChecked();
+    await expect(modal.getByRole("radio", { name: "10首 (默认)" })).toHaveClass(/active/);
+    await expect(modal.getByText("请至少选择一位成员")).toBeVisible();
+  });
+
+  test("键盘操作：使用 Tab 键聚焦与空格键切换选择", async ({ page }) => {
+    await setupRoom(page, true);
+    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: initialPublicView }));
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await page.getByRole("button", { name: "随机点歌" }).click();
+
+    const modal = page.locator(".random-replacement-modal");
+    await expect(modal).toBeVisible();
+
+    const ownerCheckbox = modal.getByRole("checkbox", { name: "选择成员 房主小林" });
+    await ownerCheckbox.focus();
+    await page.keyboard.press("Space");
+    await expect(ownerCheckbox).toBeChecked();
+
+    await page.keyboard.press("Space");
+    await expect(ownerCheckbox).not.toBeChecked();
   });
 
   test("预览内容详尽展示：歌曲信息、来源成员、新歌标识与替换提示", async ({ page }) => {
@@ -234,6 +354,9 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     const modal = page.locator(".random-replacement-modal");
     await expect(modal).toBeVisible();
+
+    // 先选择成员并生成预览
+    await selectAllAndGeneratePreview(page);
 
     // 检查歌曲清单
     const trackItems = modal.locator(".preview-track-item");
@@ -289,7 +412,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.route(randomPreviewEndpoint, route =>
       route.fulfill({
         status: 422,
-        json: { error: { code: "EMPTY_CANDIDATES", message: "暂无可用的候选歌曲" } }
+        json: { error: { code: "EMPTY_CANDIDATES", message: "所选成员的歌单暂无歌曲" } }
       })
     );
 
@@ -298,9 +421,14 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
+    await modal.getByRole("checkbox", { name: "全选参与成员" }).click();
+    await modal.getByRole("button", { name: "生成预览" }).click();
+
     await expect(modal.locator(".error-banner")).toContainText(
-      "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。"
+      "所选成员的歌单暂无歌曲。"
     );
+    // 不能确认替换
+    await expect(modal.getByRole("button", { name: "确认替换" })).toHaveCount(0);
   });
 
   test("完整确认与持久操作推进：展示步骤进度、成功提示与点歌人标签及筛选", async ({ page }) => {
@@ -344,6 +472,9 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     const modal = page.locator(".random-replacement-modal");
     await expect(modal).toBeVisible();
+
+    // 先选择成员并生成预览
+    await selectAllAndGeneratePreview(page);
 
     // 点击确认替换
     await modal.getByRole("button", { name: "确认替换" }).click();
@@ -472,6 +603,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await page.getByRole("button", { name: "随机点歌" }).click();
+    await selectAllAndGeneratePreview(page);
     await page.getByRole("button", { name: "确认替换" }).click();
 
     const statusBanner = page.locator(".replacement-status-banner");
@@ -575,6 +707,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
+    await selectAllAndGeneratePreview(page);
     await page.getByRole("button", { name: "确认替换" }).click();
 
     await expect(modal.locator(".error-banner")).toContainText(
@@ -648,6 +781,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
+    await selectAllAndGeneratePreview(page);
     // 第一次提交（网络失败）
     await modal.getByRole("button", { name: "确认替换" }).click();
     await expect(modal.locator(".error-banner")).toContainText("网络连接失败，请稍后重试。");
@@ -675,6 +809,9 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
+    await modal.getByRole("checkbox", { name: "全选参与成员" }).click();
+    await modal.getByRole("button", { name: "生成预览" }).click();
+
     await expect(modal.locator(".error-banner")).toContainText("网易云服务响应异常，请稍后重试。");
   });
 
@@ -694,6 +831,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
+    await selectAllAndGeneratePreview(page);
     await page.getByRole("button", { name: "确认替换" }).click();
 
     await expect(modal.locator(".error-banner")).toContainText(
@@ -765,6 +903,8 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     const modal = page.locator(".random-replacement-modal");
     await expect(modal).toBeVisible();
 
+    await selectAllAndGeneratePreview(page);
+
     // 确认没有错误横幅
     await expect(modal.locator(".error-banner")).toHaveCount(0);
 
@@ -814,6 +954,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await page.getByRole("button", { name: "随机点歌" }).click();
+    await selectAllAndGeneratePreview(page);
     await page.getByRole("button", { name: "确认替换" }).click();
 
     // 状态横幅准确展示清空成功、添加未完成
@@ -896,6 +1037,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     // 弹窗提示文案明确说明最终顺序以网易云实际读回为准
     const modal = page.locator(".random-replacement-modal");
+    await selectAllAndGeneratePreview(page);
     await expect(modal.locator(".random-confirm-guidance")).toContainText(
       "最终顺序以网易云实际读回为准"
     );
@@ -928,7 +1070,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
       expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1);
 
-      // 打开弹窗验证弹窗内无障碍与无横向滚动条
+      // 打开弹窗验证弹窗内无障碍与无横向滚动条（配置模式）
       await page.getByRole("button", { name: "随机点歌" }).click();
       const modal = page.locator(".random-replacement-modal");
       await expect(modal).toBeVisible();
@@ -937,11 +1079,19 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       const modalClientWidth = await modal.evaluate(el => el.clientWidth);
       expect(modalScrollWidth).toBeLessThanOrEqual(modalClientWidth + 1);
 
-      const axeResults = await new AxeBuilder({ page })
+      const axeConfigResults = await new AxeBuilder({ page })
         .include(".random-replacement-modal")
         .analyze();
-      expect(axeResults.violations).toEqual([]);
+      expect(axeConfigResults.violations).toEqual([]);
 
+      // 生成预览并验证预览结果模式
+      await selectAllAndGeneratePreview(page);
+      const axePreviewResults = await new AxeBuilder({ page })
+        .include(".random-replacement-modal")
+        .analyze();
+      expect(axePreviewResults.violations).toEqual([]);
+
+      await modal.getByRole("button", { name: "返回调整" }).click();
       await modal.getByRole("button", { name: "取消" }).click();
       await expect(modal).not.toBeVisible();
     }

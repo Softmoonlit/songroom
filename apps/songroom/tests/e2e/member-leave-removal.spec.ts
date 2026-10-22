@@ -67,6 +67,7 @@ async function setupMocks(page: Page, role: "owner" | "roommate") {
       nickname: "房主阿林",
       role: "owner",
       isSelf: isOwner,
+      hasPersonalPlaylist: true,
       allowedActions: isOwner ? ["renameNickname"] : [],
       disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
     },
@@ -75,6 +76,7 @@ async function setupMocks(page: Page, role: "owner" | "roommate") {
       nickname: "室友小张",
       role: "roommate",
       isSelf: !isOwner,
+      hasPersonalPlaylist: true,
       allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
       disabledReasons: isOwner ? { renameNickname: "SELF_ONLY" } : {}
     }
@@ -160,6 +162,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
                 nickname: "房主阿林",
                 role: "owner",
                 isSelf: true,
+                hasPersonalPlaylist: true,
                 allowedActions: ["renameNickname"],
                 disabledReasons: {}
               }
@@ -170,6 +173,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
                 nickname: "房主阿林",
                 role: "owner",
                 isSelf: true,
+                hasPersonalPlaylist: true,
                 allowedActions: ["renameNickname"],
                 disabledReasons: {}
               },
@@ -178,6 +182,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
                 nickname: "室友小张",
                 role: "roommate",
                 isSelf: false,
+                hasPersonalPlaylist: true,
                 allowedActions: ["removeMember"],
                 disabledReasons: { renameNickname: "SELF_ONLY" }
               }
@@ -202,6 +207,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
             nickname: "房主阿林",
             role: "owner",
             isSelf: true,
+            hasPersonalPlaylist: true,
             allowedActions: ["renameNickname"],
             disabledReasons: {}
           }

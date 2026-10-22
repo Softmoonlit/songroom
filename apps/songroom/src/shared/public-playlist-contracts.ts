@@ -126,6 +126,7 @@ export const playNextResponse = z.strictObject({ replay: z.boolean(), operation:
 export type PlayNextResponse = z.infer<typeof playNextResponse>;
 
 export const randomReplacementPreviewCommand = z.strictObject({
+  memberIds: z.array(uuidv7).min(1),
   count: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20)]).default(10)
 });
 export type RandomReplacementPreviewCommand = z.infer<typeof randomReplacementPreviewCommand>;

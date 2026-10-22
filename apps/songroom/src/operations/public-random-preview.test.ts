@@ -85,7 +85,7 @@ afterEach(async () => {
   }
 });
 
-function createTestContext(): TestContext {
+function createTestContext(random?: () => number): TestContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "songroom-random-preview-test-"));
   const dbPath = path.join(root, "test.db");
   initializeDatabase(dbPath);
@@ -145,7 +145,7 @@ function createTestContext(): TestContext {
   scheduler.start();
   const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now);
   const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, now);
-  const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, now);
+  const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, now, random);
 
   const ctx: TestContext = {
     root,
@@ -172,7 +172,7 @@ describe("PublicRandomPreview", () => {
     const ctx = createTestContext();
 
     await expect(
-      ctx.randomPreview.generate(ctx.memberUserId, ctx.roomId, { count: 10 })
+      ctx.randomPreview.generate(ctx.memberUserId, ctx.roomId, { memberIds: [ctx.ownerMemberId], count: 10 })
     ).rejects.toThrowError(expect.objectContaining({
       status: 403,
       code: "OWNER_ONLY"
@@ -292,7 +292,10 @@ describe("PublicRandomPreview", () => {
     };
 
     // Generate preview
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId, ctx.roommateMemberId],
+      count: 10
+    });
 
     expect(preview.roomId).toBe(ctx.roomId);
     expect(preview.targetCount).toBe(10);
@@ -363,7 +366,10 @@ describe("PublicRandomPreview", () => {
     };
 
     await expect(
-      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 })
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [ctx.roommateMemberId],
+        count: 10
+      })
     ).rejects.toThrowError(expect.objectContaining({
       status: 502,
       code: "RATE_LIMITED"
@@ -421,7 +427,10 @@ describe("PublicRandomPreview", () => {
       };
     };
 
-    const preview1 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview1 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
     expect(ctx.randomPreview.get(ctx.ownerUserId, ctx.roomId, preview1.previewId)).not.toBeNull();
 
     // Advance time past TTL (10 minutes)
@@ -429,7 +438,10 @@ describe("PublicRandomPreview", () => {
     expect(ctx.randomPreview.get(ctx.ownerUserId, ctx.roomId, preview1.previewId)).toBeNull();
 
     // Generate fresh preview
-    const preview2 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview2 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
     expect(ctx.randomPreview.get(ctx.ownerUserId, ctx.roomId, preview2.previewId)).not.toBeNull();
 
     // Simulate public playlist snapshot version change (e.g. track added in background)
@@ -491,7 +503,10 @@ describe("PublicRandomPreview", () => {
       };
     };
 
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
     const validated = ctx.randomPreview.validate(ctx.ownerUserId, ctx.roomId, preview.previewId);
     expect(validated.previewId).toBe(preview.previewId);
     expect(validated.trackSourceMembers["s_new"]).toBe(ctx.ownerMemberId);
@@ -555,7 +570,10 @@ describe("PublicRandomPreview", () => {
       };
     };
 
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
     expect(ctx.randomPreview.get(ctx.ownerUserId, ctx.roomId, preview.previewId)).not.toBeNull();
 
     // Rebind personal playlist to a new generation or playlist
@@ -622,7 +640,10 @@ describe("PublicRandomPreview", () => {
       };
     };
 
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
     expect(ctx.randomPreview.get(ctx.ownerUserId, ctx.roomId, preview.previewId)).not.toBeNull();
 
     // Source snapshot version changes
@@ -732,7 +753,10 @@ describe("PublicRandomPreview", () => {
     };
 
     // Should succeed without throwing NO_NEW_SONGS
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 10 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId, ctx.roommateMemberId],
+      count: 10
+    });
     expect(preview.actualCount).toBe(3);
     expect(preview.tracks).toHaveLength(3);
     expect(preview.tracks.every(t => !t.isNew)).toBe(true);
@@ -741,5 +765,398 @@ describe("PublicRandomPreview", () => {
     const validated = ctx.randomPreview.validate(ctx.ownerUserId, ctx.roomId, preview.previewId);
     expect(validated.previewId).toBe(preview.previewId);
     expect(validated.tracks.map(t => t.songId).sort()).toEqual(["s1", "s2", "s3"]);
+  });
+
+  it("rejects non-existent, cross-room or left members with INVALID_MEMBER (400)", async () => {
+    const ctx = createTestContext();
+
+    const publicPlaylistId = "pub-pl-1";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    const fakeMemberId = v7();
+
+    await expect(
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [fakeMemberId],
+        count: 10
+      })
+    ).rejects.toThrowError(expect.objectContaining({
+      status: 400,
+      code: "INVALID_MEMBER"
+    }));
+  });
+
+  it("rejects members without personal playlist with MEMBER_PLAYLIST_NOT_CONFIGURED (400)", async () => {
+    const ctx = createTestContext();
+
+    const publicPlaylistId = "pub-pl-1";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    // Owner has no personal playlist configured yet
+    await expect(
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [ctx.ownerMemberId],
+        count: 10
+      })
+    ).rejects.toThrowError(expect.objectContaining({
+      status: 400,
+      code: "MEMBER_PLAYLIST_NOT_CONFIGURED"
+    }));
+  });
+
+  it("only refreshes selected members and ignores unselected broken sources", async () => {
+    const ctx = createTestContext();
+
+    const publicPlaylistId = "pub-pl-1";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    const ownerPlId = "owner-pl-1";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: ownerPlId,
+      name: "房主个人歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    const roommatePlId = "roommate-broken-pl";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.roommateMemberId,
+      accountId: "cloud-owner",
+      playlistId: roommatePlId,
+      name: "室友歌单(损坏)",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    const visitedPlaylists: string[] = [];
+
+    ctx.adapter.detailHandler = (id: string) => {
+      visitedPlaylists.push(id);
+      if (id === publicPlaylistId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "宿舍歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: [],
+            songs: []
+          }
+        };
+      }
+      if (id === ownerPlId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "房主个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["s_owner_1"],
+            songs: [{ id: "s_owner_1", name: "房主歌曲", artists: ["周杰伦"], album: "范特西" }]
+          }
+        };
+      }
+      if (id === roommatePlId) {
+        // Unselected roommate source would fail if called
+        return {
+          ok: false,
+          error: { code: "MODULE_ERROR", message: "室友歌单崩了", outcome: "failed" }
+        };
+      }
+      throw new Error(`Unknown playlist: ${id}`);
+    };
+
+    // Only select owner
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
+
+    expect(preview.actualCount).toBe(1);
+    expect(preview.tracks[0]?.songId).toBe("s_owner_1");
+    // Verify roommate playlist was never refreshed
+    expect(visitedPlaylists).toContain(ownerPlId);
+    expect(visitedPlaylists).not.toContain(roommatePlId);
+  });
+
+  it("fails when all selected members have empty playlists with EMPTY_CANDIDATES (422)", async () => {
+    const ctx = createTestContext();
+
+    const publicPlaylistId = "pub-pl-1";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    const ownerPlId = "owner-empty-pl";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: ownerPlId,
+      name: "房主空歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    ctx.adapter.detailHandler = (id: string) => {
+      return {
+        ok: true,
+        data: {
+          playlist: { id, name: "歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          songIds: [],
+          songs: []
+        }
+      };
+    };
+
+    await expect(
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [ctx.ownerMemberId],
+        count: 10
+      })
+    ).rejects.toThrowError(expect.objectContaining({
+      status: 422,
+      code: "EMPTY_CANDIDATES"
+    }));
+  });
+
+  it("changes to unselected members do not invalidate preview, but changes to selected members do", async () => {
+    const ctx = createTestContext();
+
+    const publicPlaylistId = "pub-pl-1";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    const ownerPlId = "owner-pl-1";
+    const ownerBindingId = v7();
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: ownerBindingId,
+      roomId: ctx.roomId,
+      memberId: ctx.ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: ownerPlId,
+      name: "房主个人歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    const roommatePlId = "roommate-pl-1";
+    const roommateBindingId = v7();
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: roommateBindingId,
+      roomId: ctx.roomId,
+      memberId: ctx.roommateMemberId,
+      accountId: "cloud-owner",
+      playlistId: roommatePlId,
+      name: "室友个人歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    ctx.adapter.detailHandler = (id: string) => {
+      if (id === publicPlaylistId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: [],
+            songs: []
+          }
+        };
+      }
+      if (id === ownerPlId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "房主", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["s_owner_1"],
+            songs: [{ id: "s_owner_1", name: "房主歌", artists: ["A"], album: "Album" }]
+          }
+        };
+      }
+      return {
+        ok: true,
+        data: {
+          playlist: { id, name: "室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          songIds: ["s_roommate_1"],
+          songs: [{ id: "s_roommate_1", name: "室友歌", artists: ["B"], album: "Album" }]
+        }
+      };
+    };
+
+    // Preview only includes owner
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 10
+    });
+
+    // Now unselected roommate's binding generation changes or roommate leaves
+    ctx.database.update(personalPlaylistBinding)
+      .set({ generation: 2 })
+      .where(eq(personalPlaylistBinding.id, roommateBindingId))
+      .run();
+
+    // Validate preview should STILL succeed because roommate was NOT selected
+    const validated = ctx.randomPreview.validate(ctx.ownerUserId, ctx.roomId, preview.previewId);
+    expect(validated.previewId).toBe(preview.previewId);
+
+    // Now modify the selected owner's binding generation
+    ctx.database.update(personalPlaylistBinding)
+      .set({ generation: 2 })
+      .where(eq(personalPlaylistBinding.id, ownerBindingId))
+      .run();
+
+    // Validate preview should now FAIL
+    expect(() => {
+      ctx.randomPreview.validate(ctx.ownerUserId, ctx.roomId, preview.previewId);
+    }).toThrowError(expect.objectContaining({
+      status: 409,
+      code: "PREVIEW_INVALIDATED"
+    }));
+  });
+
+  it("rejects preview generation if a selected member leaves or personal playlist invalidates during generation", async () => {
+    let hookTriggered = false;
+    let lateDatabase: AppDatabase | null = null;
+    let targetRoommateId = "";
+
+    const ctx = createTestContext(() => {
+      if (!hookTriggered && lateDatabase && targetRoommateId) {
+        hookTriggered = true;
+        lateDatabase.delete(roomMembership)
+          .where(eq(roomMembership.id, targetRoommateId))
+          .run();
+      }
+      return 0.5;
+    });
+
+    lateDatabase = ctx.database;
+    targetRoommateId = ctx.roommateMemberId;
+
+    const publicPlaylistId = "pub-pl-1";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "宿舍歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    const ownerPlId = "owner-pl-1";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: ownerPlId,
+      name: "房主歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    const roommatePlId = "roommate-pl-1";
+    const roommateBindingId = v7();
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: roommateBindingId,
+      roomId: ctx.roomId,
+      memberId: ctx.roommateMemberId,
+      accountId: "cloud-owner",
+      playlistId: roommatePlId,
+      name: "室友歌单",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    ctx.adapter.detailHandler = (id: string) => {
+      if (id === publicPlaylistId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: [],
+            songs: []
+          }
+        };
+      }
+      if (id === ownerPlId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "房主", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: ["s_owner_1"],
+            songs: [{ id: "s_owner_1", name: "房主歌", artists: ["A"], album: "Album" }]
+          }
+        };
+      }
+      return {
+        ok: true,
+        data: {
+          playlist: { id, name: "室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          songIds: ["s_roommate_1"],
+          songs: [{ id: "s_roommate_1", name: "室友歌", artists: ["B"], album: "Album" }]
+        }
+      };
+    };
+
+    // Both selected, but roommate leaves during selection
+    await expect(
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [ctx.ownerMemberId, ctx.roommateMemberId],
+        count: 10
+      })
+    ).rejects.toThrowError(expect.objectContaining({
+      status: 400,
+      code: "INVALID_MEMBER"
+    }));
   });
 });

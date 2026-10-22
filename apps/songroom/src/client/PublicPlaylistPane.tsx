@@ -591,6 +591,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       open={isRandomDialogOpen}
       onOpenChange={setIsRandomDialogOpen}
       roomId={roomId}
+      sessionId={sessionId}
       onReplacementStarted={opId => {
         setActiveReplacementOperationId(opId);
         setToast({

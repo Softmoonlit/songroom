@@ -86,6 +86,7 @@ async function setupMocks(page: Page, role: "owner" | "roommate" = "owner") {
             nickname: "声学房主",
             role: "owner",
             isSelf: isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["renameNickname"] : [],
             disabledReasons: {}
           }

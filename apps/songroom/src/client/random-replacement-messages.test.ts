@@ -9,7 +9,13 @@ describe("random-replacement-messages", () => {
   describe("getFriendlyReplacementErrorMessage", () => {
     it("returns friendly text for known error codes", () => {
       expect(getFriendlyReplacementErrorMessage("EMPTY_CANDIDATES")).toBe(
-        "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。"
+        "所选成员的歌单暂无歌曲。"
+      );
+      expect(getFriendlyReplacementErrorMessage("INVALID_MEMBER")).toBe(
+        "所选成员不存在或已离开房间。"
+      );
+      expect(getFriendlyReplacementErrorMessage("MEMBER_PLAYLIST_NOT_CONFIGURED")).toBe(
+        "所选成员尚未配置个人歌单。"
       );
       expect(getFriendlyReplacementErrorMessage("PREVIEW_INVALIDATED")).toBe(
         "点歌台或成员个人歌单已发生变更，请重新生成预览。"

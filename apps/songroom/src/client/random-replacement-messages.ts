@@ -2,7 +2,9 @@ import type { RandomReplacementOperationView } from "../shared/public-playlist-c
 import { errorMessageForCode } from "./room-http.js";
 
 const replacementErrorMessages: Record<string, string> = {
-  EMPTY_CANDIDATES: "暂无可用的候选歌曲。请确保房间内有成员配置了个人歌单且包含歌曲。",
+  EMPTY_CANDIDATES: "所选成员的歌单暂无歌曲。",
+  INVALID_MEMBER: "所选成员不存在或已离开房间。",
+  MEMBER_PLAYLIST_NOT_CONFIGURED: "所选成员尚未配置个人歌单。",
   PREVIEW_INVALIDATED: "点歌台或成员个人歌单已发生变更，请重新生成预览。",
   PREVIEW_NOT_FOUND: "换歌预览已过期或不存在，请重新生成预览。",
   ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员恢复。",

@@ -14,7 +14,7 @@ async function workspace(page: Page, role = "owner", count: number | null = 10) 
   await page.route("**/api/rooms", route => route.fulfill({ json: { rooms: [{ ...state.room, version: state.version, allowedActions: ["enterRoom"], disabledReasons: {} }], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} } }));
   await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: state }));
   await page.route(`**/api/rooms/${roomId}/members`, route => route.fulfill({ json: {
-    version: state.version, members: [{ id: memberId, nickname: state.room.nickname, role, isSelf: true, allowedActions: ["renameNickname"], disabledReasons: {} }],
+    version: state.version, members: [{ id: memberId, nickname: state.room.nickname, role, isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname"], disabledReasons: {} }],
     allowedActions: state.allowedActions.filter(action => action !== "renameRoom"), disabledReasons: {}
   } }));
   await page.route(`**/api/rooms/${roomId}/invite`, route => route.fulfill({ json: {

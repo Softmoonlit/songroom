@@ -70,8 +70,8 @@ async function setupMocks(page: Page, role: "owner" | "roommate", options?: { ha
       json: {
         version: 1,
         members: [
-          { id: ownerMemberId, nickname: "房主小王", role: "owner", isSelf: isOwner, allowedActions: isOwner ? ["renameNickname"] : [], disabledReasons: {} },
-          { id: roommateMemberId, nickname: "室友小李", role: "roommate", isSelf: !isOwner, allowedActions: [], disabledReasons: {} }
+          { id: ownerMemberId, nickname: "房主小王", role: "owner", isSelf: isOwner, hasPersonalPlaylist: false, allowedActions: isOwner ? ["renameNickname"] : [], disabledReasons: {} },
+          { id: roommateMemberId, nickname: "室友小李", role: "roommate", isSelf: !isOwner, hasPersonalPlaylist: false, allowedActions: [], disabledReasons: {} }
         ],
         allowedActions: isOwner ? ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"] : ["renameNickname", "leaveRoom"],
         disabledReasons: isOwner ? {} : { renameRoom: "OWNER_ONLY", reviewApplications: "OWNER_ONLY", readInvite: "OWNER_ONLY", deleteRoom: "OWNER_ONLY" }

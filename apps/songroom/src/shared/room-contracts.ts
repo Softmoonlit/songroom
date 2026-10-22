@@ -36,6 +36,7 @@ export const roomMember = z.object({
   nickname: roomNickname,
   role: roomRole,
   isSelf: z.boolean(),
+  hasPersonalPlaylist: z.boolean(),
   allowedActions: z.array(roomMemberAction),
   disabledReasons: roomMemberDisabledReasons
 });

@@ -82,6 +82,7 @@ async function setupDialogMocks(page: Page, role: "owner" | "roommate") {
             nickname: "房主阿林",
             role: "owner",
             isSelf: isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["renameNickname"] : [],
             disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
           },
@@ -90,6 +91,7 @@ async function setupDialogMocks(page: Page, role: "owner" | "roommate") {
             nickname: "室友小张",
             role: "roommate",
             isSelf: !isOwner,
+            hasPersonalPlaylist: true,
             allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
             disabledReasons: {}
           }

@@ -353,7 +353,7 @@ function createTestContext(): TestContext {
 describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
   it("验收清单 1 & 2: 仅房主可确认、幂等性、同键不同内容拒绝、过期键拒绝、不重新抽选", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     // 1. 非房主确认被拒绝 403 OWNER_ONLY
     expect(() => {
@@ -393,7 +393,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 2: 公共歌单歌曲已变更时拒绝确认并要求重做预览", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     // 模拟公共歌单快照发生变更 (版本递增且新增一首外部点歌)
     ctx.database.update(playlistSnapshot).set({
@@ -410,7 +410,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 3: 与公共点歌及下一首重排协调互斥，待确认与执行期间禁止新冲突写", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     const key = v7();
     const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
@@ -452,7 +452,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 4, 5, 9, 10, 11: 完整成功执行：批量清空、批量添加、读回核验目标歌曲完整与打标", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     const key = v7();
     const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
@@ -520,7 +520,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("同账号读取在批量清空与批量添加间获得执行机会且不与在途写重叠", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
     let signalEntered!: () => void;
     const entered = new Promise<void>(resolve => { signalEntered = resolve; });
     let releaseRequest!: () => void;
@@ -559,7 +559,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 7: 发送后中断/超时时不重发，进入 awaitingConfirmation，3轮补查后停止自动请求", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     let firstAddAttempted = false;
     ctx.adapter.trackAddHook = async (input) => {
@@ -616,7 +616,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 7: awaitingConfirmation 补查证实云端已添加后，继续后续步骤并成功", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     let hooked = false;
     ctx.adapter.trackAddHook = async (input) => {
@@ -654,7 +654,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 8: 清空读回过程中检测到未预期的外部修改时，停止并置为 stopped (PLAYLIST_CONFLICT)", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     ctx.adapter.trackRemoveHook = async (input) => {
       const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
@@ -683,7 +683,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 10: 来源成员在换歌期间退出房间，不回写其标签但其余标签与云端换歌正常完成", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     // 找到预览中来源归属于 roommate2 的歌曲
     const rm2Tracks = preview.tracks.filter(t => t.sourceMemberId === ctx.roommate2MemberId);
@@ -723,7 +723,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 12: 房主授权失效进入 waitingAuthorization，重新授权后安全恢复", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
       idempotencyKey: v7(),
@@ -761,7 +761,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 4 & 7: 发送中崩溃重启恢复：不重发写入，自动进入待确认并通过读回继续成功", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     const crashKey = v7();
     const crashRes = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
@@ -800,7 +800,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 10: 来源歌单换绑：受理时拦截为 PREVIEW_INVALIDATED，发送前变动停止为 PLAYLIST_CONFLICT", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     // 1. 受理前换绑 -> 409 PREVIEW_INVALIDATED
     ctx.database.update(personalPlaylistBinding).set({
@@ -818,7 +818,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     ctx.database.update(personalPlaylistBinding).set({
       generation: 1
     }).where(eq(personalPlaylistBinding.memberId, ctx.roommate1MemberId)).run();
-    const validPreview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const validPreview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     // 2. 受理成功后，在执行发送前换绑 -> 调度执行检测到来源变动，置为 stopped (PLAYLIST_CONFLICT)
     ctx.adapter.trackRemoveHook = async () => {
@@ -843,7 +843,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 12: 房间解散级联清理换歌操作与详情记录", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
       idempotencyKey: v7(),
@@ -870,7 +870,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     ctx.database.delete(playlistTrack).where(eq(playlistTrack.playlistId, ctx.publicPlaylistId)).run();
     ctx.database.delete(requesterTag).where(eq(requesterTag.roomId, ctx.roomId)).run();
 
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
     expect(preview.oldTrackCount).toBe(0);
 
     const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
@@ -898,7 +898,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 6: 清空成功、添加明确失败时允许点歌台暂时为空，不自动恢复旧歌曲", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     ctx.adapter.trackAddHook = async () => {
       // 批量添加明确失败（权限受限）
@@ -933,7 +933,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 5 & 6: 批量添加部分成功据实展示，停止后续写入，不自动重放缺失歌曲", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     const targetSongIds = preview.tracks.map(t => t.songId);
     const partiallyAddedSongs = targetSongIds.slice(0, 2);
@@ -991,7 +991,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 4: 清空结果未知时先只读核验，证实清空后继续添加，绝不盲目重发清空", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     let removeHooked = false;
     ctx.adapter.trackRemoveHook = async (input) => {
@@ -1036,7 +1036,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 5: 云端读回顺序不同不视为失败，不发送排序请求", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     ctx.adapter.trackAddHook = async (input) => {
       const pl = ctx.adapter.playlists.get(ctx.publicPlaylistId)!;
@@ -1071,7 +1071,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
 
   it("验收清单 4 & 6: 批量清空部分成功据实反馈已移除集合并停止后续写入", async () => {
     const ctx = createTestContext();
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
     // 模拟批量清空时，实际只删除了 old-song-1 和 old-song-2，但 shared-keep-1 仍然留在云端
     ctx.adapter.trackRemoveHook = async (input) => {
@@ -1121,7 +1121,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
   it("验收清单 7: 完整操作请求次数核算与各阶段阶段耗时记录，证明批量路径相比原逐首路径显著减少请求", async () => {
     const ctx = createTestContext();
     // 预览阶段：读取成员候选歌单
-    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { count: 5 });
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
     const previewInputsCount = ctx.adapter.inputs.length;
 
     // 记录确认执行前的时间与请求快照

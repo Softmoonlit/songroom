@@ -108,6 +108,10 @@ export class Rooms {
 
   readMembers(userId: string, roomId: string) {
     const shell = this.readShell(userId, roomId);
+    const personalBindings = this.database.select({ memberId: personalPlaylistBinding.memberId })
+      .from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).all();
+    const personalMemberIds = new Set(personalBindings.map(b => b.memberId));
+
     const members = this.database.select({ id: roomMembership.id, nickname: roomMembership.nickname,
       role: sql<"owner" | "roommate">`CASE WHEN ${room.ownerUserId} = ${roomMembership.userId} THEN 'owner' ELSE 'roommate' END`,
       isSelf: sql<boolean>`(${roomMembership.userId} = ${userId})`.mapWith(Boolean)
@@ -125,7 +129,12 @@ export class Rooms {
         if (shell.room.role === "owner" && member.role === "roommate") {
           allowedActions.push("removeMember");
         }
-        return { ...member, allowedActions, disabledReasons };
+        return {
+          ...member,
+          hasPersonalPlaylist: personalMemberIds.has(member.id),
+          allowedActions,
+          disabledReasons
+        };
       }),
       ...identityPermissions(shell.room.role)
     };
