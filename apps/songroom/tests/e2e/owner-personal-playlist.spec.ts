@@ -152,6 +152,11 @@ test.describe("统一成员专用个人歌单（工单 01）", () => {
       expect(createPayload).toEqual({ idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/) });
       await expect(page.getByText("稻香", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "创建专用个人歌单" })).toHaveCount(0);
+
+      // 验证我的歌单顶部按钮排布：搜索在左，同步在右
+      const personalHeaderBtns = page.locator(".personal-playlist-pane .playlist-header-right button");
+      await expect(personalHeaderBtns.nth(0)).toContainText("搜索");
+      await expect(personalHeaderBtns.nth(1)).toContainText("同步歌单");
     });
   }
 

@@ -3663,6 +3663,22 @@ h1 {
   font-weight: 500;
 }
 
+.locate-btn-text-short {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .locate-btn-text-full {
+    display: none;
+  }
+  .locate-btn-text-short {
+    display: inline;
+  }
+  .sync-btn-text {
+    display: none;
+  }
+}
+
 .playlist-header-right {
   display: flex;
   align-items: center;
@@ -4928,7 +4944,6 @@ h1 {
 .random-section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
 }
 
 .random-section-title {
@@ -4937,14 +4952,10 @@ h1 {
   color: var(--text-main);
 }
 
-.random-select-all-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-xs);
-  color: var(--text-muted);
-  cursor: pointer;
-  user-select: none;
+.random-select-all-item {
+  background: var(--bg-surface);
+  border-bottom: 1px dashed var(--border-medium);
+  margin-bottom: 2px;
 }
 
 .random-checkbox {

@@ -401,20 +401,18 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
 
           <div className="playlist-header-right">
-            {view.allowedActions.includes("refreshPublicPlaylist") && (
+            {view.allowedActions.includes("replacePublicPlaylist") && (
               <button
-                className="secondary-button sync-playlist-button"
                 type="button"
-                disabled={refreshMutation.isPending || playback.playbackRefreshing || view.disabledReason === "ACCOUNT_PAUSED"}
-                onClick={() => {
-                  setRefreshError("");
-                  refreshMutation.mutate();
-                  playback.refreshPlayback();
-                }}
-                aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
+                className="primary-button random-replacement-button"
+                disabled={isReplacementBusy || Boolean(activeReplacementOperationId) || view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
+                onClick={() => setIsRandomDialogOpen(true)}
+                aria-haspopup="dialog"
+                aria-expanded={isRandomDialogOpen}
+                title="随机点歌"
               >
-                <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
-                <span>{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
+                <Shuffle size={14} aria-hidden="true" />
+                <span>随机点歌</span>
               </button>
             )}
 
@@ -431,24 +429,34 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
               </button>
             )}
 
-            <button type="button" className="secondary-button locate-playback-button"
-              disabled={!playback.anchorSongId} onClick={() => playback.anchorSongId && setHighlight({ songId: playback.anchorSongId, id: uuidv7() })}>
+            <button
+              type="button"
+              className="secondary-button locate-playback-button"
+              disabled={!playback.anchorSongId}
+              onClick={() => playback.anchorSongId && setHighlight({ songId: playback.anchorSongId, id: uuidv7() })}
+              title="定位到正在播放"
+              aria-label="定位到正在播放"
+            >
               <LocateFixed size={14} aria-hidden="true" />
-              <span>定位到正在播放</span>
+              <span className="locate-btn-text-full">定位到正在播放</span>
+              <span className="locate-btn-text-short">定位</span>
             </button>
 
-            {view.allowedActions.includes("replacePublicPlaylist") && (
+            {view.allowedActions.includes("refreshPublicPlaylist") && (
               <button
+                className="secondary-button sync-playlist-button"
                 type="button"
-                className="primary-button random-replacement-button"
-                disabled={isReplacementBusy || Boolean(activeReplacementOperationId) || view.disabledReason === "ACCOUNT_PAUSED" || playback.unresolved}
-                onClick={() => setIsRandomDialogOpen(true)}
-                aria-haspopup="dialog"
-                aria-expanded={isRandomDialogOpen}
-                title="随机点歌"
+                disabled={refreshMutation.isPending || playback.playbackRefreshing || view.disabledReason === "ACCOUNT_PAUSED"}
+                onClick={() => {
+                  setRefreshError("");
+                  refreshMutation.mutate();
+                  playback.refreshPlayback();
+                }}
+                aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
+                title="同步歌单"
               >
-                <Shuffle size={14} aria-hidden="true" />
-                <span>随机点歌</span>
+                <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
+                <span className="sync-btn-text">{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
               </button>
             )}
           </div>

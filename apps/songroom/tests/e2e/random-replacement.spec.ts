@@ -219,6 +219,12 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     await page.goto(`/rooms/${roomId}`);
     await page.getByRole("button", { name: "点歌台", exact: true }).click();
+
+    // 验证点歌台顶部按钮排布：随机点歌位于首位
+    const headerButtons = page.locator(".playlist-header-right button");
+    await expect(headerButtons.nth(0)).toContainText("随机点歌");
+    await expect(headerButtons.nth(1)).toContainText("搜索");
+
     await page.getByRole("button", { name: "随机点歌" }).click();
 
     const modal = page.locator(".random-replacement-modal");
@@ -253,9 +259,15 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(disabledRoommateCheckbox).toBeDisabled();
     await expect(modal.getByText("未创建歌单")).toBeVisible();
 
-    // 5. 全选 checkbox 初始为未选
+    // 5. 全选 checkbox 初始为未选，且与下方成员复选框在同一垂直 X 坐标列对齐
     const selectAllCheckbox = modal.getByRole("checkbox", { name: "全选参与成员" });
     await expect(selectAllCheckbox).not.toBeChecked();
+
+    const selectAllBox = await selectAllCheckbox.boundingBox();
+    const ownerBox = await ownerCheckbox.boundingBox();
+    expect(selectAllBox).not.toBeNull();
+    expect(ownerBox).not.toBeNull();
+    expect(Math.abs(selectAllBox!.x - ownerBox!.x)).toBeLessThanOrEqual(1.5);
 
     // 6. 勾选房主小林 -> 全选变为半选状态 (indeterminate)
     await ownerCheckbox.click();

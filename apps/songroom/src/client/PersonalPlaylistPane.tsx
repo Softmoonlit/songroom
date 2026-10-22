@@ -546,19 +546,6 @@ export function PersonalPlaylistPane({
           </div>
         </div>
         <div className="playlist-header-right">
-          {canRefresh && (
-            <button
-              type="button"
-              className="secondary-button sync-playlist-button"
-              title="同步歌单最新歌曲"
-              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
-              disabled={refreshMutation.isPending}
-              onClick={() => refreshMutation.mutate()}
-            >
-              <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
-              <span>{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
-            </button>
-          )}
           {tracks.length > 0 && (
             <button
               type="button"
@@ -569,6 +556,19 @@ export function PersonalPlaylistPane({
             >
               <Search size={14} aria-hidden="true" />
               <span>搜索</span>
+            </button>
+          )}
+          {canRefresh && (
+            <button
+              type="button"
+              className="secondary-button sync-playlist-button"
+              title="同步歌单最新歌曲"
+              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
+              disabled={refreshMutation.isPending}
+              onClick={() => refreshMutation.mutate()}
+            >
+              <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
+              <span className="sync-btn-text">{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
             </button>
           )}
         </div>

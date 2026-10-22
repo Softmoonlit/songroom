@@ -318,8 +318,11 @@ export function RandomReplacementDialog({
                 <div className="random-member-selection-section">
                   <div className="random-section-header">
                     <span className="random-section-title">参与成员：</span>
+                  </div>
+
+                  <div className="random-member-list" role="group" aria-label="选择参与成员">
                     {eligibleMembers.length > 0 && (
-                      <label className="random-select-all-label">
+                      <label className="random-member-item random-select-all-item">
                         <input
                           ref={selectAllCheckboxRef}
                           type="checkbox"
@@ -329,12 +332,10 @@ export function RandomReplacementDialog({
                           disabled={previewMutation.isPending}
                           aria-label="全选参与成员"
                         />
-                        <span>全选</span>
+                        <span className="random-member-nickname">全选</span>
                       </label>
                     )}
-                  </div>
 
-                  <div className="random-member-list" role="group" aria-label="选择参与成员">
                     {membersQuery.isLoading ? (
                       <p className="random-member-loading" role="status">正在加载成员列表…</p>
                     ) : members.length === 0 ? (
