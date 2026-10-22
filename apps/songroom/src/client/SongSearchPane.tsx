@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, X, Plus, RotateCw, AlertCircle, Music, Clock } from "lucide-react";
+import { Search, X, Plus, Check, RotateCw, AlertCircle, Music, Clock } from "lucide-react";
 import { z } from "zod";
 import { v7 as uuidv7 } from "uuid";
 import {
@@ -45,7 +45,9 @@ export function SongSearchPane({
 }: SongSearchPaneProps) {
   const [searchQueryText, setSearchQueryText] = useState("");
   const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
   const [searchLocalError, setSearchLocalError] = useState("");
+  const [localAddedSongIds, setLocalAddedSongIds] = useState<Set<string>>(() => new Set());
   const [addingSongId, setAddingSongId] = useState<string | null>(null);
   const [additionError, setAdditionError] = useState("");
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -81,6 +83,8 @@ export function SongSearchPane({
   useEffect(() => {
     searchGeneration.current += 1;
     setActiveSearchId(null);
+    setHasSearched(false);
+    setLocalAddedSongIds(new Set());
     setSearchQueryText("");
     setSearchLocalError("");
     setAddingSongId(null);
@@ -93,17 +97,20 @@ export function SongSearchPane({
     }
   }, [roomId]);
 
-  // 读取个人歌单配置状态与快照
+  // 读取个人歌单配置状态与快照：严格按需驱动，只有用户发起过搜索或有正在处理的操作时才查询
   const personalQuery = useQuery({
     queryKey: ["room-personal-playlist", sessionId, roomId],
     queryFn: ({ signal }) => request(`/${roomId}/personal-playlist`, personalPlaylistView, signal),
-    enabled: active,
+    enabled: active && (hasSearched || Boolean(activeOperationId)),
     ...queryOptions
   });
 
   const hasPersonalPlaylist = Boolean(personalQuery.data?.playlist);
   const personalTracks = personalQuery.data?.snapshot?.tracks ?? [];
-  const personalSongIds = new Set(personalTracks.map(t => t.songId));
+  const personalSongIds = new Set([
+    ...personalTracks.map(t => t.songId),
+    ...localAddedSongIds
+  ]);
 
   // 搜索查询
   const searchQuery = useQuery({
@@ -141,6 +148,7 @@ export function SongSearchPane({
     if (op.status === "succeeded") {
       setPersistedOperationId(null);
       setAddingSongId(null);
+      setLocalAddedSongIds(prev => new Set([...prev, op.songId]));
       setToast({
         id: uuidv7(),
         message: personalSongIds.has(op.songId)
@@ -148,6 +156,30 @@ export function SongSearchPane({
           : `《${op.name}》已加入个人歌单`,
         type: "success"
       });
+      queryClient.setQueryData(
+        ["room-personal-playlist", sessionId, roomId],
+        (prev: z.infer<typeof personalPlaylistView> | undefined) => {
+          if (!prev || !prev.snapshot) return prev;
+          if (prev.snapshot.tracks.some(t => t.songId === op.songId)) return prev;
+          return {
+            ...prev,
+            snapshot: {
+              ...prev.snapshot,
+              trackCount: prev.snapshot.trackCount + 1,
+              tracks: [
+                ...prev.snapshot.tracks,
+                {
+                  position: prev.snapshot.tracks.length,
+                  songId: op.songId,
+                  name: op.name,
+                  artists: op.artists,
+                  album: op.album
+                }
+              ]
+            }
+          };
+        }
+      );
       void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
     } else if (op.status === "failed" || op.status === "stopped") {
       setPersistedOperationId(null);
@@ -229,6 +261,7 @@ export function SongSearchPane({
       if (op.status === "succeeded") {
         setAddingSongId(null);
         setPersistedOperationId(null);
+        setLocalAddedSongIds(prev => new Set([...prev, variables.candidate.id]));
         setToast({
           id: uuidv7(),
           message:
@@ -284,6 +317,7 @@ export function SongSearchPane({
     e.preventDefault();
     const q = searchQueryText.trim();
     if (!q) return;
+    setHasSearched(true);
     const generation = ++searchGeneration.current;
     setActiveSearchId(null);
     setSearchLocalError("");
@@ -327,8 +361,8 @@ export function SongSearchPane({
         <h1 className="search-pane-heading">搜索歌曲</h1>
       </div>
 
-      {/* 未配置个人歌单醒目提示条 */}
-      {!personalQuery.isPending && !hasPersonalPlaylist && (
+      {/* 未配置个人歌单提示条：仅在用户显式搜索后且确认无个人歌单时提示 */}
+      {hasSearched && !personalQuery.isPending && !hasPersonalPlaylist && (
         <div className="search-personal-missing-banner" role="status" aria-label="未配置个人歌单提示">
           <div className="banner-content">
             <AlertCircle size={18} className="banner-icon" aria-hidden="true" />
@@ -460,12 +494,17 @@ export function SongSearchPane({
               const isThisAdding = addingSongId === song.id;
               const isAnyAdding = Boolean(addingSongId || isAdditionPending);
               const isAlreadyInPersonal = personalSongIds.has(song.id);
-              const addDisabled = !hasPersonalPlaylist || isAnyAdding;
+              const addDisabled = !hasPersonalPlaylist || isAnyAdding || isAlreadyInPersonal;
               const buttonTitle = !hasPersonalPlaylist
                 ? "尚未配置个人歌单，无法添加歌曲"
                 : isAlreadyInPersonal
-                ? "已在个人歌单，再次点击可确认"
+                ? "该歌曲已在你的个人歌单中"
                 : "添加到我的歌单";
+              const buttonAriaLabel = !hasPersonalPlaylist
+                ? `添加《${song.name}》到我的歌单（尚未配置个人歌单）`
+                : isAlreadyInPersonal
+                ? `《${song.name}》已在我的歌单中`
+                : `添加《${song.name}》到我的歌单`;
 
               return (
                 <div key={`${song.id}-${index}`} className="search-candidate-item" role="listitem">
@@ -487,20 +526,21 @@ export function SongSearchPane({
                   <div className="candidate-actions">
                     <button
                       type="button"
-                      className="secondary-button candidate-add-btn"
+                      className={`secondary-button candidate-add-btn ${isAlreadyInPersonal ? "is-added" : ""}`}
                       disabled={addDisabled}
                       onClick={() => handleAddSong(song)}
                       title={buttonTitle}
-                      aria-label={
-                        !hasPersonalPlaylist
-                          ? `添加《${song.name}》到我的歌单（尚未配置个人歌单）`
-                          : `添加《${song.name}》到我的歌单`
-                      }
+                      aria-label={buttonAriaLabel}
                     >
                       {isThisAdding ? (
                         <>
                           <RotateCw size={14} className="spin-icon" aria-hidden="true" />
                           <span>添加中…</span>
+                        </>
+                      ) : isAlreadyInPersonal ? (
+                        <>
+                          <Check size={14} className="added-icon" aria-hidden="true" />
+                          <span>已添加</span>
                         </>
                       ) : (
                         <>

@@ -140,16 +140,19 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
 
     await page.goto(`/rooms/${roomId}`);
 
-    // 展示未配置个人歌单提示条
+    // 未搜索前：保持静默，不展示未配置个人歌单提示条
     const missingBanner = page.getByRole("status", { name: "未配置个人歌单提示" });
-    await expect(missingBanner).toBeVisible();
-    await expect(missingBanner.getByText("尚未配置个人歌单")).toBeVisible();
-    await expect(missingBanner.getByRole("button", { name: "前往我的歌单" })).toBeVisible();
+    await expect(missingBanner).toHaveCount(0);
 
     // 进行歌曲搜索
     const searchInput = page.getByRole("searchbox", { name: "搜索歌曲" });
     await searchInput.fill("周杰伦");
     await page.getByRole("button", { name: "搜索", exact: true }).click();
+
+    // 搜索出结果后展示未配置个人歌单提示条
+    await expect(missingBanner).toBeVisible();
+    await expect(missingBanner.getByText("尚未配置个人歌单")).toBeVisible();
+    await expect(missingBanner.getByRole("button", { name: "前往我的歌单" })).toBeVisible();
 
     // 搜索出结果列表
     await expect(page.getByText("找到 3 首候选歌曲")).toBeVisible();
@@ -190,7 +193,18 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
       version: 1
     };
 
-    await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: personalView }));
+    await page.route(personalPlaylistEndpoint, route =>
+      route.fulfill({
+        json: {
+          ...personalView,
+          snapshot: {
+            ...personalView.snapshot!,
+            trackCount: personalTracks.length,
+            tracks: personalTracks
+          }
+        }
+      })
+    );
 
     const searchId = v7();
     await page.route(searchInitiateEndpoint, route =>
@@ -213,6 +227,15 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
     await page.route(personalSongAddEndpoint, route => {
       const body = route.request().postDataJSON() as { songId: string; name: string };
       addedSongId = body.songId;
+      if (!personalTracks.some(t => t.songId === body.songId)) {
+        personalTracks.push({
+          position: personalTracks.length,
+          songId: body.songId,
+          name: body.name,
+          artists: ["周杰伦"],
+          album: "叶惠美"
+        });
+      }
       const op: PersonalSongOperationView = {
         id: v7(),
         roomId,
@@ -241,25 +264,56 @@ test.describe("搜索歌曲独立页面与个人歌单点歌 (工单 04)", () =>
 
     await expect(page.getByText("找到 3 首候选歌曲")).toBeVisible();
 
-    // 1. 点击已在个人歌单的《晴天》
-    const addQingtianBtn = page.getByRole("button", { name: "添加《晴天》到我的歌单" });
-    await expect(addQingtianBtn).toBeEnabled();
-    await addQingtianBtn.click();
-    expect(addedSongId).toBe("song-101");
-    // 提示已在个人歌单
-    await expect(page.getByText("《晴天》已在个人歌单")).toBeVisible();
+    // 1. 已在个人歌单的《晴天》：直接展示「已添加」且禁用，防止重复添加
+    const qingtianBtn = page.getByRole("button", { name: "《晴天》已在我的歌单中" });
+    await expect(qingtianBtn).toBeVisible();
+    await expect(qingtianBtn).toContainText("已添加");
+    await expect(qingtianBtn).toBeDisabled();
 
     // 2. 点击新歌《七里香》
     const addQilixiangBtn = page.getByRole("button", { name: "添加《七里香》到我的歌单" });
     await expect(addQilixiangBtn).toBeEnabled();
+    await expect(addQilixiangBtn).toContainText("添加到我的歌单");
     await addQilixiangBtn.click();
     expect(addedSongId).toBe("song-102");
     // 提示已加入个人歌单
     await expect(page.getByText("《七里香》已加入个人歌单")).toBeVisible();
 
+    // 3. 添加完成后，《七里香》按钮立即变为「已添加」且禁用
+    const qilixiangBtn = page.getByRole("button", { name: "《七里香》已在我的歌单中" });
+    await expect(qilixiangBtn).toBeVisible();
+    await expect(qilixiangBtn).toContainText("已添加");
+    await expect(qilixiangBtn).toBeDisabled();
+
+    // 4. 再次搜索该歌曲，应继续显示「已添加」且禁用
+    const searchId2 = v7();
+    await page.route(searchInitiateEndpoint, route =>
+      route.fulfill({ json: { searchId: searchId2 } satisfies SearchInitiatedResponse })
+    );
+    await page.route(`**/api/rooms/${roomId}/search/${searchId2}`, route =>
+      route.fulfill({
+        json: {
+          searchId: searchId2,
+          version: 1,
+          status: "completed",
+          songs: [mockCandidates[1]], // 仅返回《七里香》
+          hasMore: false,
+          errorCode: null
+        } satisfies SearchView
+      })
+    );
+    await page.getByRole("searchbox", { name: "搜索歌曲" }).fill("七里香");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("找到 1 首候选歌曲")).toBeVisible();
+
+    const reSearchQilixiangBtn = page.getByRole("button", { name: "《七里香》已在我的歌单中" });
+    await expect(reSearchQilixiangBtn).toBeVisible();
+    await expect(reSearchQilixiangBtn).toContainText("已添加");
+    await expect(reSearchQilixiangBtn).toBeDisabled();
+
     // 依然停留在搜索页，现场未丢失
     await expect(page.getByRole("heading", { name: "搜索歌曲", exact: true })).toBeVisible();
-    await expect(page.getByRole("searchbox", { name: "搜索歌曲" })).toHaveValue("周杰伦");
+    await expect(page.getByRole("searchbox", { name: "搜索歌曲" })).toHaveValue("七里香");
   });
 
   test("异步添加操作排队与待确认状态真实区分，在途横幅与微加载反馈", async ({ page }) => {

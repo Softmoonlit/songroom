@@ -4518,6 +4518,18 @@ h1 {
   gap: 4px;
 }
 
+.search-candidate-item .candidate-add-btn.is-added {
+  background: var(--bg-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.9;
+}
+
+.search-candidate-item .candidate-add-btn.is-added .added-icon {
+  color: var(--success);
+}
+
 .search-load-more-wrap {
   display: flex;
   justify-content: center;

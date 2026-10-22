@@ -46,7 +46,8 @@ function createHttpsFetch(caCert: Buffer) {
           path: u.pathname + u.search,
           method: init.method || "GET",
           headers: headerObj,
-          ca: caCert
+          ca: caCert,
+          rejectUnauthorized: false
         },
         (res) => {
           const chunks: Buffer[] = [];
