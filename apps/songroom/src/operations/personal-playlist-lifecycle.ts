@@ -20,18 +20,15 @@ export function redactPlaylistEvidence(value: string | null): string | null {
 export function terminatePersonalPlaylistsInTx(
   tx: DatabaseTransaction,
   roomId: string,
-  ownerUserId: string,
+  _ownerUserId: string,
   memberId: string | undefined,
-  ensureCleanup: (accountId: string, playlistId: string, creationOperationId: string | null) => string,
-  now: number
-): string[] {
-  const cleanupIds = new Set<string>();
+  _now: number
+): void {
   const bindings = tx.select().from(personalPlaylistBinding).where(and(
     eq(personalPlaylistBinding.roomId, roomId),
     memberId ? eq(personalPlaylistBinding.memberId, memberId) : undefined
   )).all();
   for (const binding of bindings) {
-    cleanupIds.add(ensureCleanup(binding.accountId, binding.playlistId, binding.creationOperationId));
     tx.delete(personalPlaylistBinding).where(eq(personalPlaylistBinding.id, binding.id)).run();
     const target = and(eq(playlistSnapshot.accountId, binding.accountId), eq(playlistSnapshot.playlistId, binding.playlistId));
     const personalReference = tx.select({ id: personalPlaylistBinding.id }).from(personalPlaylistBinding).where(and(
@@ -46,46 +43,25 @@ export function terminatePersonalPlaylistsInTx(
     }
   }
 
-  const creations = tx.select({ op: operation, detail: personalPlaylistCreation }).from(operation)
+  const creations = tx.select({ opId: operation.id, userId: operation.userId }).from(operation)
     .innerJoin(personalPlaylistCreation, eq(personalPlaylistCreation.operationId, operation.id))
     .where(and(eq(operation.roomId, roomId), eq(operation.kind, "createPersonalPlaylist"),
       memberId ? eq(personalPlaylistCreation.memberId, memberId) : undefined)).all();
-  for (const { op, detail } of creations) {
-    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
-    if (detail.playlistId && op.accountId) {
-      cleanupIds.add(ensureCleanup(op.accountId, detail.playlistId, op.id));
-    }
-    if (!detail.playlistId && ["sending", "unknown"].includes(detail.step)) {
-      // End the old membership's business identity while retaining the original resource owner.
-      tx.update(personalPlaylistCreation).set({ ownerUserId, memberId: v7(), name: "songroom-cleanup",
-        beforePlaylists: redactPlaylistEvidence(detail.beforePlaylists), afterPlaylists: redactPlaylistEvidence(detail.afterPlaylists) })
-        .where(eq(personalPlaylistCreation.operationId, op.id)).run();
-      // Detach the actor so a rejoined account can create for its new membership.
-      tx.update(operation).set({ userId: v7(), status: "needsAdministrator", updatedAt: now,
-        version: op.version + 1 }).where(eq(operation.id, op.id)).run();
-    } else {
-      tx.delete(operation).where(eq(operation.id, op.id)).run();
-    }
+  for (const { opId, userId } of creations) {
+    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, opId))).run();
+    tx.delete(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, opId)).run();
+    tx.delete(operation).where(eq(operation.id, opId)).run();
   }
 
-  const mutations = tx.select({ op: operation, detail: personalSongMutation }).from(operation)
+  const mutations = tx.select({ opId: operation.id, userId: operation.userId }).from(operation)
     .innerJoin(personalSongMutation, eq(personalSongMutation.operationId, operation.id))
     .where(and(eq(operation.roomId, roomId), sql`${operation.kind} IN ('addPersonalSong', 'removePersonalSong')`,
       memberId ? eq(personalSongMutation.memberId, memberId) : undefined)).all();
-  for (const { op, detail } of mutations) {
-    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, op.userId), eq(commandReceipt.resourceId, op.id))).run();
-    if (["succeeded", "failed", "stopped"].includes(op.status) || ["ready", "verified", "prepared"].includes(detail.step)) {
-      tx.delete(operation).where(eq(operation.id, op.id)).run();
-    } else {
-      const anonymousId = v7();
-      tx.update(personalSongMutation).set({ memberId: anonymousId, name: detail.songId, artists: "[]", album: "" })
-        .where(eq(personalSongMutation.operationId, op.id)).run();
-      tx.update(operation).set({ userId: anonymousId, updatedAt: now, version: op.version + 1 })
-        .where(eq(operation.id, op.id)).run();
-    }
+  for (const { opId, userId } of mutations) {
+    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, opId))).run();
+    tx.delete(personalSongMutation).where(eq(personalSongMutation.operationId, opId)).run();
+    tx.delete(operation).where(eq(operation.id, opId)).run();
   }
-
-  return [...cleanupIds];
 }
 
 /** Pending personal writes also block requests that read that playlist as their source. */

@@ -8,6 +8,7 @@ import {
   personalPlaylistBinding,
   personalPlaylistCreation,
   personalSongMutation,
+  playlistSnapshot,
   publicPlaylistBinding,
   publicPlaylistCleanup,
   publicPlaylistCreation,
@@ -185,9 +186,8 @@ export class AbnormalOperationsService {
     // 1. 尝试查询 operation (歌曲写入或歌单创建)
     const op = this.database.select().from(operation).where(eq(operation.id, id)).get();
     if (op) {
-      if (["requestPublicSong", "addPersonalSong", "removePersonalSong"].includes(op.kind)) {
-        const table = op.kind === "requestPublicSong" ? publicSongRequest : personalSongMutation;
-        const req = this.database.select().from(table).where(eq(table.operationId, op.id)).get();
+      if (op.kind === "requestPublicSong") {
+        const req = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, op.id)).get();
         if (req) {
           return {
             id: op.id,
@@ -604,7 +604,38 @@ export class AbnormalOperationsService {
 
     if (isBusinessValid) {
       this.database.transaction(tx => {
-        this.personalPlaylists.restoreCreatedBindingInTx(tx, op.roomId, member!.id, op.accountId!, candidate.id, candidate.name, op.id);
+        const now = this.now();
+        tx.insert(personalPlaylistBinding).values({
+          id: v7(),
+          roomId: op.roomId,
+          memberId: member!.id,
+          accountId: op.accountId!,
+          playlistId: candidate.id,
+          name: candidate.name,
+          creationOperationId: op.id,
+          generation: op.generation!,
+          createdAt: now,
+          updatedAt: now
+        }).run();
+        tx.insert(playlistSnapshot).values({
+          accountId: op.accountId!,
+          playlistId: candidate.id,
+          snapshotVersion: 0,
+          lastReadStartedAt: 0,
+          createdAt: now,
+          updatedAt: now
+        }).onConflictDoNothing().run();
+        tx.update(personalPlaylistCreation).set({ playlistId: candidate.id, step: "succeeded", recovered: true })
+          .where(eq(personalPlaylistCreation.operationId, op.id)).run();
+        tx.update(operation).set({
+          status: "succeeded",
+          accountId: null,
+          authorizationId: null,
+          generation: null,
+          updatedAt: now,
+          version: nextVersion
+        }).where(eq(operation.id, op.id)).run();
+        tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, op.roomId)).run();
 
         tx.insert(adminAuditLog)
           .values({
@@ -618,7 +649,7 @@ export class AbnormalOperationsService {
             nextStatus: "succeeded",
             result: "succeeded",
             details: JSON.stringify({ outcome: "binding_restored", playlistId: candidate.id, operationKind: "createPersonalPlaylist" }),
-            createdAt: new Date(this.now())
+            createdAt: new Date(now)
           })
           .run();
       });

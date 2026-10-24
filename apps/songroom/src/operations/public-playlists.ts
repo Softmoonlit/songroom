@@ -2075,12 +2075,13 @@ export class PublicPlaylists {
     }
   }
 
-  terminateMemberInTx(tx: any, roomId: string, userId: string): string[] {
+  terminateMemberInTx(tx: any, roomId: string, userId: string): void {
     const currentRoom = tx.select({ ownerUserId: room.ownerUserId }).from(room).where(eq(room.id, roomId)).get();
     const member = tx.select({ id: roomMembership.id }).from(roomMembership)
       .where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, userId))).get();
-    const cleanupIds = currentRoom && member ? terminatePersonalPlaylistsInTx(tx, roomId, currentRoom.ownerUserId, member.id,
-      (accountId, playlistId, creationId) => this.ensureCleanupInTx(tx, currentRoom.ownerUserId, accountId, playlistId, creationId), this.now()) : [];
+    if (currentRoom && member) {
+      terminatePersonalPlaylistsInTx(tx, roomId, currentRoom.ownerUserId, member.id, this.now());
+    }
     this.replacementService?.terminateMemberInTx(tx, roomId, userId);
     const ops = tx.select().from(operation)
       .where(and(eq(operation.roomId, roomId), eq(operation.userId, userId))).all();
@@ -2110,7 +2111,6 @@ export class PublicPlaylists {
         }
       }
     }
-    return cleanupIds;
   }
 
   readPublicPlaylistTarget(roomId: string): { id: string | null; name: string } | null {
@@ -2249,8 +2249,7 @@ export class PublicPlaylists {
   }
 
   terminateRoomInTx(tx: any, roomId: string, ownerUserId: string): { cleanupId: string | null; cleanupIds: string[] } {
-    const personalCleanupIds = terminatePersonalPlaylistsInTx(tx, roomId, ownerUserId, undefined,
-      (accountId, playlistId, creationId) => this.ensureCleanupInTx(tx, ownerUserId, accountId, playlistId, creationId), this.now());
+    terminatePersonalPlaylistsInTx(tx, roomId, ownerUserId, undefined, this.now());
     this.playNextService.terminateRoomInTx(tx, roomId);
     this.replacementService?.terminateRoomInTx(tx, roomId);
     let target: { accountId: string; playlistId: string; creationOperationId: string } | null = null;
@@ -2334,7 +2333,7 @@ export class PublicPlaylists {
     tx.delete(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).run();
     tx.delete(retiredPublicPlaylistBinding).where(eq(retiredPublicPlaylistBinding.roomId, roomId)).run();
 
-    const cleanupIds = [...new Set([...(cleanupId ? [cleanupId] : []), ...personalCleanupIds])];
+    const cleanupIds = cleanupId ? [cleanupId] : [];
     return { cleanupId: cleanupIds[0] ?? null, cleanupIds };
   }
 

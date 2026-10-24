@@ -1210,7 +1210,7 @@ it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知�
 
 
 
-it.each(["member", "room"] as const)("%s 终止时已获ID未绑定的个人创建转最小清理并使用真实房主授权", async scope => {
+it.each(["member", "room"] as const)("%s 终止时个人创建不转云端清理任务，绝不调用网易云删除", async scope => {
   const f = fixture();
   const service = f.module();
   const member = f.database.select().from(roomMembership).where(eq(roomMembership.userId, "member")).get()!;
@@ -1221,20 +1221,16 @@ it.each(["member", "room"] as const)("%s 终止时已获ID未绑定的个人创�
   f.database.insert(personalPlaylistCreation).values({ operationId: opId, ownerUserId: "owner",
     memberId: member.id, name: "songroom-宿舍-member", step: "confirming", playlistId: "personal-unbound" }).run();
 
-  const cleanupIds = f.database.transaction(tx => scope === "member"
-    ? service.terminateMemberInTx(tx, f.roomId, "member")
-    : service.terminateRoomInTx(tx, f.roomId, "owner").cleanupIds);
-  expect(cleanupIds).toHaveLength(1);
-  expect(service.readCleanups("owner").cleanups).toEqual([
-    expect.objectContaining({ id: cleanupIds[0], playlistId: "personal-unbound", accountId: "cloud-owner", status: "ready" })
-  ]);
+  f.database.transaction(tx => {
+    if (scope === "member") {
+      service.terminateMemberInTx(tx, f.roomId, "member");
+    } else {
+      service.terminateRoomInTx(tx, f.roomId, "owner");
+    }
+  });
+  expect(service.readCleanups("owner").cleanups).toEqual([]);
   expect(service.readCleanups("member").cleanups).toEqual([]);
   service.start();
-  for (const cleanupId of cleanupIds) service.dispatchCleanup(cleanupId);
   await service.settle();
-  expect(service.readCleanups("owner").cleanups).toEqual([]);
-  expect(f.adapter.inputs.filter(input => input.operation === "playlistCreate")).toEqual([]);
-  expect(f.adapter.inputs.filter(input => input.operation === "playlistDelete")).toEqual([
-    { operation: "playlistDelete", cookie: "MUSIC_U=owner", playlistId: "personal-unbound" }
-  ]);
+  expect(f.adapter.inputs.filter(input => input.operation === "playlistDelete")).toEqual([]);
 });

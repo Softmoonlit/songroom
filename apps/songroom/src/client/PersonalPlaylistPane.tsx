@@ -1,11 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, Info, ListMusic, Plus, RotateCw, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, Info, ListMusic, Plus, RotateCw, Search, X } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
 import {
   personalPlaylistView,
-  personalSongMutationResponse,
   type PersonalPlaylistTrack,
   type PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
@@ -80,9 +79,6 @@ function PersonalTrackList({
   onRequestSong,
   requestingSongId,
   songRequestDisabledReason,
-  onRemoveSong,
-  removingSongId,
-  songRemovalDisabledReason,
   isFilterActive = false,
   onClearFilter
 }: {
@@ -91,9 +87,6 @@ function PersonalTrackList({
   onRequestSong?: (track: PersonalPlaylistTrack) => void;
   requestingSongId?: string | null;
   songRequestDisabledReason?: string | null;
-  onRemoveSong?: (track: PersonalPlaylistTrack) => void;
-  removingSongId?: string | null;
-  songRemovalDisabledReason?: string | null;
   isFilterActive?: boolean;
   onClearFilter?: () => void;
 }) {
@@ -129,7 +122,7 @@ function PersonalTrackList({
       <div className="playlist-tracks-header-bar" role="region" aria-label="歌曲列表表头">
         <span className="tracks-header-col col-index">#</span>
         <span className="tracks-header-col col-title">歌曲与歌手</span>
-        {(onRequestSong || onRemoveSong) && <span className="tracks-header-col col-actions" style={{ textAlign: "right" }}>操作</span>}
+        {onRequestSong && <span className="tracks-header-col col-actions" style={{ textAlign: "right" }}>操作</span>}
       </div>
       {tracks.length === 0 ? (
         <div className={isFilterActive ? "playlist-tracks-empty-filter" : "playlist-tracks-empty"} role="status">
@@ -182,30 +175,19 @@ function PersonalTrackList({
                     {track.album && <span className="track-album"> · {track.album}</span>}
                   </span>
                 </div>
-                {(onRequestSong || onRemoveSong) && (
+                {onRequestSong && (
                   <div className="personal-track-actions">
-                    {onRequestSong && <button
+                    <button
                       type="button"
                       className="secondary-button request-song-btn"
-                      disabled={isRequestDisabled || Boolean(removingSongId)}
+                      disabled={isRequestDisabled}
                       onClick={() => onRequestSong(track)}
                       aria-label={`点播《${track.name}》到点歌台`}
                       title={songRequestDisabledReason ?? "点歌到点歌台"}
                     >
                       <Plus size={14} aria-hidden="true" />
                       <span>{isThisTrackRequesting ? "点歌中…" : "点歌"}</span>
-                    </button>}
-                    {onRemoveSong && <button
-                      type="button"
-                      className="secondary-button personal-song-remove-btn"
-                      disabled={Boolean(removingSongId || requestingSongId || songRemovalDisabledReason)}
-                      onClick={() => onRemoveSong(track)}
-                      aria-label={`从个人歌单删除《${track.name}》`}
-                      title={songRemovalDisabledReason ?? "从个人歌单删除"}
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                      <span>{removingSongId === track.songId ? "删除中…" : "删除"}</span>
-                    </button>}
+                    </button>
                   </div>
                 )}
               </div>
@@ -229,7 +211,6 @@ export function PersonalPlaylistPane({
   active: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [createError, setCreateError] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [requestingSongId, setRequestingSongId] = useState<string | null>(null);
@@ -237,15 +218,9 @@ export function PersonalPlaylistPane({
   const [operationBanner, setOperationBanner] = useState<{ message: string; type: "info" | "warning" } | null>(null);
   const [toast, setToast] = useState<ToastData | null>(null);
   const [requestError, setRequestError] = useState("");
-  const [removeError, setRemoveError] = useState("");
   const contextKey = `${sessionId}:${roomId}`;
-  const currentContext = useRef(contextKey);
-  currentContext.current = contextKey;
-  const handledRemoval = useRef<string | null>(null);
   useEffect(() => {
-    setRemoveError("");
     setToast(null);
-    handledRemoval.current = null;
   }, [contextKey]);
 
   const query = useQuery({
@@ -254,8 +229,7 @@ export function PersonalPlaylistPane({
     enabled: active,
     refetchInterval: q => {
       const op = q.state.data?.operation;
-      const songOp = q.state.data?.songOperation;
-      return (op && !terminalStatuses.has(op.status)) || (songOp && !terminalStatuses.has(songOp.status)) ? 2_000 : false;
+      return op && !terminalStatuses.has(op.status) ? 2_000 : false;
     },
     ...queryOptions
   });
@@ -331,24 +305,6 @@ export function PersonalPlaylistPane({
     }
   }, [operationQuery.data, queryClient, sessionId, roomId]);
 
-  const createMutation = useMutation({
-    mutationFn: () => {
-      setCreateError("");
-      return request(`/${roomId}/personal-playlist/create`, personalPlaylistView, undefined, {
-        idempotencyKey: uuidv7()
-      });
-    },
-    retry: false,
-    onSuccess: data => {
-      queryClient.setQueryData(["room-personal-playlist", sessionId, roomId], data);
-      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
-      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
-    },
-    onError: failure => {
-      setCreateError(errorMessage(failure));
-    }
-  });
-
   const refreshMutation = useMutation({
     mutationFn: () => request(`/${roomId}/personal-playlist/refresh`, personalPlaylistView),
     onSuccess: data => {
@@ -399,43 +355,6 @@ export function PersonalPlaylistPane({
     }
   });
 
-  const songOperation = query.data?.songOperation;
-  const songOperationPending = Boolean(songOperation && !terminalStatuses.has(songOperation.status));
-  const removeMutation = useMutation({
-    mutationFn: ({ track, targetRoomId }: { track: PersonalPlaylistTrack; targetRoomId: string; context: string }) =>
-      request(`/${targetRoomId}/personal-playlist/songs/remove`, personalSongMutationResponse, undefined, {
-        idempotencyKey: uuidv7(),
-        songId: track.songId
-      }),
-    retry: false,
-    onMutate: () => setRemoveError(""),
-    onSuccess: (result, variables) => {
-      if (currentContext.current !== variables.context) return;
-      queryClient.setQueryData(["room-personal-playlist", sessionId, variables.targetRoomId], (previous: PersonalPlaylistView | undefined) =>
-        previous ? { ...previous, songOperation: result.operation } : previous);
-      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, variables.targetRoomId] });
-    },
-    onError: (failure, variables) => {
-      if (currentContext.current !== variables.context) return;
-      setRemoveError(errorMessage(failure));
-      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, variables.targetRoomId] });
-    }
-  });
-
-  useEffect(() => {
-    if (!active || songOperation?.action !== "remove" || !terminalStatuses.has(songOperation.status)) return;
-    const key = `${contextKey}:${songOperation.id}:${songOperation.version}`;
-    if (handledRemoval.current === key) return;
-    handledRemoval.current = key;
-    if (songOperation.status === "succeeded") {
-      setToast({ id: uuidv7(), message: `《${songOperation.name}》已从个人歌单删除`, type: "success" });
-    } else {
-      setRemoveError(songOperation.status === "stopped"
-        ? "删除操作已停止，未确认的云端结果不会当作删除成功。"
-        : `删除明确失败：${errorMessageForCode(songOperation.errorCode ?? "MODULE_ERROR")}`);
-    }
-  }, [active, contextKey, songOperation]);
-
   // 进入页面触发一次显式刷新
   const refreshedOnEnter = useRef<string | null>(null);
   useEffect(() => {
@@ -469,7 +388,6 @@ export function PersonalPlaylistPane({
 
   const data = query.data;
   const playlist = data.playlist;
-  const canCreate = data.allowedActions.includes("createPersonalPlaylist");
   const canRefresh = data.allowedActions.includes("refreshPersonalPlaylist");
 
   if (!playlist) {
@@ -479,7 +397,7 @@ export function PersonalPlaylistPane({
           <ListMusic size={48} className="empty-state-icon" aria-hidden="true" />
           <h2 className="empty-state-title">尚未配置个人歌单</h2>
           <p className="empty-state-desc">
-            在房主网易云账号下创建本房间专属于你的个人歌单，名称为 songroom-房间名-昵称。
+            房主尚未为你分配点歌歌单，请联系房主在房间成员中分配。
           </p>
 
           {data.operation && data.operation.status !== "succeeded" && (
@@ -496,24 +414,6 @@ export function PersonalPlaylistPane({
 
           {data.disabledReason && (
             <p className="field-help">{personalDisabledMessages[data.disabledReason]}</p>
-          )}
-
-          {createError && (
-            <div className="error-banner" role="alert">
-              <AlertCircle size={16} aria-hidden="true" />
-              <span>{createError}</span>
-            </div>
-          )}
-
-          {canCreate && (
-            <button
-              type="button"
-              className="primary-button"
-              disabled={createMutation.isPending}
-              onClick={() => createMutation.mutate()}
-            >
-              {createMutation.isPending ? "正在创建…" : "创建专用个人歌单"}
-            </button>
           )}
         </div>
       </div>
@@ -622,27 +522,6 @@ export function PersonalPlaylistPane({
         </div>
       )}
 
-      {songOperationPending && songOperation?.action === "remove" && (
-        <div className="operation-status-banner warning" role="status">
-          {songOperation.status === "queued"
-            ? `《${songOperation.name}》删除已排队。`
-            : songOperation.status === "processing"
-              ? `正在从个人歌单删除《${songOperation.name}》并确认结果…`
-              : songOperation.status === "awaitingConfirmation"
-                ? `《${songOperation.name}》删除结果待确认，请勿重复删除。可同步歌单继续确认。`
-                : songOperation.status === "waitingAuthorization"
-                  ? "删除操作正在等待房主恢复网易云授权。"
-                  : "删除结果需要管理员协助确认。"}
-        </div>
-      )}
-
-      {removeError && (
-        <div className="error-banner" role="alert">
-          <AlertCircle size={16} aria-hidden="true" />
-          <span>{removeError}</span>
-        </div>
-      )}
-
       {requestError && (
         <div className="error-banner" role="alert">
           <AlertCircle size={16} aria-hidden="true" />
@@ -657,19 +536,8 @@ export function PersonalPlaylistPane({
         active={active}
         onRequestSong={track => requestSongMutation.mutate(track)}
         requestingSongId={requestingSongId}
-        onRemoveSong={track => removeMutation.mutate({ track, targetRoomId: roomId, context: contextKey })}
-        removingSongId={removeMutation.isPending ? removeMutation.variables.track.songId : null}
-        songRemovalDisabledReason={
-          songOperationPending || activeOperationId
-            ? "当前有未完成的写操作，请稍候"
-            : !data.allowedActions.includes("removePersonalSong")
-              ? data.disabledReason ? personalDisabledMessages[data.disabledReason] : "当前无法删除歌曲，请同步歌单后重试"
-              : null
-        }
         songRequestDisabledReason={
-          songOperationPending || removeMutation.isPending
-            ? "当前有未完成的个人歌单操作，请稍候"
-            : !hasPublicPlaylist
+          !hasPublicPlaylist
             ? "房间尚未创建点歌台，无法发起点歌"
             : publicDisabledReason === "ACCOUNT_PAUSED"
               ? "网易云账号已暂停，暂时无法点歌"

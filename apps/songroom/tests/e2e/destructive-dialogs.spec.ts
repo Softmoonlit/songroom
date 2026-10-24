@@ -122,8 +122,6 @@ async function setupDialogMocks(page: Page, role: "owner" | "roommate") {
         version: 1,
         memberCount: 2,
         pendingApplicationCount: 1,
-        personalPlaylistCount: 2,
-        pendingPersonalPlaylistCount: 0,
         publicPlaylist: {
           id: "pl-cloud-1",
           name: "songroom-测试音乐间-公共"
@@ -159,8 +157,7 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
     await expect(dialog.getByText("立即生效", { exact: true })).toBeVisible();
     await expect(dialog.getByText("云端歌单清理", { exact: true })).toBeVisible();
     await expect(dialog.getByText("专用点歌台“songroom-测试音乐间-公共”将启动网易云删除清理。", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("全部成员的 2 份专用个人歌单（包含房主）将启动网易云删除清理。", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("本地删除立即生效，个人收藏歌单仅在本地解绑，绝不修改或删除网易云歌单。", { exact: true })).toBeVisible();
 
     // 4. 彻底废除统计行、排比后果清单与调试聚合版本号
     await expect(dialog.locator(".leave-consequences")).toHaveCount(0);

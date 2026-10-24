@@ -65,8 +65,6 @@ export const roomDeletionView = z.object({
   memberCount: z.number().int().positive(),
   pendingApplicationCount: z.number().int().nonnegative(),
   publicPlaylist: roomDeletionPublicPlaylist,
-  personalPlaylistCount: z.number().int().nonnegative(),
-  pendingPersonalPlaylistCount: z.number().int().nonnegative(),
   allowedActions: z.array(z.literal("deleteRoom")),
   disabledReasons: z.strictObject({})
 });

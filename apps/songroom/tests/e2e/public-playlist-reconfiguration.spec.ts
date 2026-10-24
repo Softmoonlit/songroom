@@ -33,9 +33,6 @@ async function setupPage(page: Page, role: "owner" | "roommate" = "owner") {
       }
     })
   );
-  await page.route(`**/api/rooms/${roomId}/song-search*`, route =>
-    route.fulfill({ json: { songs: [], hasMore: false } })
-  );
 }
 
 test.describe("公共歌单失效识别与重新创建 (ticket 13)", () => {

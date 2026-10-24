@@ -116,7 +116,7 @@ function request(app: SongRoomApp, url: string, cookie?: string, body?: unknown,
 }
 
 describe("personal-playlist HTTP routes", () => {
-  it("个人歌单查询限制房间成员，房主与室友只显示主动创建且响应禁止缓存", async () => {
+  it("个人歌单查询限制房间成员，未配置时不暴露创建动作，响应禁止缓存", async () => {
     const { app, owner, member, outsider, roomId } = await fixture();
     const url = `/api/rooms/${roomId}/personal-playlist`;
     expect((await request(app, url)).statusCode).toBe(401);
@@ -125,24 +125,50 @@ describe("personal-playlist HTTP routes", () => {
       const response = await request(app, url, principal.cookie);
       expect(response.statusCode).toBe(200);
       expect(response.headers["cache-control"]).toBe("no-store");
-      expect(personalPlaylistView.parse(response.json())).toMatchObject({ playlist: null, allowedActions: ["createPersonalPlaylist"] });
+      expect(personalPlaylistView.parse(response.json())).toMatchObject({ playlist: null, allowedActions: [] });
     }
   });
 
-  it("已有、自建和收藏歌单候选、绑定及解绑 API 已退役", async () => {
+  it("自建专用歌单与单首删除接口已下线，请求返回 404", async () => {
     const { app, owner, roomId } = await fixture();
     const base = `/api/rooms/${roomId}/personal-playlist`;
-    expect((await request(app, `${base}/candidates`, owner.cookie)).statusCode).toBe(404);
-    expect((await request(app, `${base}/bind`, owner.cookie, { idempotencyKey: v7(), playlistId: "pl-my-fav" })).statusCode).toBe(404);
-    expect((await request(app, `${base}/unbind`, owner.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
+    expect((await request(app, `${base}/create`, owner.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
+    expect((await request(app, `${base}/songs/remove`, owner.cookie, { idempotencyKey: v7(), songId: "song-1" })).statusCode).toBe(404);
   });
 
   it("室友可在成员详情中只读查看房主个人歌单，不暴露维护权限", async () => {
     const { app, owner, member, outsider, roomId, ownerMemberId } = await fixture();
-    const createUrl = `/api/rooms/${roomId}/personal-playlist/create`;
-    const createRes = await request(app, createUrl, owner.cookie, { idempotencyKey: v7() });
-    expect(createRes.statusCode).toBe(202);
-    await app.scheduler.settle();
+    const { personalPlaylistBinding, playlistSnapshot, playlistTrack } = await import("../db/schema.js");
+    app.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId,
+      memberId: ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: "pl-fav",
+      name: "摇滚精选",
+      creationOperationId: v7(),
+      generation: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }).run();
+    app.database.insert(playlistSnapshot).values({
+      accountId: "cloud-owner",
+      playlistId: "pl-fav",
+      snapshotVersion: 1,
+      lastReadStartedAt: Date.now(),
+      syncedAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }).run();
+    app.database.insert(playlistTrack).values({
+      accountId: "cloud-owner",
+      playlistId: "pl-fav",
+      position: 0,
+      songId: "track-1",
+      name: "Song 1",
+      artists: JSON.stringify(["Artist"]),
+      album: "Album"
+    }).run();
 
     const memberViewUrl = `/api/rooms/${roomId}/members/${ownerMemberId}/personal-playlist`;
 
@@ -153,77 +179,9 @@ describe("personal-playlist HTTP routes", () => {
     const memberRes = await request(app, memberViewUrl, member.cookie);
     expect(memberRes.statusCode).toBe(200);
     const memberView = personalPlaylistView.parse(memberRes.json());
-    expect(memberView.playlist).toEqual({ id: expect.any(String), name: "摇滚精选" });
+    expect(memberView.playlist).toEqual({ id: "pl-fav", name: "摇滚精选" });
     expect(memberView.snapshot?.trackCount).toBe(1);
     expect(memberView.allowedActions).toEqual([]);
   });
-
-  it("成员创建接口校验登录、成员与同源，房主和室友均可受理并幂等返回", async () => {
-    const { app, owner, member, outsider, roomId } = await fixture();
-    const createUrl = `/api/rooms/${roomId}/personal-playlist/create`;
-
-    // 未登录
-    expect((await request(app, createUrl, undefined, { idempotencyKey: v7() })).statusCode).toBe(401);
-    // 局外人
-    expect((await request(app, createUrl, outsider.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
-
-    expect((await request(app, createUrl, owner.cookie, { idempotencyKey: v7() }, "https://evil.com")).statusCode).toBe(403);
-    for (const principal of [owner, member]) {
-      const key = v7();
-      const createRes = await request(app, createUrl, principal.cookie, { idempotencyKey: key });
-      expect(createRes.statusCode).toBe(202);
-      const view = personalPlaylistView.parse(createRes.json());
-      expect(view.operation?.status).toBe("queued");
-      expect(view.operation?.step).toBe("ready");
-      const replayed = await request(app, createUrl, principal.cookie, { idempotencyKey: key });
-      expect(replayed.statusCode).toBe(200);
-      expect(personalPlaylistView.parse(replayed.json()).operation?.id).toBe(view.operation?.id);
-    }
-  });
-
-  it("创建接口拒绝指定其他成员或绑定外部目标，不能越权创建", async () => {
-    const { app, owner, roomId, roommateMemberId } = await fixture();
-    const url = `/api/rooms/${roomId}/personal-playlist/create`;
-    expect((await request(app, url, owner.cookie, { idempotencyKey: v7(), memberId: roommateMemberId })).statusCode).toBe(400);
-    expect((await request(app, url, owner.cookie, { idempotencyKey: v7(), playlistId: "external" })).statusCode).toBe(400);
-  });
 });
 
-it("单首删除 HTTP 校验本人、同源、命令及幂等，刷新可恢复操作而他人成员详情不泄露", async () => {
-  const { app, adapter, owner, member, outsider, roomId, roommateMemberId } = await fixture();
-  const { personalPlaylistBinding } = await import("../db/schema.js");
-  const { personalSongMutationResponse, personalSongOperationView } = await import("../shared/personal-playlist-contracts.js");
-  app.database.insert(personalPlaylistBinding).values({ id: v7(), roomId, memberId: roommateMemberId,
-    accountId: "test", playlistId: "pl-personal", name: "个人", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() }).run();
-  const base = `/api/rooms/${roomId}/personal-playlist`;
-  const command = { idempotencyKey: v7(), songId: "song-1" };
-  expect((await request(app, `${base}/songs/remove`, undefined, command)).statusCode).toBe(401);
-  expect((await request(app, `${base}/songs/remove`, outsider.cookie, command)).statusCode).toBe(404);
-  expect((await request(app, `${base}/songs/remove`, owner.cookie, command)).statusCode).toBe(409);
-  expect((await request(app, `${base}/songs/remove`, member.cookie, command, "https://evil.com")).statusCode).toBe(403);
-  expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, memberId: roommateMemberId })).statusCode).toBe(400);
-  expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, songId: "" })).statusCode).toBe(400);
-  let removed = false;
-  adapter.trackRemove = () => { removed = true; return { ok: true, data: { acknowledged: true } }; };
-  adapter.playlistDetail = () => ({ ok: true, data: {
-    playlist: { id: "pl-personal", name: "个人", creatorId: "test", subscribed: false, status: 0 },
-    songIds: removed ? [] : ["song-1"],
-    songs: removed ? [] : [{ id: "song-1", name: "歌曲", artists: [], album: "" }]
-  } });
-  const accepted = await request(app, `${base}/songs/remove`, member.cookie, command);
-  expect(accepted.statusCode).toBe(202);
-  const result = personalSongMutationResponse.parse(accepted.json());
-  expect(result.operation).toMatchObject({ action: "remove", name: "song-1", songConfirmed: false });
-  await app.scheduler.settle();
-  const operationUrl = `${base}/songs/${result.operation.id}`;
-  expect(personalSongOperationView.parse((await request(app, operationUrl, member.cookie)).json())).toMatchObject({ action: "remove", status: "succeeded" });
-  expect((await request(app, operationUrl, owner.cookie)).statusCode).toBe(404);
-  expect(personalPlaylistView.parse((await request(app, base, member.cookie)).json())).toMatchObject({ songOperation: { id: result.operation.id, action: "remove" } });
-  const other = await request(app, `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist`, owner.cookie);
-  expect(other.json()).not.toHaveProperty("songOperation");
-  const replay = await request(app, `${base}/songs/remove`, member.cookie, command);
-  expect(replay.statusCode).toBe(200);
-  expect(personalSongMutationResponse.parse(replay.json())).toMatchObject({ replay: true, operation: { id: result.operation.id } });
-  expect((await request(app, `${base}/songs/remove`, member.cookie, { ...command, songId: "other" })).statusCode).toBe(409);
-  expect(adapter.inputs.filter(input => input.operation === "trackRemove")).toHaveLength(1);
-});

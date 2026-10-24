@@ -12,7 +12,6 @@ import { createApp, type SongRoomApp } from "./app.js";
 import { ScriptedNeteaseAdapter } from "../../tests/netease/scripted-adapter.js";
 import { accountName, normalizedText } from "../shared/contracts.js";
 import { roomName, roomNickname } from "../shared/room-contracts.js";
-import { searchText } from "../shared/song-search-contracts.js";
 import { adminReason } from "../shared/admin-contracts.js";
 
 const origins = new WeakMap<SongRoomApp, string>();
@@ -356,17 +355,8 @@ describe("第一期安全负面矩阵 (Ticket 21)", () => {
     expect([200, 202]).toContain(plReplay.statusCode);
     expect(plReplay.json().operation.id).toBe(plRes.json().operation.id);
 
-    // 3. 非业务端点、搜索与刷新不要求且不误用幂等键
-    // 创建公共歌单并等待绑定，以便测试搜索端点
+    // 3. 非业务端点与刷新不要求且不误用幂等键
     await app.scheduler.settle();
-    const plBindRes = await req(app, "GET", `/api/rooms/${roomId}/public-playlist`, user.cookie);
-    if (plBindRes.json().playlist) {
-      const searchRes = await req(app, "POST", `/api/rooms/${roomId}/search`, user.cookie, { query: "周杰伦" });
-      expect(searchRes.statusCode).toBe(202);
-      expect(searchRes.json().searchId).toBeTruthy();
-    }
-
-    // 歌单刷新接口无副作用，不需要 idempotencyKey
     const refreshRes = await req(app, "POST", `/api/rooms/${roomId}/public-playlist/refresh`, user.cookie, {});
     expect([200, 404]).toContain(refreshRes.statusCode);
 
@@ -563,11 +553,6 @@ describe("第一期安全负面矩阵 (Ticket 21)", () => {
     expect(roomNickname.safeParse("😀".repeat(12)).success).toBe(true);
     expect(roomNickname.safeParse("😀".repeat(13)).success).toBe(false);
 
-    // 5. searchText (1 至 200 码点)
-    expect(searchText.safeParse("   ").success).toBe(false);
-    expect(searchText.safeParse("search\rquery").success).toBe(false);
-    expect(searchText.safeParse("😀".repeat(200)).success).toBe(true);
-    expect(searchText.safeParse("😀".repeat(201)).success).toBe(false);
 
     // 6. adminReason (1 至 500 码点)
     expect(adminReason.safeParse("   ").success).toBe(false);

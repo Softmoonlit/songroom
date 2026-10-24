@@ -217,8 +217,7 @@ export class Rooms {
   }
 
   #terminateMemberInTx(tx: any, roomId: string, targetMember: { id: string; userId: string; nickname: string }) {
-    // Capture personal targets before deleting membership cascades and bindings.
-    const cleanupIds = this.publicPlaylists?.terminateMemberInTx(tx, roomId, targetMember.userId) ?? [];
+    this.publicPlaylists?.terminateMemberInTx(tx, roomId, targetMember.userId);
 
     // 1. 硬删除当前成员关系，释放昵称
     tx.delete(roomMembership).where(eq(roomMembership.id, targetMember.id)).run();
@@ -228,7 +227,6 @@ export class Rooms {
 
     // 4. 递增房间版本
     tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, roomId)).run();
-    return cleanupIds;
   }
 
   #notifyMemberTermination(roomId: string, targetUserId: string, version: number) {
@@ -253,15 +251,14 @@ export class Rooms {
       if (!member) {
         throw new BusinessError(404, "ROOM_UNAVAILABLE", "房间不存在或你已不是当前成员");
       }
-      const cleanupIds = this.#terminateMemberInTx(tx, roomId, member);
+      this.#terminateMemberInTx(tx, roomId, member);
       recordCommandResource(tx, prepared, roomId, this.now());
       const nextVersion = tx.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()!.version;
-      return { kind: "terminated" as const, roomId, targetUserId: userId, cleanupIds, version: nextVersion };
+      return { kind: "terminated" as const, roomId, targetUserId: userId, version: nextVersion };
     }, { behavior: "immediate" });
 
     if (outcome.kind === "terminated") {
       this.#notifyMemberTermination(outcome.roomId, outcome.targetUserId, outcome.version);
-      for (const id of outcome.cleanupIds) this.#requirePublicPlaylists().dispatchCleanup(id);
     }
     return { ok: true, roomId: outcome.roomId };
   }
@@ -289,15 +286,14 @@ export class Rooms {
         throw new BusinessError(409, "CANNOT_REMOVE_OWNER", "不能移除房主本人");
       }
 
-      const cleanupIds = this.#terminateMemberInTx(tx, roomId, targetMember);
+      this.#terminateMemberInTx(tx, roomId, targetMember);
       recordCommandResource(tx, prepared, roomId, this.now());
       const updatedMembers = this.readMembers(userId, roomId);
-      return { kind: "terminated" as const, members: updatedMembers, targetUserId: targetMember.userId, cleanupIds, version: updatedMembers.version };
+      return { kind: "terminated" as const, members: updatedMembers, targetUserId: targetMember.userId, version: updatedMembers.version };
     }, { behavior: "immediate" });
 
     if (outcome.kind === "terminated") {
       this.#notifyMemberTermination(roomId, outcome.targetUserId, outcome.version);
-      for (const id of outcome.cleanupIds) this.#requirePublicPlaylists().dispatchCleanup(id);
     }
     return outcome.members;
   }
@@ -323,32 +319,11 @@ export class Rooms {
       name: target.name
     } : null;
 
-    const personalBindings = this.database.select().from(personalPlaylistBinding)
-      .where(eq(personalPlaylistBinding.roomId, roomId)).all();
-    const personalTargets = new Set(personalBindings.map(binding => JSON.stringify([binding.accountId, binding.playlistId])));
-    const personalCreations = this.database.select({
-      accountId: operation.accountId,
-      playlistId: personalPlaylistCreation.playlistId,
-      step: personalPlaylistCreation.step
-    }).from(operation).innerJoin(personalPlaylistCreation, eq(personalPlaylistCreation.operationId, operation.id))
-      .where(and(eq(operation.roomId, roomId), eq(operation.kind, "createPersonalPlaylist"),
-        sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`)).all();
-    let pendingPersonalPlaylistCount = 0;
-    for (const creation of personalCreations) {
-      if (creation.accountId && creation.playlistId) {
-        personalTargets.add(JSON.stringify([creation.accountId, creation.playlistId]));
-      } else if (["sending", "unknown"].includes(creation.step)) {
-        pendingPersonalPlaylistCount += 1;
-      }
-    }
-
     return {
       room: { id: shell.room.id, name: shell.room.name },
       version: shell.version,
       memberCount,
       pendingApplicationCount,
-      personalPlaylistCount: personalTargets.size,
-      pendingPersonalPlaylistCount,
       publicPlaylist,
       allowedActions: ["deleteRoom"],
       disabledReasons: {}

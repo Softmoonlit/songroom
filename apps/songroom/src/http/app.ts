@@ -28,8 +28,7 @@ import { UpstreamScheduler } from "../operations/upstream-scheduling.js";
 import { registerPublicPlaylistRoutes } from "./public-playlists.js";
 import { registerPersonalPlaylistRoutes } from "./personal-playlists.js";
 import { EventStreamService } from "../events/event-stream.js";
-import { SongSearchService } from "../operations/song-search.js";
-import { registerSongSearchRoutes } from "./song-search.js";
+
 import { requireSession } from "./session.js";
 import { AbnormalOperationsService } from "../operations/abnormal-operations.js";
 import { registerAdminOperationRoutes } from "./admin-operations.js";
@@ -42,7 +41,6 @@ export interface SongRoomApp {
   database: AppDatabase;
   auth: SongRoomAuth;
   eventStream: EventStreamService;
-  searchService: SongSearchService;
   playlists: PublicPlaylists;
   personalPlaylists: PersonalPlaylists;
   randomPreview: PublicRandomPreview;
@@ -99,12 +97,10 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, dependencies.now);
   const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, dependencies.now);
   playlists.initReplacement(randomPreview);
-  const searchService = new SongSearchService(database, adapter, vault, scheduler, eventStream, dependencies.now);
   const abnormalService = new AbnormalOperationsService(database, playlists, scheduler, adapter, vault, eventStream, personalPlaylists, dependencies.now);
   binding.onRevoke = userId => playlists.onOwnerRevoked(userId);
   binding.onReauthorize = (userId, authId, accountId, generation) => {
     playlists.onReauthorized(userId, authId, accountId, generation);
-    personalPlaylists.onReauthorized(userId, authId, accountId, generation);
   };
   let state: RuntimeState = "starting";
   let closing: Promise<void> | undefined;
@@ -209,7 +205,6 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     registerInviteRoutes(fastify, auth, new Invites(database, eventStream, dependencies.now));
     registerPublicPlaylistRoutes(fastify, auth, playlists, randomPreview);
     registerPersonalPlaylistRoutes(fastify, auth, personalPlaylists);
-    registerSongSearchRoutes(fastify, auth, searchService);
     registerAdminOperationRoutes(fastify, auth, config, abnormalService);
 
     fastify.get("/api/events", { sse: "only" }, async (request, reply) => {
@@ -257,7 +252,6 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
       state = "draining";
       scheduler.stop();
       playlists.stop();
-      personalPlaylists.stop();
       eventStream.close();
       binding.clear();
       fastify.log.info({ state }, "application lifecycle");
@@ -290,5 +284,5 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
     fastify.log.info({ state, address }, "application lifecycle");
     return address;
   };
-  return { config, fastify, database, auth, eventStream, searchService, playlists, personalPlaylists, randomPreview, scheduler, abnormalService, getState: () => state, listen, drain, close };
+  return { config, fastify, database, auth, eventStream, playlists, personalPlaylists, randomPreview, scheduler, abnormalService, getState: () => state, listen, drain, close };
 }

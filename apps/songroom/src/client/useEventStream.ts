@@ -44,34 +44,16 @@ export function useEventStream(enabled: boolean): void {
     if (!enabled) return;
 
     const unsubscribe = queryClient.getQueryCache().subscribe(event => {
-      if (event.type === "updated" && event.action.type === "success") {
-        const data = event.query.state.data as Record<string, unknown> | undefined;
-        if (!data || typeof data !== "object") return;
-        const queryKey = event.query.queryKey;
-        const firstKey = queryKey[0];
-        const tracker = trackerRef.current;
-
-        // room/snapshot/operation 的事件会刷新多个 read model。单个 JSON 已读到某版本，
-        // 不代表其他查询也已更新，不能用它提前消费这些共享失效事件。
-        if (firstKey === "song-search" && typeof data.version === "number") {
-          const searchId = queryKey[1] as string | undefined;
-          if (searchId) {
-            tracker.recordFromServer("search", searchId, data.version);
-          }
-        }
-      } else if (event.type === "updated" && event.action.type === "error") {
+      if (event.type === "updated" && event.action.type === "error") {
         // 查询遇错时不锁定最高版本，允许后续失效事件再次触发重新读取
         const firstKey = event.query.queryKey[0];
         if (
           firstKey === "song-request-operation" ||
-          firstKey === "personal-song-addition-operation" ||
           firstKey === "random-replacement-operation"
         ) {
           const opId = event.query.queryKey[1] as string | undefined;
           if (opId) trackerRef.current.reset("operation", opId);
-        } else if (firstKey === "song-search") {
-          const searchId = event.query.queryKey[1] as string | undefined;
-          if (searchId) trackerRef.current.reset("search", searchId);
+
         } else if (firstKey === "join-application") {
           const appId = event.query.queryKey[2] as string | undefined;
           if (appId) {
@@ -162,10 +144,6 @@ export function useEventStream(enabled: boolean): void {
               refresh(["room-personal-playlist"]);
               refresh(["room-public-playlist"]);
               break;
-            case "search": {
-              refresh(["song-search", resourceId]);
-              break;
-            }
             case "cleanup":
               refresh(["public-playlist-cleanups"]);
               break;

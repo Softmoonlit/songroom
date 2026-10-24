@@ -17,7 +17,6 @@ import { PublicPlaylistPane } from "./PublicPlaylistPane";
 import { MemberPersonalPlaylistSection, PersonalPlaylistPane } from "./PersonalPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
 import { getMusicPlatform } from "./music-platforms";
-import { SongSearchPane } from "./SongSearchPane";
 
 function DeleteRoomDialog({
   sessionId,
@@ -68,9 +67,7 @@ function DeleteRoomDialog({
   });
 
   const deletion = deletionQuery.data;
-  const hasCloudCleanup = !!deletion && (
-    !!deletion.publicPlaylist || deletion.personalPlaylistCount > 0 || deletion.pendingPersonalPlaylistCount > 0
-  );
+  const hasCloudCleanup = Boolean(deletion?.publicPlaylist);
 
   const badges: DestructiveBadge[] = [
     { label: "不可撤销", variant: "danger" },
@@ -101,25 +98,15 @@ function DeleteRoomDialog({
         <p role="status">正在读取最新影响范围…</p>
       ) : deletionQuery.isError ? (
         <p className="form-message" role="alert">读取影响范围失败，请稍后重试。</p>
-      ) : deletion && hasCloudCleanup ? (
+      ) : deletion ? (
         <>
           {deletion.publicPlaylist && (
             <p className="destructive-dialog-note">
               专用点歌台“{deletion.publicPlaylist.name}”将启动网易云删除清理。
             </p>
           )}
-          {deletion.personalPlaylistCount > 0 && (
-            <p className="destructive-dialog-note">
-              全部成员的 {deletion.personalPlaylistCount} 份专用个人歌单（包含房主）将启动网易云删除清理。
-            </p>
-          )}
-          {deletion.pendingPersonalPlaylistCount > 0 && (
-            <p className="destructive-dialog-note">
-              另有 {deletion.pendingPersonalPlaylistCount} 个在途个人歌单创建可能产生云端资源，晚到结果确认后会继续清理。
-            </p>
-          )}
           <p className="destructive-dialog-note">
-            本地删除立即生效，云端清理失败会保留待处理任务；不影响其他房间或原有外部歌单。
+            本地删除立即生效，个人收藏歌单仅在本地解绑，绝不修改或删除网易云歌单。
           </p>
         </>
       ) : null}
@@ -137,14 +124,14 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
     queryFn: ({ signal }) => request(`/${roomId}`, roomShellView, signal),
     ...queryOptions
   });
-  type RoomTab = "search" | "public" | "personal" | "members" | "settings";
-  const [active, setActive] = useState<RoomTab>("search");
+  type RoomTab = "public" | "personal" | "members" | "settings";
+  const [active, setActive] = useState<RoomTab>("public");
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const scrollPositions = useRef<Record<RoomTab, number>>({ search: 0, public: 0, personal: 0, members: 0, settings: 0 });
+  const scrollPositions = useRef<Record<RoomTab, number>>({ public: 0, personal: 0, members: 0, settings: 0 });
   const keyboardOpen = useVirtualKeyboard();
 
   const leaveMutation = useMutation({
@@ -205,11 +192,11 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         <nav className="room-navigation" aria-label="房间导航">
           <button
             type="button"
-            aria-current={active === "search" ? "page" : undefined}
-            onClick={() => selectTab("search")}
+            aria-current={active === "public" ? "page" : undefined}
+            onClick={() => selectTab("public")}
           >
-            <Search size={18} aria-hidden="true" />
-            搜索歌曲
+            <Music2 size={18} aria-hidden="true" />
+            点歌台
           </button>
           <button
             type="button"
@@ -218,14 +205,6 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           >
             <ListMusic size={18} aria-hidden="true" />
             我的歌单
-          </button>
-          <button
-            type="button"
-            aria-current={active === "public" ? "page" : undefined}
-            onClick={() => selectTab("public")}
-          >
-            <Music2 size={18} aria-hidden="true" />
-            点歌台
           </button>
           <button
             type="button"
@@ -248,14 +227,6 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
         </nav>
       </aside>
       <div className="room-page-content">
-        <section hidden={active !== "search"} aria-label="搜索歌曲">
-          <SongSearchPane
-            sessionId={sessionId}
-            roomId={roomId}
-            active={active === "search"}
-            onNavigateToPersonal={() => selectTab("personal")}
-          />
-        </section>
         <section hidden={active !== "public"} aria-label="点歌台">
           <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
         </section>
@@ -351,7 +322,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                   <div className="danger-action-row">
                     <div className="danger-action-info">
                       <strong>删除房间</strong>
-                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动点歌台及全部成员专用个人歌单清理。</p>
+                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动点歌台云端清理。本地解绑个人收藏歌单，不影响网易云收藏。</p>
                     </div>
                     <div className="danger-action-trigger">
                       <DeleteRoomDialog
