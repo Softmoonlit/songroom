@@ -16,6 +16,7 @@ import { InviteDialog } from "./InviteDialog";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
 import { MemberPersonalPlaylistSection, PersonalPlaylistPane } from "./PersonalPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
+import { AssignFavoritePlaylistDialog } from "./AssignFavoritePlaylistDialog";
 import { getMusicPlatform } from "./music-platforms";
 
 function DeleteRoomDialog({
@@ -366,8 +367,34 @@ function MembersPane({
   const [removeError, setRemoveError] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [applicationsDrawerOpen, setApplicationsDrawerOpen] = useState(false);
+  const [assignTarget, setAssignTarget] = useState<{ id: string; nickname: string; hasPersonalPlaylist: boolean } | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [unassignTarget, setUnassignTarget] = useState<{ id: string; nickname: string } | null>(null);
+  const [unassignOpen, setUnassignOpen] = useState(false);
+  const [unassignError, setUnassignError] = useState("");
   const listScroll = useRef(0);
   const selected = query.data?.members.find(member => member.id === memberId && !member.isSelf);
+
+  const unassignMutation = useMutation({
+    mutationFn: () => {
+      if (!unassignTarget) throw new Error("MEMBER_NOT_FOUND");
+      return request(`/${roomId}/members/${unassignTarget.id}/personal-playlist/unassign`, personalPlaylistView);
+    },
+    retry: false,
+    onSuccess: () => {
+      setUnassignOpen(false);
+      setUnassignTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["room-members", sessionId, roomId] });
+      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
+      if (unassignTarget) {
+        void queryClient.invalidateQueries({ queryKey: ["member-personal-playlist", sessionId, roomId, unassignTarget.id] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
+    },
+    onError: failure => {
+      setUnassignError(errorMessage(failure));
+    }
+  });
 
   const removeMutation = useMutation({
     mutationFn: () => {
@@ -526,6 +553,47 @@ function MembersPane({
                 <span className={`status-pill role-${member.role}`}>
                   {roleLabels[member.role]}
                 </span>
+                {member.allowedActions.includes("assignPersonalPlaylist") && (
+                  !member.hasPersonalPlaylist ? (
+                    <button
+                      type="button"
+                      className="primary-button member-action-btn"
+                      aria-label={`为${member.nickname}分配歌单`}
+                      onClick={() => {
+                        setAssignTarget({ id: member.id, nickname: member.nickname, hasPersonalPlaylist: false });
+                        setAssignOpen(true);
+                      }}
+                    >
+                      分配歌单
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="secondary-button member-action-btn"
+                        aria-label={`为${member.nickname}更换歌单`}
+                        onClick={() => {
+                          setAssignTarget({ id: member.id, nickname: member.nickname, hasPersonalPlaylist: true });
+                          setAssignOpen(true);
+                        }}
+                      >
+                        更换歌单
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button member-action-btn unassign-btn"
+                        aria-label={`解除${member.nickname}的歌单分配`}
+                        onClick={() => {
+                          setUnassignTarget({ id: member.id, nickname: member.nickname });
+                          setUnassignOpen(true);
+                          setUnassignError("");
+                        }}
+                      >
+                        解除分配
+                      </button>
+                    </>
+                  )
+                )}
                 {!member.isSelf && <button
                   type="button"
                   className="secondary-button"
@@ -557,6 +625,34 @@ function MembersPane({
             sessionId={sessionId}
             roomId={roomId}
           />
+          <AssignFavoritePlaylistDialog
+            open={assignOpen}
+            onOpenChange={setAssignOpen}
+            sessionId={sessionId}
+            roomId={roomId}
+            targetMember={assignTarget}
+          />
+          {unassignTarget && (
+            <DestructiveConfirmDialog
+              title={`解除“${unassignTarget.nickname}”的歌单分配？`}
+              descriptionText={`确定要解除该成员绑定的收藏歌单吗？解除后该成员将无法通过个人歌单点歌，但已点入公共歌单的歌曲将保持不变。`}
+              badges={[
+                { label: "恢复为未分配状态", variant: "warning" },
+                { label: "保留已点歌曲", variant: "neutral" }
+              ]}
+              confirmText="确认解除"
+              pendingText="正在解除…"
+              cancelText="取消"
+              open={unassignOpen}
+              onOpenChange={open => {
+                setUnassignOpen(open);
+                if (!open) setUnassignTarget(null);
+              }}
+              onConfirm={() => unassignMutation.mutate()}
+              isPending={unassignMutation.isPending}
+              error={unassignError}
+            />
+          )}
         </>
       )}
     </div>

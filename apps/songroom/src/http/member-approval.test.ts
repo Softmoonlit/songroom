@@ -391,7 +391,11 @@ it("成员列表只暴露房间身份与当前动作，不泄漏账号或其他�
     expect(view.allowedActions).toEqual(expect.any(Array));
     for (const member of view.members) {
       expect(Object.keys(member).sort()).toEqual(["allowedActions", "disabledReasons", "hasPersonalPlaylist", "id", "isSelf", "nickname", "role"]);
-      expect(member.allowedActions).toEqual(member.isSelf ? ["renameNickname"] : (cookie === owner ? ["removeMember"] : []));
+      expect(member.allowedActions).toEqual(
+        member.isSelf
+          ? (cookie === owner ? ["renameNickname", "assignPersonalPlaylist"] : ["renameNickname"])
+          : (cookie === owner ? ["removeMember", "assignPersonalPlaylist"] : [])
+      );
       if (member.isSelf) expect(member.disabledReasons).toEqual({});
       else expect(member.disabledReasons).toEqual({ renameNickname: expect.any(String) });
     }

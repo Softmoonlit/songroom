@@ -116,7 +116,6 @@ async function fixture() {
     accountId: "acc-owner",
     playlistId: "pl-rm1",
     name: "songroom-测试宿舍-室友甲",
-    creationOperationId: v7(),
     generation: 1,
     createdAt: Date.now(),
     updatedAt: Date.now()

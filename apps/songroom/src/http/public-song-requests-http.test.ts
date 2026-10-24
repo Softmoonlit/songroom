@@ -52,8 +52,8 @@ async function fixture() {
   const ownerRecord = app.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, owner.userId))).get()!;
 
   app.database.insert(personalPlaylistBinding).values([
-    { id: v7(), roomId, accountId: "test", memberId: memberRecord.id, playlistId: "pl-member", name: "songroom-测试宿舍-室友", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: v7(), roomId, accountId: "test", memberId: ownerRecord.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", creationOperationId: v7(), generation: 1, createdAt: Date.now(), updatedAt: Date.now() }
+    { id: v7(), roomId, accountId: "test", memberId: memberRecord.id, playlistId: "pl-member", name: "songroom-测试宿舍-室友", generation: 1, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: v7(), roomId, accountId: "test", memberId: ownerRecord.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", generation: 1, createdAt: Date.now(), updatedAt: Date.now() }
   ]).run();
 
   return { app, adapter, owner, member, outsider, roomId, baseUrl };

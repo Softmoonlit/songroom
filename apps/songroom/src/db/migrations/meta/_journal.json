@@ -204,6 +204,13 @@
       "when": 1792300000000,
       "tag": "0028_remove_upstream_start_budget",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1792400000000,
+      "tag": "0029_assign_favorite_playlists",
+      "breakpoints": true
     }
   ]
 }

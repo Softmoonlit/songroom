@@ -27,7 +27,7 @@ export const roomIdentityDisabledReasons = z.strictObject({
   readInvite: z.literal("OWNER_ONLY").optional(),
   deleteRoom: z.literal("OWNER_ONLY").optional()
 });
-export const roomMemberAction = z.enum(["renameNickname", "removeMember"]);
+export const roomMemberAction = z.enum(["renameNickname", "removeMember", "assignPersonalPlaylist", "unassignPersonalPlaylist"]);
 export const roomMemberDisabledReasons = z.strictObject({
   renameNickname: z.literal("SELF_ONLY").optional()
 });

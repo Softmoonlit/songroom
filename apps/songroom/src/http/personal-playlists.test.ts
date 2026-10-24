@@ -44,8 +44,8 @@ async function fixture() {
       playlist: {
         id: input.playlistId,
         name: input.playlistId === "pl-my-fav" ? "我喜欢的音乐" : "摇滚精选",
-        creatorId: "test",
-        subscribed: false,
+        creatorId: input.playlistId === "pl-my-fav" ? "test" : "rocker",
+        subscribed: input.playlistId !== "pl-my-fav",
         status: 0
       },
       songIds: ["song-1"],
@@ -146,7 +146,6 @@ describe("personal-playlist HTTP routes", () => {
       accountId: "cloud-owner",
       playlistId: "pl-fav",
       name: "摇滚精选",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -182,6 +181,46 @@ describe("personal-playlist HTTP routes", () => {
     expect(memberView.playlist).toEqual({ id: "pl-fav", name: "摇滚精选" });
     expect(memberView.snapshot?.trackCount).toBe(1);
     expect(memberView.allowedActions).toEqual([]);
+  });
+
+  it("房主可获取收藏歌单候选，非房主禁止访问", async () => {
+    const { app, owner, member, outsider, roomId } = await fixture();
+    const url = `/api/rooms/${roomId}/personal-playlist/candidates`;
+
+    expect((await request(app, url)).statusCode).toBe(401);
+    expect((await request(app, url, outsider.cookie)).statusCode).toBe(404);
+    expect((await request(app, url, member.cookie)).statusCode).toBe(403);
+
+    const ownerRes = await request(app, url, owner.cookie);
+    expect(ownerRes.statusCode).toBe(200);
+    const body = ownerRes.json();
+    expect(body.candidates).toEqual([
+      expect.objectContaining({ id: "pl-sub-rock", name: "摇滚精选" })
+    ]);
+  });
+
+  it("房主可分配与解除成员个人歌单，非房主禁止操作", async () => {
+    const { app, owner, member, roomId, roommateMemberId } = await fixture();
+    const assignUrl = `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/assign`;
+    const unassignUrl = `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/unassign`;
+
+    // 非房主尝试分配
+    expect((await request(app, assignUrl, member.cookie, { playlistId: "pl-sub-rock" })).statusCode).toBe(403);
+
+    // 房主分配
+    const assignRes = await request(app, assignUrl, owner.cookie, { playlistId: "pl-sub-rock" });
+    expect(assignRes.statusCode).toBe(200);
+    const assignedView = personalPlaylistView.parse(assignRes.json());
+    expect(assignedView.playlist?.id).toBe("pl-sub-rock");
+
+    // 非房主尝试解除
+    expect((await request(app, unassignUrl, member.cookie, {})).statusCode).toBe(403);
+
+    // 房主解除分配
+    const unassignRes = await request(app, unassignUrl, owner.cookie, {});
+    expect(unassignRes.statusCode).toBe(200);
+    const unassignedView = personalPlaylistView.parse(unassignRes.json());
+    expect(unassignedView.playlist).toBeNull();
   });
 });
 

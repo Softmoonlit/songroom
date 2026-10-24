@@ -6,8 +6,6 @@ import {
   neteaseAuthorization,
   operation,
   personalPlaylistBinding,
-  personalPlaylistCreation,
-  personalSongMutation,
   playlistSnapshot,
   publicPlaylistBinding,
   publicPlaylistCleanup,
@@ -58,12 +56,12 @@ export class AbnormalOperationsService {
     const list: AbnormalOperationSummary[] = [];
 
     // 1. 普通未知歌曲写入 (必须是三轮补查结束后的长期未知待确认)
-    const songOps = [publicSongRequest, personalSongMutation].flatMap(detail => this.database
+    const songOps = this.database
       .select({ id: operation.id, accountId: operation.accountId, status: operation.status, version: operation.version,
-        updatedAt: operation.updatedAt, playlistId: detail.playlistId, checkRound: detail.checkRound })
-      .from(operation).innerJoin(detail, eq(detail.operationId, operation.id))
-      .where(and(eq(operation.status, "awaitingConfirmation"), sql`${detail.checkRound} >= 3`, isNull(detail.nextCheckAt)))
-      .orderBy(desc(operation.updatedAt)).all());
+        updatedAt: operation.updatedAt, playlistId: publicSongRequest.playlistId, checkRound: publicSongRequest.checkRound })
+      .from(operation).innerJoin(publicSongRequest, eq(publicSongRequest.operationId, operation.id))
+      .where(and(eq(operation.status, "awaitingConfirmation"), sql`${publicSongRequest.checkRound} >= 3`, isNull(publicSongRequest.nextCheckAt)))
+      .orderBy(desc(operation.updatedAt)).all();
 
     for (const op of songOps) {
       list.push({
@@ -104,36 +102,6 @@ export class AbnormalOperationsService {
         status: op.status,
         version: op.version,
         summary: `公共歌单创建结果未知 (歌单名称: ${op.name}, 等待具权核查)`,
-        updatedAt: op.updatedAt
-      });
-    }
-
-    // 2.1 专用个人歌单未知创建 (需管理员处理)
-    const createPersonalOps = this.database
-      .select({
-        id: operation.id,
-        accountId: operation.accountId,
-        roomId: operation.roomId,
-        status: operation.status,
-        version: operation.version,
-        updatedAt: operation.updatedAt,
-        name: personalPlaylistCreation.name
-      })
-      .from(operation)
-      .innerJoin(personalPlaylistCreation, eq(personalPlaylistCreation.operationId, operation.id))
-      .where(and(eq(operation.kind, "createPersonalPlaylist"), eq(operation.status, "needsAdministrator")))
-      .orderBy(desc(operation.updatedAt))
-      .all();
-
-    for (const op of createPersonalOps) {
-      list.push({
-        id: op.id,
-        type: "unknown_playlist_create",
-        accountId: op.accountId ?? "unknown",
-        targetId: op.roomId,
-        status: op.status,
-        version: op.version,
-        summary: `专用个人歌单创建结果未知 (歌单名称: ${op.name}, 等待具权核查)`,
         updatedAt: op.updatedAt
       });
     }
@@ -231,33 +199,6 @@ export class AbnormalOperationsService {
             updatedAt: op.updatedAt
           };
         }
-      } else if (op.kind === "createPersonalPlaylist") {
-        const detail = this.database.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, op.id)).get();
-        if (detail) {
-          const beforeList: Array<{ id: string; name: string }> = detail.beforePlaylists ? JSON.parse(detail.beforePlaylists) : [];
-          const afterList: Array<{ id: string; name: string }> = detail.afterPlaylists ? JSON.parse(detail.afterPlaylists) : [];
-          const beforeIds = new Set(beforeList.map(p => p.id));
-          const added = afterList.filter(p => !beforeIds.has(p.id));
-
-          return {
-            id: op.id,
-            type: "unknown_playlist_create",
-            accountId: op.accountId ?? "",
-            targetId: op.roomId,
-            status: op.status,
-            version: op.version,
-            roomId: op.roomId,
-            candidatePlaylistsCount: added.length,
-            candidatePlaylistId: added.length === 1 ? added[0].id : null,
-            candidatePlaylistName: added.length === 1 ? added[0].name : null,
-            lastErrorCode: op.errorCode,
-            impactDescription:
-              added.length === 1
-                ? "具体 ID 证据唯一：若原房间与归属成员仍有效则恢复专用个人歌单绑定；若原业务已结束转歌单清理"
-                : "证据歧义：新增歌单数量不等于 1，将继续保持暂停，不得按名称猜测或再次创建",
-            updatedAt: op.updatedAt
-          };
-        }
       }
     }
 
@@ -317,7 +258,7 @@ export class AbnormalOperationsService {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
     }
 
-    const table = op.kind === "requestPublicSong" ? publicSongRequest : personalSongMutation;
+    const table = publicSongRequest;
     const req = this.database.select().from(table).where(eq(table.operationId, operationId)).get();
     if (!req) {
       throw new BusinessError(404, "NOT_FOUND", "未找到对应的点歌请求详情");
@@ -392,7 +333,7 @@ export class AbnormalOperationsService {
     const validatedReason = validateAdminReason(input.reason);
 
     const op = this.database.select().from(operation).where(eq(operation.id, operationId)).get();
-    if (!op || (op.kind !== "createPublicPlaylist" && op.kind !== "createPersonalPlaylist")) {
+    if (!op || op.kind !== "createPublicPlaylist") {
       throw new BusinessError(404, "NOT_FOUND", "未找到对应的歌单创建操作");
     }
     if (op.status !== "needsAdministrator") {
@@ -402,13 +343,8 @@ export class AbnormalOperationsService {
       throw new BusinessError(409, "OPERATION_STATE_CHANGED", "操作状态或版本已发生变化，旧确认已失效，请重新核实");
     }
 
-    const publicDetail = op.kind === "createPublicPlaylist"
-      ? this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, operationId)).get()
-      : null;
-    const personalDetail = op.kind === "createPersonalPlaylist"
-      ? this.database.select().from(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, operationId)).get()
-      : null;
-    const detail = publicDetail || personalDetail;
+    const publicDetail = this.database.select().from(publicPlaylistCreation).where(eq(publicPlaylistCreation.operationId, operationId)).get();
+    const detail = publicDetail;
     if (!detail) {
       throw new BusinessError(404, "NOT_FOUND", "未找到对应的歌单创建详情");
     }
@@ -584,157 +520,7 @@ export class AbnormalOperationsService {
       };
     }
 
-    // createPersonalPlaylist
-    const member = roomRow ? this.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, op.roomId), eq(roomMembership.userId, op.userId))).get() : null;
-    const existingBinding = member ? this.database.select().from(personalPlaylistBinding).where(and(eq(personalPlaylistBinding.roomId, op.roomId), eq(personalPlaylistBinding.memberId, member.id))).get() : null;
-    const currentAuth = roomRow ? this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get() : null;
-
-    const isBusinessValid = Boolean(
-      personalDetail &&
-      roomRow &&
-      roomRow.ownerUserId === personalDetail.ownerUserId &&
-      member &&
-      member.id === personalDetail.memberId &&
-      !existingBinding &&
-      currentAuth &&
-      currentAuth.status === "active" &&
-      currentAuth.accountId === op.accountId &&
-      currentAuth.generation === op.generation
-    );
-
-    if (isBusinessValid) {
-      this.database.transaction(tx => {
-        const now = this.now();
-        tx.insert(personalPlaylistBinding).values({
-          id: v7(),
-          roomId: op.roomId,
-          memberId: member!.id,
-          accountId: op.accountId!,
-          playlistId: candidate.id,
-          name: candidate.name,
-          creationOperationId: op.id,
-          generation: op.generation!,
-          createdAt: now,
-          updatedAt: now
-        }).run();
-        tx.insert(playlistSnapshot).values({
-          accountId: op.accountId!,
-          playlistId: candidate.id,
-          snapshotVersion: 0,
-          lastReadStartedAt: 0,
-          createdAt: now,
-          updatedAt: now
-        }).onConflictDoNothing().run();
-        tx.update(personalPlaylistCreation).set({ playlistId: candidate.id, step: "succeeded", recovered: true })
-          .where(eq(personalPlaylistCreation.operationId, op.id)).run();
-        tx.update(operation).set({
-          status: "succeeded",
-          accountId: null,
-          authorizationId: null,
-          generation: null,
-          updatedAt: now,
-          version: nextVersion
-        }).where(eq(operation.id, op.id)).run();
-        tx.update(room).set({ version: sql`${room.version} + 1` }).where(eq(room.id, op.roomId)).run();
-
-        tx.insert(adminAuditLog)
-          .values({
-            id: v7(),
-            adminUserId,
-            targetType: "operation",
-            targetId: operationId,
-            action: "resolve_playlist_create",
-            reason: validatedReason,
-            previousStatus: "needsAdministrator",
-            nextStatus: "succeeded",
-            result: "succeeded",
-            details: JSON.stringify({ outcome: "binding_restored", playlistId: candidate.id, operationKind: "createPersonalPlaylist" }),
-            createdAt: new Date(now)
-          })
-          .run();
-      });
-
-      const updatedRoom = this.database.select({ version: room.version }).from(room).where(eq(room.id, op.roomId)).get();
-      this.eventStream.notifyRoom(this.database, op.roomId, {
-        type: "operation",
-        resourceId: operationId,
-        version: nextVersion
-      });
-      if (updatedRoom) {
-        this.eventStream.notifyRoom(this.database, op.roomId, {
-          type: "room",
-          resourceId: op.roomId,
-          version: updatedRoom.version
-        });
-      }
-
-      return {
-        ok: true,
-        action: "resolve_playlist_create",
-        targetId: operationId,
-        previousStatus: "needsAdministrator",
-        nextStatus: "succeeded",
-        conclusion: "binding_restored",
-        message: `创建证据唯一，已成功为房间恢复专用个人歌单绑定 (${candidate.id})`
-      };
-    }
-
-    // 业务已结束：转个人歌单清理任务
-    let cleanupId: string;
-    const ownerUserId = personalDetail!.ownerUserId;
-    this.database.transaction(tx => {
-      cleanupId = this.playlists.ensureCleanupInTx(tx, ownerUserId, op.accountId!, candidate.id, op.id);
-
-      tx.delete(personalPlaylistCreation)
-        .where(eq(personalPlaylistCreation.operationId, operationId))
-        .run();
-
-      tx.update(operation)
-        .set({
-          status: "stopped",
-          errorCode: null,
-          accountId: null,
-          authorizationId: null,
-          generation: null,
-          version: nextVersion,
-          updatedAt: this.now()
-        })
-        .where(eq(operation.id, operationId))
-        .run();
-
-      tx.insert(adminAuditLog)
-        .values({
-          id: v7(),
-          adminUserId,
-          targetType: "operation",
-          targetId: operationId,
-          action: "resolve_playlist_create",
-          reason: validatedReason,
-          previousStatus: "needsAdministrator",
-          nextStatus: "stopped",
-          result: "succeeded",
-          details: JSON.stringify({ outcome: "transferred_to_cleanup", playlistId: candidate.id, cleanupId, operationKind: "createPersonalPlaylist" }),
-          createdAt: new Date(this.now())
-        })
-        .run();
-    });
-
-    this.playlists.dispatchCleanup(cleanupId!);
-    this.eventStream.notifyUser(ownerUserId, {
-      type: "cleanup",
-      resourceId: cleanupId!,
-      version: 1
-    });
-
-    return {
-      ok: true,
-      action: "resolve_playlist_create",
-      targetId: operationId,
-      previousStatus: "needsAdministrator",
-      nextStatus: "stopped",
-      conclusion: "transferred_to_cleanup",
-      message: `原业务已结束，唯一新增歌单 (${candidate.id}) 已安全转入歌单清理任务`
-    };
+    throw new BusinessError(400, "INVALID_OPERATION", "不支持的歌单创建操作");
   }
 
   authorizeCleanupRetry(

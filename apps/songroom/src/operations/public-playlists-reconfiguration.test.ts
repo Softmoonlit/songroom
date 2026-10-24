@@ -151,7 +151,6 @@ function fixture() {
     accountId: scope.accountId,
     playlistId: "member-personal-pl",
     name: "songroom-宿舍-室友",
-    creationOperationId: v7(),
     generation: 1,
     createdAt: Date.now(),
     updatedAt: Date.now()

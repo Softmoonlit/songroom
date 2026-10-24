@@ -35,6 +35,27 @@ export const personalPlaylistOperation = z.strictObject({
 });
 export type PersonalPlaylistOperation = z.infer<typeof personalPlaylistOperation>;
 
+export const favoritePlaylistCandidate = z.strictObject({
+  id: z.string().min(1),
+  name: z.string(),
+  coverImgUrl: z.string().nullable().optional(),
+  trackCount: z.number().int().nonnegative(),
+  creatorNickname: z.string().nullable().optional()
+});
+export type FavoritePlaylistCandidate = z.infer<typeof favoritePlaylistCandidate>;
+
+export const favoritePlaylistCandidatesView = z.strictObject({
+  candidates: z.array(favoritePlaylistCandidate),
+  version: z.number().int().positive()
+});
+export type FavoritePlaylistCandidatesView = z.infer<typeof favoritePlaylistCandidatesView>;
+
+export const assignPersonalPlaylistCommand = z.strictObject({
+  playlistId: z.string().min(1),
+  idempotencyKey: uuidv7.optional()
+});
+export type AssignPersonalPlaylistCommand = z.infer<typeof assignPersonalPlaylistCommand>;
+
 export const personalPlaylistView = z.strictObject({
   playlist: z.strictObject({
     id: z.string().min(1),

@@ -1,7 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
-import { v7 } from "uuid";
+import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "../db/database.js";
-import { commandReceipt, operation, personalPlaylistBinding, personalPlaylistCreation, personalSongMutation, playlistSnapshot, playlistTrack, publicPlaylistBinding } from "../db/schema.js";
+import { personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistBinding } from "../db/schema.js";
 
 type DatabaseTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
@@ -42,33 +41,9 @@ export function terminatePersonalPlaylistsInTx(
       tx.delete(playlistSnapshot).where(target).run();
     }
   }
-
-  const creations = tx.select({ opId: operation.id, userId: operation.userId }).from(operation)
-    .innerJoin(personalPlaylistCreation, eq(personalPlaylistCreation.operationId, operation.id))
-    .where(and(eq(operation.roomId, roomId), eq(operation.kind, "createPersonalPlaylist"),
-      memberId ? eq(personalPlaylistCreation.memberId, memberId) : undefined)).all();
-  for (const { opId, userId } of creations) {
-    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, opId))).run();
-    tx.delete(personalPlaylistCreation).where(eq(personalPlaylistCreation.operationId, opId)).run();
-    tx.delete(operation).where(eq(operation.id, opId)).run();
-  }
-
-  const mutations = tx.select({ opId: operation.id, userId: operation.userId }).from(operation)
-    .innerJoin(personalSongMutation, eq(personalSongMutation.operationId, operation.id))
-    .where(and(eq(operation.roomId, roomId), sql`${operation.kind} IN ('addPersonalSong', 'removePersonalSong')`,
-      memberId ? eq(personalSongMutation.memberId, memberId) : undefined)).all();
-  for (const { opId, userId } of mutations) {
-    tx.delete(commandReceipt).where(and(eq(commandReceipt.userId, userId), eq(commandReceipt.resourceId, opId))).run();
-    tx.delete(personalSongMutation).where(eq(personalSongMutation.operationId, opId)).run();
-    tx.delete(operation).where(eq(operation.id, opId)).run();
-  }
 }
 
 /** Pending personal writes also block requests that read that playlist as their source. */
-export function hasPersonalSongWrite(database: AppDatabase, accountId: string, playlistId: string, exceptOperationId?: string): boolean {
-  return Boolean(database.select({ id: operation.id }).from(operation)
-    .innerJoin(personalSongMutation, eq(personalSongMutation.operationId, operation.id))
-    .where(and(eq(operation.accountId, accountId), eq(personalSongMutation.playlistId, playlistId),
-      sql`${operation.status} NOT IN ('succeeded', 'failed', 'stopped')`,
-      exceptOperationId ? sql`${operation.id} != ${exceptOperationId}` : undefined)).get());
+export function hasPersonalSongWrite(_database: AppDatabase, _accountId: string, _playlistId: string, _exceptOperationId?: string): boolean {
+  return false;
 }

@@ -272,16 +272,15 @@ function dedicatedFixture() {
   ]).run();
   const binding = {
     id: v7(), roomId, memberId: ownerMemberId, accountId: "cloud-owner", playlistId: "personal",
-    name: "songroom-宿舍-房主", generation: 1,
-    creationOperationId: "expired-operation", createdAt: 1, updatedAt: 1
+    name: "songroom-宿舍-房主", generation: 1, createdAt: 1, updatedAt: 1
   };
   return { database, roomId, ownerMemberId, roommateMemberId, binding };
 }
 
-it("房主和室友均可保存专用个人绑定，创建证据在操作防重事实到期后继续保留", () => {
+it("房主和室友均可保存个人绑定", () => {
   const { database, roomId, roommateMemberId, binding } = dedicatedFixture();
   database.insert(personalPlaylistBinding).values(binding).run();
-  database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), memberId: roommateMemberId, playlistId: "roommate-personal", creationOperationId: "another-expired-operation" }).run();
+  database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), memberId: roommateMemberId, playlistId: "roommate-personal" }).run();
   expect(database.select().from(personalPlaylistBinding).all()).toHaveLength(2);
   expect(database.select().from(operation).all()).toHaveLength(0);
   database.delete(roomMembership).where(sql`${roomMembership.id} = ${binding.memberId}`).run();
@@ -291,28 +290,21 @@ it("房主和室友均可保存专用个人绑定，创建证据在操作防重�
 });
 
 it.each([
-  ["account_id", ""], ["playlist_id", ""], ["name", ""], ["generation", -1],
-  ["creation_operation_id", null], ["creation_operation_id", ""], ["generation", 0]
-])("个人绑定拒绝空身份字段、无创建证据和无效代次：%s=%s", (column, value) => {
+  ["account_id", ""], ["playlist_id", ""], ["name", ""], ["generation", -1], ["generation", 0]
+])("个人绑定拒绝空身份字段和无效代次：%s=%s", (column, value) => {
   const { database, binding } = dedicatedFixture();
   database.insert(personalPlaylistBinding).values(binding).run();
   expect(() => database.$client.prepare(`UPDATE personal_playlist_binding SET ${column} = ? WHERE id = ?`).run(value, binding.id)).toThrow(/CHECK|NOT NULL/);
   expect(database.select().from(personalPlaylistBinding).get()).toEqual(binding);
 });
 
-it("同成员最多一份，个人云端目标不能跨成员或房间共用，插入和更新均拒绝", () => {
+it("同成员最多一份绑定，不同成员可以分配相同收藏歌单", () => {
   const { database, roomId, roommateMemberId, binding } = dedicatedFixture();
   database.insert(personalPlaylistBinding).values(binding).run();
-  expect(() => database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), playlistId: "different", creationOperationId: "different-op" }).run()).toThrow(/UNIQUE/);
-  expect(() => database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), memberId: roommateMemberId, creationOperationId: "roommate-op" }).run()).toThrow(/UNIQUE/);
-  const anotherRoomId = v7();
-  const anotherMemberId = v7();
-  database.insert(room).values({ id: anotherRoomId, ownerUserId: "owner", name: "另一宿舍" }).run();
-  database.insert(roomMembership).values({ id: anotherMemberId, roomId: anotherRoomId, userId: "owner", nickname: "房主" }).run();
-  expect(() => database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), roomId: anotherRoomId, memberId: anotherMemberId, creationOperationId: "another-room-op" }).run()).toThrow(/UNIQUE/);
-  database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), roomId: anotherRoomId, memberId: anotherMemberId, accountId: "another-cloud", creationOperationId: "another-cloud-op" }).run();
-  expect(() => database.update(personalPlaylistBinding).set({ accountId: binding.accountId }).where(sql`${personalPlaylistBinding.memberId} = ${anotherMemberId}`).run()).toThrow(/UNIQUE/);
-  expect(database.select().from(personalPlaylistBinding).where(sql`${personalPlaylistBinding.roomId} = ${roomId}`).all()).toHaveLength(1);
+  expect(() => database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), playlistId: "different" }).run()).toThrow(/UNIQUE/);
+  // 不同成员可以分配相同收藏歌单
+  database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), memberId: roommateMemberId }).run();
+  expect(database.select().from(personalPlaylistBinding).where(sql`${personalPlaylistBinding.roomId} = ${roomId}`).all()).toHaveLength(2);
 });
 
 it("公共与个人歌单目标双向隔离，覆盖两种创建顺序和双方目标更新", () => {
@@ -327,7 +319,7 @@ it("公共与个人歌单目标双向隔离，覆盖两种创建顺序和双方�
   const anotherRoom = v7();
   database.insert(room).values({ id: anotherRoom, ownerUserId: "owner", name: "另一宿舍" }).run();
   expect(() => database.insert(publicPlaylistBinding).values({ ...publicBinding, roomId: anotherRoom, playlistId: binding.playlistId, creationOperationId: "another-public-op" }).run()).toThrow(/PLAYLIST_TARGET_CONFLICT/);
-  database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), memberId: roommateMemberId, accountId: "another-cloud", playlistId: "public", creationOperationId: "other-account-op" }).run();
+  database.insert(personalPlaylistBinding).values({ ...binding, id: v7(), memberId: roommateMemberId, accountId: "another-cloud", playlistId: "public" }).run();
 });
 
 it("个人绑定的成员必须属于绑定房间，不能借插入、改绑定房间或移动成员穿越房间边界", () => {
@@ -338,13 +330,4 @@ it("个人绑定的成员必须属于绑定房间，不能借插入、改绑定�
   database.insert(personalPlaylistBinding).values(binding).run();
   expect(() => database.update(personalPlaylistBinding).set({ roomId: anotherRoomId }).run()).toThrow(/FOREIGN KEY/);
   expect(() => database.update(roomMembership).set({ roomId: anotherRoomId }).where(sql`${roomMembership.id} = ${binding.memberId}`).run()).toThrow(/FOREIGN KEY/);
-});
-
-it("一次个人创建证据只能产生一份专用绑定，即使成员和云端目标均不同", () => {
-  const { database, roommateMemberId, binding } = dedicatedFixture();
-  database.insert(personalPlaylistBinding).values(binding).run();
-  const secondBinding = { ...binding, id: v7(), memberId: roommateMemberId, playlistId: "another-personal" };
-  expect(() => database.insert(personalPlaylistBinding).values(secondBinding).run()).toThrow(/UNIQUE/);
-  database.insert(personalPlaylistBinding).values({ ...secondBinding, creationOperationId: "another-creation" }).run();
-  expect(() => database.update(personalPlaylistBinding).set({ creationOperationId: binding.creationOperationId }).where(sql`${personalPlaylistBinding.id} = ${secondBinding.id}`).run()).toThrow(/UNIQUE/);
 });

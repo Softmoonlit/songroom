@@ -251,7 +251,6 @@ function createTestContext(): TestContext {
     accountId: "acc-owner",
     playlistId: rm1PlaylistId,
     name: "室友1歌单",
-    creationOperationId: v7(),
     generation: 1,
     createdAt: now(),
     updatedAt: now()
@@ -293,7 +292,6 @@ function createTestContext(): TestContext {
     accountId: "acc-owner",
     playlistId: rm2PlaylistId,
     name: "室友2歌单",
-    creationOperationId: v7(),
     generation: 1,
     createdAt: now(),
     updatedAt: now()

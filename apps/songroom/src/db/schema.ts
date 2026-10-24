@@ -209,7 +209,6 @@ export const retiredPublicPlaylistBinding = sqliteTable("retired_public_playlist
   check("retired_public_playlist_binding_id_valid", sql`length(${table.playlistId}) > 0`)
 ]);
 
-// Migration 0024 enforces public/personal target exclusivity in both insert/update directions.
 export const personalPlaylistBinding = sqliteTable("personal_playlist_binding", {
   id: text("id").primaryKey(),
   roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
@@ -218,8 +217,6 @@ export const personalPlaylistBinding = sqliteTable("personal_playlist_binding", 
   playlistId: text("playlist_id").notNull(),
   name: text("name").notNull(),
   generation: integer("generation").notNull().default(1),
-  // Durable creation provenance survives expiration of the operation envelope.
-  creationOperationId: text("creation_operation_id").notNull(),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 }, table => [
@@ -228,50 +225,9 @@ export const personalPlaylistBinding = sqliteTable("personal_playlist_binding", 
     foreignColumns: [roomMembership.roomId, roomMembership.id]
   }).onDelete("cascade"),
   uniqueIndex("personal_playlist_binding_room_member_unique").on(table.roomId, table.memberId),
-  uniqueIndex("personal_playlist_binding_target_unique").on(table.accountId, table.playlistId),
-  uniqueIndex("personal_playlist_binding_creation_unique").on(table.creationOperationId),
-  check("personal_playlist_binding_creation_valid", sql`length(${table.creationOperationId}) > 0`),
+  index("personal_playlist_binding_target_index").on(table.accountId, table.playlistId),
   check("personal_playlist_binding_generation_valid", sql`${table.generation} > 0`),
   check("personal_playlist_binding_fields_valid", sql`length(${table.playlistId}) > 0 AND length(${table.accountId}) > 0 AND length(${table.name}) > 0`)
-]);
-
-export const personalPlaylistCreation = sqliteTable("personal_playlist_creation", {
-  operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
-  ownerUserId: text("owner_user_id").notNull(),
-  memberId: text("member_id").notNull(),
-  name: text("name").notNull(),
-  step: text("step", { enum: ["ready", "verified", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
-  playlistId: text("playlist_id"),
-  beforePlaylists: text("before_playlists"),
-  afterPlaylists: text("after_playlists"),
-  sentAt: integer("sent_at"),
-  recovered: integer("recovered", { mode: "boolean" }).notNull().default(false)
-}, table => [
-  check("personal_playlist_creation_step_valid", sql`${table.step} IN ('ready', 'verified', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
-  check("personal_playlist_creation_name_len", sql`length(${table.name}) >= 1 AND length(${table.name}) <= 100`)
-]);
-
-export const personalSongMutation = sqliteTable("personal_song_mutation", {
-  operationId: text("operation_id").primaryKey().references(() => operation.id, { onDelete: "cascade" }),
-  memberId: text("member_id").notNull(),
-  playlistId: text("playlist_id").notNull(),
-  bindingGeneration: integer("binding_generation").notNull(),
-  songId: text("song_id").notNull(),
-  name: text("name").notNull(),
-  artists: text("artists").notNull(),
-  album: text("album").notNull(),
-  step: text("step", { enum: ["ready", "prepared", "sending", "confirming", "succeeded", "rejected", "unknown", "stopped"] }).notNull().default("ready"),
-  checkRound: integer("check_round").notNull().default(0),
-  nextCheckAt: integer("next_check_at")
-}, table => [
-  index("personal_song_mutation_target_index").on(table.playlistId),
-  index("personal_song_mutation_member_index").on(table.memberId),
-  check("personal_song_mutation_step_valid", sql`${table.step} IN ('ready', 'prepared', 'sending', 'confirming', 'succeeded', 'rejected', 'unknown', 'stopped')`),
-  check("personal_song_mutation_song_id_valid", sql`length(${table.songId}) > 0`),
-  check("personal_song_mutation_name_valid", sql`length(${table.name}) > 0`),
-  check("personal_song_mutation_playlist_id_valid", sql`length(${table.playlistId}) > 0`),
-  check("personal_song_mutation_binding_generation_valid", sql`${table.bindingGeneration} > 0`),
-  check("personal_song_mutation_check_round_valid", sql`${table.checkRound} >= 0 AND ${table.checkRound} <= 3`)
 ]);
 
 // 真实账号风控暂停持久化；执行权在发送前短事务中认领。
@@ -455,7 +411,7 @@ export const adminAuditLog = sqliteTable("admin_audit_log", {
 ]);
 
 export const authSchema = { user, session, account, verification };
-export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, personalPlaylistBinding, personalPlaylistCreation, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, publicPlaylistReplacement, requesterTag, publicPlaylistCleanup, adminAuditLog };
+export const schema = { schemaMeta, ...authSchema, neteaseAuthorization, commandReceipt, room, roomMembership, roomInvite, retiredRoomInvite, joinApplication, operation, publicPlaylistCreation, publicPlaylistBinding, retiredPublicPlaylistBinding, personalPlaylistBinding, upstreamAccount, playlistSnapshot, playlistTrack, publicSongRequest, publicPlayNext, publicPlaylistReplacement, requesterTag, publicPlaylistCleanup, adminAuditLog };
 
 export type SchemaMeta = typeof schemaMeta.$inferSelect;
 export type NewSchemaMeta = typeof schemaMeta.$inferInsert;

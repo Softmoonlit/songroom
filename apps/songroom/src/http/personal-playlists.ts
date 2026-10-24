@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { SongRoomAuth } from "../auth.js";
 import type { PersonalPlaylists } from "../operations/personal-playlists.js";
 import {
+  assignPersonalPlaylistCommand,
+  favoritePlaylistCandidatesView,
   personalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
 import { roomParams } from "../shared/room-contracts.js";
@@ -42,6 +44,27 @@ export function registerPersonalPlaylistRoutes(app: FastifyInstance, auth: SongR
   }, async (request, reply) => {
     const principal = await requireSession(auth, request, reply);
     return playlists.refresh(principal.userId, request.params.roomId, request.params.memberId);
+  });
+
+  typed.get("/api/rooms/:roomId/personal-playlist/candidates", {
+    schema: { params: roomParams, response: { 200: favoritePlaylistCandidatesView } }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    return playlists.getCandidates(principal.userId, request.params.roomId);
+  });
+
+  typed.post("/api/rooms/:roomId/members/:memberId/personal-playlist/assign", {
+    schema: { params: memberPersonalPlaylistParams, body: assignPersonalPlaylistCommand, response: { 200: personalPlaylistView } }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    return playlists.assign(principal.userId, request.params.roomId, request.params.memberId, request.body);
+  });
+
+  typed.post("/api/rooms/:roomId/members/:memberId/personal-playlist/unassign", {
+    schema: { params: memberPersonalPlaylistParams, response: { 200: personalPlaylistView } }
+  }, async (request, reply) => {
+    const principal = await requireSession(auth, request, reply);
+    return playlists.unassign(principal.userId, request.params.roomId, request.params.memberId);
   });
 }
 

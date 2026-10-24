@@ -46,7 +46,17 @@ function song(value: any) {
   return { id: upstreamId(value.id), name: value.name, artists: (value.ar ?? value.artists ?? []).map((artist: any) => artist.name).filter(Boolean), album: (value.al ?? value.album)?.name ?? "" };
 }
 function playlist(value: any) {
-  return { id: upstreamId(value.id), name: value.name, creatorId: upstreamId(value.creator.userId), subscribed: value.subscribed === true, status: value.status ?? 0 };
+  const result: any = {
+    id: upstreamId(value.id),
+    name: value.name,
+    creatorId: upstreamId(value.creator?.userId ?? value.creatorId),
+    subscribed: value.subscribed === true,
+    status: value.status ?? 0
+  };
+  if (typeof value.coverImgUrl === "string") result.coverImgUrl = value.coverImgUrl;
+  if (typeof value.trackCount === "number") result.trackCount = value.trackCount;
+  if (typeof value.creator?.nickname === "string") result.creatorNickname = value.creator.nickname;
+  return result;
 }
 async function invoke(message: WorkerInput): Promise<AdapterResult> {
   const { input, requestTimeoutMs, deviceId } = message;

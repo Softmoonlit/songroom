@@ -10,7 +10,7 @@ import { randomBytes } from "node:crypto";
 import { v7 } from "uuid";
 import { afterEach, expect, it, vi } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
-import { commandReceipt, neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, personalPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
+import { commandReceipt, neteaseAuthorization, operation, personalPlaylistBinding, playlistSnapshot, playlistTrack, publicPlaylistBinding, publicPlaylistCleanup, publicPlaylistCreation, room, roomMembership, user } from "../db/schema.js";
 import { CredentialVault } from "../netease/credentials.js";
 import type { AdapterInput, AdapterResult, NeteaseAdapter } from "../netease/protocol.js";
 import { PublicPlaylists } from "./public-playlists.js";
@@ -1210,16 +1210,21 @@ it("清理任务在授权不可用时保持 waitingAuthorization，遇到未知�
 
 
 
-it.each(["member", "room"] as const)("%s 终止时个人创建不转云端清理任务，绝不调用网易云删除", async scope => {
+it.each(["member", "room"] as const)("%s 终止时个人歌单只解除绑定，不转云端清理任务，绝不调用网易云删除", async scope => {
   const f = fixture();
   const service = f.module();
   const member = f.database.select().from(roomMembership).where(eq(roomMembership.userId, "member")).get()!;
-  const opId = v7();
-  f.database.insert(operation).values({ id: opId, kind: "createPersonalPlaylist", userId: "member",
-    roomId: f.roomId, accountId: "cloud-owner", authorizationId: f.authorizationId, generation: 1,
-    status: "needsAdministrator", createdAt: Date.now(), updatedAt: Date.now() }).run();
-  f.database.insert(personalPlaylistCreation).values({ operationId: opId, ownerUserId: "owner",
-    memberId: member.id, name: "songroom-宿舍-member", step: "confirming", playlistId: "personal-unbound" }).run();
+  f.database.insert(personalPlaylistBinding).values({
+    id: v7(),
+    roomId: f.roomId,
+    memberId: member.id,
+    accountId: "cloud-owner",
+    playlistId: "personal-fav",
+    name: "收藏歌单",
+    generation: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }).run();
 
   f.database.transaction(tx => {
     if (scope === "member") {
@@ -1228,6 +1233,7 @@ it.each(["member", "room"] as const)("%s 终止时个人创建不转云端清理
       service.terminateRoomInTx(tx, f.roomId, "owner");
     }
   });
+  expect(f.database.select().from(personalPlaylistBinding).all()).toEqual([]);
   expect(service.readCleanups("owner").cleanups).toEqual([]);
   expect(service.readCleanups("member").cleanups).toEqual([]);
   service.start();

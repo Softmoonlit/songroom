@@ -110,9 +110,9 @@ function fixture() {
   const ownerMember = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "owner"))).get()!;
 
   database.insert(personalPlaylistBinding).values([
-    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate1Member.id, playlistId: "pl-roommate1", name: "songroom-测试宿舍-室友甲", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() },
-    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate2Member.id, playlistId: "pl-roommate2", name: "songroom-测试宿舍-室友乙", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() },
-    { id: v7(), roomId, accountId: "acc-owner", memberId: ownerMember.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() }
+    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate1Member.id, playlistId: "pl-roommate1", name: "songroom-测试宿舍-室友甲", generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate2Member.id, playlistId: "pl-roommate2", name: "songroom-测试宿舍-室友乙", generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, accountId: "acc-owner", memberId: ownerMember.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", generation: 1, createdAt: now(), updatedAt: now() }
   ]).run();
 
   database.insert(playlistSnapshot).values([
@@ -912,7 +912,6 @@ it("目标冲突隔离：awaitingConfirmation 仅阻塞同一规范化歌单的�
     memberId: rm2Other.id,
     playlistId: "pl-rm2-other",
     name: "songroom-二号宿舍-室友乙",
-    creationOperationId: v7(),
     generation: 1,
     createdAt: f.now(),
     updatedAt: f.now()

@@ -227,7 +227,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -241,7 +240,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -339,7 +337,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -397,7 +394,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -476,7 +472,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -543,7 +538,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -613,7 +607,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -691,7 +684,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -705,7 +697,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -839,7 +830,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -853,7 +843,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友歌单(损坏)",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -927,7 +916,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主空歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -977,7 +965,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -992,7 +979,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友个人歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -1096,7 +1082,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: ownerPlId,
       name: "房主歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()
@@ -1111,7 +1096,6 @@ describe("PublicRandomPreview", () => {
       accountId: "cloud-owner",
       playlistId: roommatePlId,
       name: "室友歌单",
-      creationOperationId: v7(),
       generation: 1,
       createdAt: ctx.now(),
       updatedAt: ctx.now()

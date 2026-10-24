@@ -74,8 +74,6 @@ describe("database lifecycle", () => {
       "netease_authorization",
       "operation",
       "personal_playlist_binding",
-      "personal_playlist_creation",
-      "personal_song_mutation",
       "playlist_snapshot",
       "playlist_track",
       "public_play_next",
@@ -203,11 +201,10 @@ describe("database lifecycle", () => {
     try {
       expect(current.$client.prepare("SELECT * FROM personal_playlist_binding").all()).toEqual([{
         id: "dedicated", room_id: "room-b", member_id: "dedicated-member", account_id: "cloud", playlist_id: "dedicated",
-        name: "songroom-另一个宿舍-室友", generation: 3,
-        creation_operation_id: "expired-creation-operation", created_at: 11, updated_at: 22
+        name: "songroom-另一个宿舍-室友", generation: 3, created_at: 11, updated_at: 22
       }]);
       expect(current.$client.prepare("SELECT * FROM operation ORDER BY id").all()).toEqual(operations);
-      expect(current.$client.prepare("SELECT * FROM personal_playlist_creation ORDER BY operation_id").all()).toEqual(creations);
+      expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_playlist_creation'").get()).toBeUndefined();
       expect(current.$client.prepare("SELECT * FROM playlist_snapshot").all()).toEqual(snapshots);
       expect(current.$client.prepare("SELECT * FROM playlist_track").all()).toEqual(tracks);
       expect(current.$client.pragma("foreign_key_check")).toEqual([]);
@@ -345,7 +342,7 @@ describe("database lifecycle", () => {
     current.$client.close();
   });
 
-  it("从版本 25 升级保留既有操作并在新库中支持个人歌曲添加表与枚举", () => {
+  it("从版本 25 升级保留既有操作并在最新库中清理废弃表", () => {
     const filePath = temporaryDatabasePath();
     createOldDatabase(filePath, 25);
     const old = new Database(filePath);
@@ -363,13 +360,7 @@ describe("database lifecycle", () => {
     expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     const op = current.$client.prepare("SELECT * FROM operation WHERE id = 'op-prev'").get() as { id: string; kind: string };
     expect(op.kind).toBe("createPublicPlaylist");
-
-    // 验证新 operation.kind 允许 addPersonalSong 并能插入 personal_song_mutation
-    current.$client.prepare("INSERT INTO operation (id, kind, user_id, room_id, account_id, authorization_id, generation, status, last_granted, version, created_at, updated_at) VALUES (?, 'addPersonalSong', ?, ?, 'acc', 'auth', 1, 'queued', 0, 1, ?, ?)").run("op-add", "u-1", "r-1", now, now);
-    current.$client.prepare("INSERT INTO personal_song_mutation (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("op-add", "m-1", "pl-1", 1, "s-1", "歌", "[]", "专", "ready");
-    const addition = current.$client.prepare("SELECT * FROM personal_song_mutation WHERE operation_id = 'op-add'").get() as { song_id: string; step: string };
-    expect(addition.song_id).toBe("s-1");
-    expect(addition.step).toBe("ready");
+    expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_mutation'").get()).toBeUndefined();
     expect(current.$client.pragma("foreign_key_check")).toEqual([]);
     current.$client.close();
   });
@@ -434,7 +425,7 @@ describe("database lifecycle", () => {
   });
 });
 
-it("0027将已有个人加歌明细升级到共享加删表，保持sending与恢复证据且不保留旧表", () => {
+it("0027将已有个人加歌明细升级并在最新库中清理废弃表", () => {
   const filePath = temporaryDatabasePath();
   createOldDatabase(filePath, 27);
   const old = new Database(filePath);
@@ -446,15 +437,13 @@ it("0027将已有个人加歌明细升级到共享加删表，保持sending与�
   const current = openDatabase(filePath);
   expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_addition'").get()).toBeUndefined();
+  expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_mutation'").get()).toBeUndefined();
   expect(current.$client.prepare("SELECT kind, version, status, account_id FROM operation WHERE id = 'op-existing'").get()).toEqual({ kind: "addPersonalSong", version: 7, status: "processing", account_id: "acc" });
-  expect(current.$client.prepare("SELECT song_id, binding_generation, step, check_round, next_check_at FROM personal_song_mutation WHERE operation_id = 'op-existing'").get()).toEqual({ song_id: "song", binding_generation: 3, step: "sending", check_round: 2, next_check_at: now + 30000 });
-  current.$client.prepare("INSERT INTO operation (id, kind, user_id, room_id, status, version, created_at, updated_at) VALUES ('op-remove', 'removePersonalSong', 'actor2', 'room', 'succeeded', 1, ?, ?)").run(now, now);
-  current.$client.prepare("INSERT INTO personal_song_mutation (operation_id, member_id, playlist_id, binding_generation, song_id, name, artists, album, step) VALUES ('op-remove', 'member2', 'target2', 1, 'song2', '歌2', '[]', '', 'prepared')").run();
   expect(current.$client.pragma("foreign_key_check")).toEqual([]);
   current.$client.close();
 });
 
-it("0028移除请求间隔与废弃步骤，保留执行权、暂停及个人歌曲和playNext恢复事实", () => {
+it("0028移除请求间隔与废弃步骤，保留执行权、暂停及playNext恢复事实并在0029清理废弃表", () => {
   const filePath = temporaryDatabasePath();
   createOldDatabase(filePath, 28);
   const old = new Database(filePath);
@@ -485,14 +474,7 @@ it("0028移除请求间隔与废弃步骤，保留执行权、暂停及个人歌
       { account_id: "running", running_operation_id: "op-sending", paused: 0, pause_reason: null }
     ]);
     expect(current.$client.prepare("SELECT * FROM operation ORDER BY id").all()).toEqual(operations);
-    for (const step of steps) {
-      expect(current.$client.prepare("SELECT * FROM personal_song_mutation WHERE operation_id = ?").get(`op-${step}`)).toEqual({
-        operation_id: `op-${step}`, member_id: "member", playlist_id: "target", binding_generation: 3,
-        song_id: "song", name: "歌", artists: "[]", album: "专", step: step === "verified" ? "ready" : step,
-        check_round: 2, next_check_at: 30000
-      });
-    }
-    expect(() => current.$client.prepare("UPDATE personal_song_mutation SET step = 'verified' WHERE operation_id = 'op-ready'").run()).toThrow(/CHECK constraint/);
+    expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_mutation'").get()).toBeUndefined();
     for (const step of playNextSteps) {
       expect(current.$client.prepare("SELECT * FROM public_play_next WHERE operation_id = ?").get(`play-${step}`)).toEqual({
         operation_id: `play-${step}`, song_id: "song", anchor_song_id: "anchor", playlist_id: "public-target", binding_generation: 5,
@@ -504,4 +486,74 @@ it("0028移除请求间隔与废弃步骤，保留执行权、暂停及个人歌
     expect(current.$client.pragma("foreign_key_check")).toEqual([]);
     expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   } finally { current.$client.close(); }
+});
+
+it("0029迁移移除创建证据和废弃表，允许多成员分配同一歌单且维护与公共歌单目标隔离", () => {
+  const filePath = temporaryDatabasePath();
+  createOldDatabase(filePath, 28);
+  const old = new Database(filePath);
+  old.pragma("foreign_keys = ON");
+  old.exec(`
+    INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES
+      ('u-owner', '房主', 'owner@test.com', 0, 1, 1),
+      ('u-member', '室友', 'member@test.com', 0, 1, 1);
+    INSERT INTO room (id, name, owner_user_id) VALUES ('r-1', '房间1', 'u-owner');
+    INSERT INTO room_membership (id, room_id, user_id, nickname) VALUES
+      ('m-owner', 'r-1', 'u-owner', '房主'),
+      ('m-member', 'r-1', 'u-member', '室友');
+    INSERT INTO operation (id, kind, user_id, room_id, status, version, created_at, updated_at) VALUES
+      ('op-creation-1', 'createPersonalPlaylist', 'u-owner', 'r-1', 'succeeded', 1, 10, 20);
+    INSERT INTO personal_playlist_binding (id, room_id, member_id, account_id, playlist_id, name, generation, creation_operation_id, created_at, updated_at) VALUES
+      ('b-1', 'r-1', 'm-owner', 'cloud-owner', 'fav-1', '收藏歌单1', 1, 'op-creation-1', 10, 20);
+    INSERT INTO personal_playlist_creation (operation_id, owner_user_id, member_id, name, step, recovered) VALUES
+      ('op-creation-1', 'u-owner', 'm-owner', '收藏歌单1', 'succeeded', 0);
+  `);
+  old.close();
+
+  migrateDatabase(filePath);
+
+  const current = openDatabase(filePath);
+  try {
+    expect(checkDatabase(filePath).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    // 废弃表已被 drop
+    expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_playlist_creation'").get()).toBeUndefined();
+    expect(current.$client.prepare("SELECT name FROM sqlite_master WHERE name = 'personal_song_mutation'").get()).toBeUndefined();
+
+    // 旧绑定数据保留，creation_operation_id 列已移除
+    const bindings = current.$client.prepare("SELECT * FROM personal_playlist_binding").all() as any[];
+    expect(bindings).toEqual([{
+      id: "b-1",
+      room_id: "r-1",
+      member_id: "m-owner",
+      account_id: "cloud-owner",
+      playlist_id: "fav-1",
+      name: "收藏歌单1",
+      generation: 1,
+      created_at: 10,
+      updated_at: 20
+    }]);
+
+    // 验证不同成员可以分配相同歌单（多对一支持）
+    current.$client.prepare(`
+      INSERT INTO personal_playlist_binding (id, room_id, member_id, account_id, playlist_id, name, generation, created_at, updated_at)
+      VALUES ('b-2', 'r-1', 'm-member', 'cloud-owner', 'fav-1', '收藏歌单1', 1, 30, 40)
+    `).run();
+    expect(current.$client.prepare("SELECT count(*) as count FROM personal_playlist_binding").get()).toEqual({ count: 2 });
+
+    // 验证同成员同房间不能有重复绑定
+    expect(() => current.$client.prepare(`
+      INSERT INTO personal_playlist_binding (id, room_id, member_id, account_id, playlist_id, name, generation, created_at, updated_at)
+      VALUES ('b-3', 'r-1', 'm-owner', 'cloud-owner', 'fav-2', '另一歌单', 1, 50, 60)
+    `).run()).toThrow(/UNIQUE constraint/);
+
+    // 验证与公共歌单冲突检测
+    expect(() => current.$client.prepare(`
+      INSERT INTO public_playlist_binding (room_id, account_id, playlist_id, name, creation_operation_id)
+      VALUES ('r-1', 'cloud-owner', 'fav-1', '公共冲突', 'op-pub')
+    `).run()).toThrow(/PLAYLIST_TARGET_CONFLICT/);
+
+    expect(current.$client.pragma("foreign_key_check")).toEqual([]);
+  } finally {
+    current.$client.close();
+  }
 });

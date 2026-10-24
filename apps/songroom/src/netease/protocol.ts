@@ -37,7 +37,16 @@ export const adapterErrorSchema = z.strictObject({
 export type AdapterError = z.infer<typeof adapterErrorSchema>;
 
 export const songSchema = z.strictObject({ id, name: z.string(), artists: z.array(z.string()), album: z.string() });
-export const playlistSchema = z.strictObject({ id, name: z.string(), creatorId: id, subscribed: z.boolean(), status: z.number().int() });
+export const playlistSchema = z.strictObject({
+  id,
+  name: z.string(),
+  creatorId: id,
+  subscribed: z.boolean(),
+  status: z.number().int(),
+  coverImgUrl: z.string().optional(),
+  trackCount: z.number().int().optional(),
+  creatorNickname: z.string().optional()
+});
 export const outputSchemas = {
   qrKey: z.strictObject({ key }),
   qrCreate: z.strictObject({ url: z.string().startsWith("https://music.163.com/"), image: z.string().startsWith("data:image/png;base64,") }),

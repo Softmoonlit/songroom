@@ -102,8 +102,8 @@ function fixture() {
   const rm2Member = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "roommate2"))).get()!;
 
   database.insert(personalPlaylistBinding).values([
-    { id: v7(), roomId, memberId: rm1Member.id, accountId: "acc-owner", playlistId: "pl-rm1", name: "室友1歌单", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() },
-    { id: v7(), roomId, memberId: rm2Member.id, accountId: "acc-owner", playlistId: "pl-rm2", name: "室友2歌单", creationOperationId: v7(), generation: 1, createdAt: now(), updatedAt: now() }
+    { id: v7(), roomId, memberId: rm1Member.id, accountId: "acc-owner", playlistId: "pl-rm1", name: "室友1歌单", generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, memberId: rm2Member.id, accountId: "acc-owner", playlistId: "pl-rm2", name: "室友2歌单", generation: 1, createdAt: now(), updatedAt: now() }
   ]).run();
 
   adapter.playlistDetail = async (input) => {

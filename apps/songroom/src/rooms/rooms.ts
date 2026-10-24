@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
-import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag, retiredRoomInvite, publicPlaylistCleanup, personalPlaylistBinding, personalPlaylistCreation, operation } from "../db/schema.js";
+import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag, retiredRoomInvite, publicPlaylistCleanup, personalPlaylistBinding, operation } from "../db/schema.js";
 import { prepareCommand } from "../commands/commands.js";
 import { readCommandResource, recordCommandResource } from "../commands/receipts.js";
 import type { NeteaseBinding } from "../netease/binding.js";
@@ -119,7 +119,7 @@ export class Rooms {
     return {
       version: shell.version,
       members: members.map((member): RoomMember => {
-        const allowedActions: ("renameNickname" | "removeMember")[] = [];
+        const allowedActions: RoomMember["allowedActions"] = [];
         const disabledReasons: RoomMember["disabledReasons"] = {};
         if (member.isSelf) {
           allowedActions.push("renameNickname");
@@ -128,6 +128,12 @@ export class Rooms {
         }
         if (shell.room.role === "owner" && member.role === "roommate") {
           allowedActions.push("removeMember");
+        }
+        if (shell.room.role === "owner") {
+          allowedActions.push("assignPersonalPlaylist");
+          if (personalMemberIds.has(member.id)) {
+            allowedActions.push("unassignPersonalPlaylist");
+          }
         }
         return {
           ...member,

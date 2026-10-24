@@ -1,11 +1,11 @@
 import { and, desc, eq, sql } from "drizzle-orm";
+import { v7 } from "uuid";
 import { BusinessError } from "../shared/errors.js";
 import type { AppDatabase } from "../db/database.js";
 import {
   neteaseAuthorization,
   operation,
   personalPlaylistBinding,
-  personalPlaylistCreation,
   playlistSnapshot,
   playlistTrack,
   publicSongRequest,
@@ -22,6 +22,7 @@ import type { UpstreamScheduler } from "./upstream-scheduling.js";
 import type { EventStreamService } from "../events/event-stream.js";
 import type { PublicPlaylists } from "./public-playlists.js";
 import type {
+  FavoritePlaylistCandidatesView,
   PersonalPlaylistView
 } from "../shared/personal-playlist-contracts.js";
 
@@ -78,34 +79,13 @@ export class PersonalPlaylists {
     const binding = this.database.select().from(personalPlaylistBinding)
       .where(and(eq(personalPlaylistBinding.roomId, roomId), eq(personalPlaylistBinding.memberId, targetMember.id))).get();
 
-    let opView: PersonalPlaylistView["operation"] = null;
-    const currentOperation = this.database.select().from(operation)
-      .where(and(eq(operation.roomId, roomId), eq(operation.userId, targetMember.userId), eq(operation.kind, "createPersonalPlaylist")))
-      .orderBy(desc(operation.createdAt), desc(operation.id))
-      .get();
-    if (currentOperation) {
-      const creationDetail = this.database.select().from(personalPlaylistCreation)
-        .where(eq(personalPlaylistCreation.operationId, currentOperation.id)).get();
-      if (creationDetail?.memberId === targetMember.id) opView = {
-        id: currentOperation.id,
-        status: currentOperation.status as any,
-        errorCode: currentOperation.errorCode as any,
-        step: creationDetail?.step as any,
-        playlistId: creationDetail?.playlistId,
-        recovered: creationDetail ? Boolean(creationDetail.recovered) : false,
-        version: currentOperation.version
-      };
-    }
-
     if (!binding) {
       const allowedActions: PersonalPlaylistView["allowedActions"] = [];
       let disabledReason: PersonalPlaylistView["disabledReason"] = null;
 
       if (isSelf) {
         const ownerAuth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
-        if (opView && !["succeeded", "failed", "stopped"].includes(opView.status)) {
-          disabledReason = "OPERATION_PENDING";
-        } else if (!ownerAuth || ownerAuth.status !== "active" || !ownerAuth.credentials) {
+        if (!ownerAuth || ownerAuth.status !== "active" || !ownerAuth.credentials) {
           disabledReason = "NETEASE_AUTH_REQUIRED";
         } else if (this.scheduler.paused(ownerAuth.accountId)) {
           disabledReason = "ACCOUNT_PAUSED";
@@ -114,7 +94,7 @@ export class PersonalPlaylists {
 
       return {
         playlist: null,
-        operation: opView,
+        operation: null,
         snapshot: null,
         lastRefreshError: null,
         allowedActions,
@@ -161,7 +141,7 @@ export class PersonalPlaylists {
         id: binding.playlistId,
         name: binding.name
       },
-      operation: opView,
+      operation: null,
       snapshot,
       lastRefreshError: (snap?.lastErrorCode as any) ?? null,
       allowedActions,
@@ -405,8 +385,8 @@ export class PersonalPlaylists {
     cookie: string,
     accountId: string,
     callStrategy: (fn: () => Promise<AdapterResult<"userPlaylists">>) => Promise<AdapterResult<"userPlaylists">> = fn => fn()
-  ): Promise<Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number }> | null> {
-    const list: Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number }> = [];
+  ): Promise<Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number; coverImgUrl?: string; trackCount?: number; creatorNickname?: string }> | null> {
+    const list: Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number; coverImgUrl?: string; trackCount?: number; creatorNickname?: string }> = [];
     let offset = 0;
     const limit = 1000;
     let pages = 0;
@@ -425,7 +405,10 @@ export class PersonalPlaylists {
           name: p.name,
           creatorId: p.creatorId,
           subscribed: p.subscribed,
-          status: p.status
+          status: p.status,
+          coverImgUrl: p.coverImgUrl,
+          trackCount: p.trackCount,
+          creatorNickname: p.creatorNickname
         });
       }
       if (!res.data.more) break;
@@ -433,6 +416,230 @@ export class PersonalPlaylists {
       offset += res.data.playlists.length;
     }
     return list;
+  }
+
+  async getCandidates(userId: string, roomId: string): Promise<FavoritePlaylistCandidatesView> {
+    this.#getMember(userId, roomId);
+    const roomRow = this.#getRoom(roomId);
+    if (roomRow.ownerUserId !== userId) {
+      throw new BusinessError(403, "ROOM_OWNER_REQUIRED", "只有房主可以查看收藏歌单候选");
+    }
+
+    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
+    if (!auth || auth.status !== "active" || !auth.credentials) {
+      throw new BusinessError(400, "NETEASE_AUTH_REQUIRED", "网易云授权不可用，请先绑定网易云账号");
+    }
+
+    if (this.scheduler.paused(auth.accountId)) {
+      throw new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号风控暂停中，无法读取歌单");
+    }
+
+    let cookie: string;
+    try {
+      cookie = this.vault.decrypt(auth.credentials, {
+        authorizationId: auth.id,
+        accountId: auth.accountId,
+        generation: auth.generation
+      });
+    } catch {
+      throw new BusinessError(400, "AUTH_UNAVAILABLE", "网易云凭据解密失败");
+    }
+
+    const allPlaylists = await this.fetchUserPlaylists(cookie, auth.accountId, fn => this.scheduler.executeMemoryTask(auth.accountId, fn));
+    if (allPlaylists === null) {
+      throw new BusinessError(502, "MODULE_ERROR", "读取网易云歌单失败");
+    }
+
+    const candidates = allPlaylists
+      .filter(p => p.creatorId !== auth.accountId && p.subscribed === true && p.status === 0)
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        coverImgUrl: p.coverImgUrl ?? null,
+        trackCount: p.trackCount ?? 0,
+        creatorNickname: p.creatorNickname ?? null
+      }));
+
+    return {
+      candidates,
+      version: roomRow.version
+    };
+  }
+
+  async assign(userId: string, roomId: string, memberId: string, input: { playlistId: string }): Promise<PersonalPlaylistView> {
+    this.#getMember(userId, roomId);
+    const roomRow = this.#getRoom(roomId);
+    if (roomRow.ownerUserId !== userId) {
+      throw new BusinessError(403, "ROOM_OWNER_REQUIRED", "只有房主可以为成员分配歌单");
+    }
+
+    const targetMember = this.database.select().from(roomMembership)
+      .where(and(eq(roomMembership.id, memberId), eq(roomMembership.roomId, roomId))).get();
+    if (!targetMember) {
+      throw new BusinessError(404, "ROOM_UNAVAILABLE", "未找到指定成员");
+    }
+
+    const playlistId = input.playlistId.trim();
+    if (!playlistId) {
+      throw new BusinessError(400, "INVALID_INPUT", "歌单 ID 不能为空");
+    }
+
+    const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
+    if (!auth || auth.status !== "active" || !auth.credentials) {
+      throw new BusinessError(400, "NETEASE_AUTH_REQUIRED", "网易云授权不可用，请先绑定网易云账号");
+    }
+
+    if (this.scheduler.paused(auth.accountId)) {
+      throw new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号风控暂停中，无法分配歌单");
+    }
+
+    let cookie: string;
+    try {
+      cookie = this.vault.decrypt(auth.credentials, {
+        authorizationId: auth.id,
+        accountId: auth.accountId,
+        generation: auth.generation
+      });
+    } catch {
+      throw new BusinessError(400, "AUTH_UNAVAILABLE", "网易云凭据解密失败");
+    }
+
+    const existingBinding = this.database.select().from(personalPlaylistBinding)
+      .where(and(eq(personalPlaylistBinding.roomId, roomId), eq(personalPlaylistBinding.memberId, targetMember.id))).get();
+
+    const readStartedAt = this.#beginRead();
+    let detailResult: Awaited<ReturnType<NeteaseAdapter["call"]>>;
+    try {
+      detailResult = await this.scheduler.executeMemoryTask(auth.accountId, async () => {
+        return this.adapter.call({ operation: "playlistDetail", cookie, playlistId });
+      });
+    } catch (err) {
+      if (err instanceof BusinessError && err.code === "ACCOUNT_PAUSED") {
+        throw err;
+      }
+      throw new BusinessError(502, "MODULE_ERROR", "获取网易云歌单详情失败");
+    }
+
+    if (!detailResult.ok) {
+      if (detailResult.error.code === "RATE_LIMITED") {
+        this.scheduler.pause(auth.accountId);
+        throw new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号请求频繁，已进入风控保护");
+      }
+      throw new BusinessError(400, detailResult.error.code, "获取歌单详情失败，歌单可能不存在或已被删除");
+    }
+
+    const data = detailResult.data as {
+      playlist: { id: string; name: string; creatorId: string; subscribed: boolean; status: number };
+      songIds: string[];
+      songs: Array<{ id: string; name: string; artists: string[]; album: string }>;
+    };
+
+    if (data.playlist.creatorId === auth.accountId || !data.playlist.subscribed || data.playlist.status !== 0) {
+      throw new BusinessError(400, "TARGET_PERMISSION", "只能分配房主收藏的他人公开歌单，不可分配自建歌单或私密歌单");
+    }
+
+    const now = this.now();
+    const result = this.database.transaction(tx => {
+      let generation = 1;
+      if (existingBinding) {
+        generation = existingBinding.generation + 1;
+        tx.update(personalPlaylistBinding).set({
+          accountId: auth.accountId,
+          playlistId: data.playlist.id,
+          name: data.playlist.name,
+          generation,
+          updatedAt: now
+        }).where(eq(personalPlaylistBinding.id, existingBinding.id)).run();
+      } else {
+        tx.insert(personalPlaylistBinding).values({
+          id: v7(),
+          roomId,
+          memberId: targetMember.id,
+          accountId: auth.accountId,
+          playlistId: data.playlist.id,
+          name: data.playlist.name,
+          generation,
+          createdAt: now,
+          updatedAt: now
+        }).run();
+      }
+
+      const currentSnapshot = tx.select().from(playlistSnapshot)
+        .where(and(eq(playlistSnapshot.accountId, auth.accountId), eq(playlistSnapshot.playlistId, data.playlist.id))).get();
+      const nextVersion = (currentSnapshot?.snapshotVersion ?? 0) + 1;
+
+      tx.insert(playlistSnapshot).values({
+        accountId: auth.accountId,
+        playlistId: data.playlist.id,
+        snapshotVersion: nextVersion,
+        lastReadStartedAt: readStartedAt,
+        syncedAt: now,
+        lastErrorCode: null,
+        createdAt: now,
+        updatedAt: now
+      }).onConflictDoUpdate({
+        target: [playlistSnapshot.accountId, playlistSnapshot.playlistId],
+        set: {
+          snapshotVersion: nextVersion,
+          lastReadStartedAt: readStartedAt,
+          syncedAt: now,
+          lastErrorCode: null,
+          updatedAt: now
+        }
+      }).run();
+
+      tx.delete(playlistTrack).where(and(eq(playlistTrack.accountId, auth.accountId), eq(playlistTrack.playlistId, data.playlist.id))).run();
+      const insertTrack = this.database.$client.prepare(
+        "INSERT INTO playlist_track (account_id, playlist_id, position, song_id, name, artists, album) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      );
+      for (let i = 0; i < data.songs.length; i++) {
+        const song = data.songs[i];
+        insertTrack.run(auth.accountId, data.playlist.id, i, song.id, song.name, JSON.stringify(song.artists), song.album);
+      }
+
+      this.#bumpRoom(tx, roomId);
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()!;
+      return { version: updatedRoom.version };
+    });
+
+    this.eventStream.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
+    this.eventStream.notifyRoom(this.database, roomId, { type: "snapshot", resourceId: roomId, version: result.version });
+
+    return this.read(userId, roomId, targetMember.id);
+  }
+
+  async unassign(userId: string, roomId: string, memberId: string): Promise<PersonalPlaylistView> {
+    this.#getMember(userId, roomId);
+    const roomRow = this.#getRoom(roomId);
+    if (roomRow.ownerUserId !== userId) {
+      throw new BusinessError(403, "ROOM_OWNER_REQUIRED", "只有房主可以解除成员的歌单分配");
+    }
+
+    const targetMember = this.database.select().from(roomMembership)
+      .where(and(eq(roomMembership.id, memberId), eq(roomMembership.roomId, roomId))).get();
+    if (!targetMember) {
+      throw new BusinessError(404, "ROOM_UNAVAILABLE", "未找到指定成员");
+    }
+
+    const existingBinding = this.database.select().from(personalPlaylistBinding)
+      .where(and(eq(personalPlaylistBinding.roomId, roomId), eq(personalPlaylistBinding.memberId, targetMember.id))).get();
+
+    if (!existingBinding) {
+      return this.read(userId, roomId, targetMember.id);
+    }
+
+    const result = this.database.transaction(tx => {
+      tx.delete(personalPlaylistBinding).where(eq(personalPlaylistBinding.id, existingBinding.id)).run();
+
+      this.#bumpRoom(tx, roomId);
+      const updatedRoom = tx.select({ version: room.version }).from(room).where(eq(room.id, roomId)).get()!;
+      return { version: updatedRoom.version };
+    });
+
+    this.eventStream.notifyRoom(this.database, roomId, { type: "room", resourceId: roomId, version: result.version });
+    this.eventStream.notifyRoom(this.database, roomId, { type: "snapshot", resourceId: roomId, version: result.version });
+
+    return this.read(userId, roomId, targetMember.id);
   }
 
   #getMember(userId: string, roomId: string) {

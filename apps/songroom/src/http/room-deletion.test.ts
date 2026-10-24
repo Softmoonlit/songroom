@@ -701,7 +701,6 @@ it("室友退出立即清除个人歌单本地绑定，绝不调用网易云删�
     accountId: "cloud-owner",
     playlistId: "personal-fav-playlist",
     name: "收藏歌单",
-    creationOperationId: v7(),
     generation: 1,
     createdAt: Date.now(),
     updatedAt: Date.now()
