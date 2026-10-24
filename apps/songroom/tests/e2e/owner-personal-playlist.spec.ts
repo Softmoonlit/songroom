@@ -126,18 +126,93 @@ test.describe("个人歌单下线自建与删除，收敛为4导航默认点歌�
     });
   }
 
-  for (const isOwner of [true, false]) {
-    test(`${isOwner ? "房主" : "室友"}未配置个人歌单时展示分配提示，不提供创建专用歌单按钮`, async ({ page }) => {
-      await setupRoom(page, isOwner);
-      await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: emptyPersonalView }));
-      await page.goto(`/rooms/${roomId}`);
-      await page.getByRole("button", { name: "我的歌单", exact: true }).click();
+  test("房主未配置个人歌单时展示分配提示与【前往分配】按钮，点击跳转至成员列表并拉起分配弹窗", async ({ page }) => {
+    await setupRoom(page, true);
+    await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: emptyPersonalView }));
+    await page.route(`**/api/rooms/${roomId}/members`, route =>
+      route.fulfill({
+        json: {
+          version: 1,
+          members: [
+            {
+              id: ownerMemberId,
+              nickname: "房主小林",
+              role: "owner",
+              isSelf: true,
+              hasPersonalPlaylist: false,
+              allowedActions: ["renameNickname", "assignPersonalPlaylist"],
+              disabledReasons: {}
+            },
+            {
+              id: roommateMemberId,
+              nickname: "室友小明",
+              role: "roommate",
+              isSelf: false,
+              hasPersonalPlaylist: true,
+              allowedActions: ["removeMember", "assignPersonalPlaylist", "unassignPersonalPlaylist"],
+              disabledReasons: {}
+            }
+          ],
+          allowedActions: ["reviewApplications", "readInvite"],
+          disabledReasons: {}
+        }
+      })
+    );
 
-      await expect(page.getByRole("heading", { name: "尚未配置个人歌单" })).toBeVisible();
-      await expect(page.getByText("房主尚未为你分配点歌歌单，请联系房主在房间成员中分配。")).toBeVisible();
-      await expect(page.getByRole("button", { name: /创建专用个人歌单|绑定个人歌单/ })).toHaveCount(0);
-    });
-  }
+    await page.goto(`/rooms/${roomId}`);
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "房间导航" });
+    await nav.getByRole("button", { name: "我的歌单", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "尚未配置个人歌单" })).toBeVisible();
+    await expect(page.getByText("你尚未为自己分配歌单")).toBeVisible();
+    const assignBtn = page.getByRole("button", { name: "前往分配" });
+    await expect(assignBtn).toBeVisible();
+
+    await assignBtn.click();
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await expect(page.getByText("为“房主小林”分配歌单")).toBeVisible();
+
+    await page.getByRole("button", { name: "取消" }).click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(nav.getByRole("button", { name: "房间成员" })).toHaveAttribute("aria-current", "page");
+  });
+
+  test("室友未配置个人歌单时展示分配提示，不提供创建专用歌单或分配按钮", async ({ page }) => {
+    await setupRoom(page, false);
+    await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: emptyPersonalView }));
+    await page.goto(`/rooms/${roomId}`);
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "房间导航" });
+    await nav.getByRole("button", { name: "我的歌单", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "尚未配置个人歌单" })).toBeVisible();
+    await expect(page.getByText("房主尚未为你分配歌单，请联系房主分配。")).toBeVisible();
+    await expect(page.getByRole("button", { name: /创建专用个人歌单|绑定个人歌单|前往分配/ })).toHaveCount(0);
+  });
+
+  test("外部歌单失效（TARGET_PERMISSION）时，展示外部失效横幅并禁用点歌", async ({ page }) => {
+    await setupRoom(page, true);
+    const invalidatedView: PersonalPlaylistView = {
+      ...boundPersonalView,
+      lastRefreshError: "TARGET_PERMISSION",
+      disabledReason: "TARGET_BLOCKED"
+    };
+    await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: invalidatedView }));
+    await page.route(refreshEndpoint, route => route.fulfill({ json: invalidatedView }));
+
+    await page.goto(`/rooms/${roomId}`);
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "房间导航" });
+    await nav.getByRole("button", { name: "我的歌单", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "我的歌单", exact: true })).toBeVisible();
+    await expect(page.getByText("稻香", { exact: true })).toBeVisible();
+    await expect(page.getByText("该歌单已在外部失效（被作者删除或已被房主取消收藏），已保留最后一次成功快照。当前无法继续点歌。")).toBeVisible();
+    const requestSongBtn = page.getByRole("button", { name: "点播《稻香》到点歌台" });
+    await expect(requestSongBtn).toBeDisabled();
+    await expect(requestSongBtn).toHaveAttribute("title", "歌单已在外部失效，无法点歌");
+  });
 
   for (const isOwner of [true, false]) {
     test(`${isOwner ? "房主" : "室友"}已绑定歌单展示歌曲，有点歌到点歌台按钮但无单首删除按钮`, async ({ page }) => {

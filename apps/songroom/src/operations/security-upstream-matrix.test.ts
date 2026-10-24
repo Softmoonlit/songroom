@@ -111,7 +111,7 @@ function fixture() {
       return {
         ok: true,
         data: {
-          playlist: { id: input.playlistId, name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+          playlist: { id: input.playlistId, name: "个人收藏歌单", creatorId: "acc-fav-creator", subscribed: true, status: 0 },
           songIds: ["song-rl", "song-perm", "song-auth", "song-net", "song-mod", "song-revoked-auth", "song-removed-user", "song-late-room"],
           songs: [
             { id: "song-rl", name: "风控测试歌曲", artists: ["歌手"], album: "专辑" },
@@ -344,7 +344,7 @@ describe("并发竞态矩阵 (Checklist Item 12)", () => {
         return {
           ok: true,
           data: {
-            playlist: { id: "pl-rm2", name: "室友2歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            playlist: { id: "pl-rm2", name: "室友2歌单", creatorId: "acc-fav-creator", subscribed: true, status: 0 },
             songIds: ["song-removed-user"],
             songs: [{ id: "song-removed-user", name: "移除测试歌曲", artists: ["歌手"], album: "专辑" }]
           }

@@ -3663,6 +3663,52 @@ h1 {
   line-height: 1.5;
 }
 
+.go-to-assign-btn {
+  margin-top: 4px;
+}
+
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.info-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
 /* 公共歌单主工作区 */
 .public-playlist-view {
   width: 100%;

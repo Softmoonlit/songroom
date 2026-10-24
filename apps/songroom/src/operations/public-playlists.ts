@@ -1925,7 +1925,8 @@ export class PublicPlaylists {
         if (
           sourceData.playlist.id !== detail.sourcePlaylistId ||
           sourceData.playlist.status !== 0 ||
-          sourceData.playlist.creatorId !== row.accountId
+          !sourceData.playlist.subscribed ||
+          sourceData.playlist.creatorId === row.accountId
         ) {
           this.#status(row.id, "stopped", "SOURCE_PLAYLIST_UNAVAILABLE");
           return;

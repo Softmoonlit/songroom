@@ -204,11 +204,15 @@ const terminalStatuses = new Set(["succeeded", "failed", "stopped"]);
 export function PersonalPlaylistPane({
   sessionId,
   roomId,
-  active
+  active,
+  isOwner = false,
+  onGoToAssign
 }: {
   sessionId: string;
   roomId: string;
   active: boolean;
+  isOwner?: boolean;
+  onGoToAssign?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -397,8 +401,18 @@ export function PersonalPlaylistPane({
           <ListMusic size={48} className="empty-state-icon" aria-hidden="true" />
           <h2 className="empty-state-title">尚未配置个人歌单</h2>
           <p className="empty-state-desc">
-            房主尚未为你分配点歌歌单，请联系房主在房间成员中分配。
+            {isOwner ? "你尚未为自己分配歌单" : "房主尚未为你分配歌单，请联系房主分配。"}
           </p>
+
+          {isOwner && onGoToAssign && (
+            <button
+              type="button"
+              className="primary-button go-to-assign-btn"
+              onClick={onGoToAssign}
+            >
+              前往分配
+            </button>
+          )}
 
           {data.operation && data.operation.status !== "succeeded" && (
             <p className="netease-status" role="status">
@@ -495,14 +509,19 @@ export function PersonalPlaylistPane({
         </div>
       )}
 
-      {data.lastRefreshError && (
+      {data.lastRefreshError === "TARGET_PERMISSION" ? (
+        <div className="warning-banner invalidation-warning-banner" role="alert">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>该歌单已在外部失效（被作者删除或已被房主取消收藏），已保留最后一次成功快照。当前无法继续点歌。</span>
+        </div>
+      ) : data.lastRefreshError ? (
         <div className="error-banner" role="alert">
           <AlertCircle size={16} aria-hidden="true" />
           <span>
             刷新失败：{getRefreshErrorMessage(data.lastRefreshError)}。已保留当前歌单快照。
           </span>
         </div>
-      )}
+      ) : null}
 
       {!hasPublicPlaylist && (
         <div className="info-banner" role="status" style={{ marginTop: "0.5rem" }}>
@@ -543,9 +562,11 @@ export function PersonalPlaylistPane({
               ? "网易云账号已暂停，暂时无法点歌"
               : publicDisabledReason === "TARGET_BLOCKED"
                 ? "点歌台待确认，暂时无法点歌"
-                : activeOperationId
-                  ? "已有正在处理中的点歌操作，请稍候"
-                  : null
+                : data.disabledReason === "TARGET_BLOCKED" || data.lastRefreshError === "TARGET_PERMISSION"
+                  ? "歌单已在外部失效，无法点歌"
+                  : activeOperationId
+                    ? "已有正在处理中的点歌操作，请稍候"
+                    : null
         }
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />

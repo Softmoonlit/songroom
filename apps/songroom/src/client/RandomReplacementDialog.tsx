@@ -359,7 +359,7 @@ export function RandomReplacementDialog({
                             />
                             <span className="random-member-nickname">{member.nickname}</span>
                             {!isEligible && (
-                              <span className="random-member-reason">未创建歌单</span>
+                              <span className="random-member-reason">未分配歌单</span>
                             )}
                           </label>
                         );

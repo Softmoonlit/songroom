@@ -49,6 +49,7 @@ export function useEventStream(enabled: boolean): void {
         const firstKey = event.query.queryKey[0];
         if (
           firstKey === "song-request-operation" ||
+          firstKey === "personal-song-addition-operation" ||
           firstKey === "random-replacement-operation"
         ) {
           const opId = event.query.queryKey[1] as string | undefined;

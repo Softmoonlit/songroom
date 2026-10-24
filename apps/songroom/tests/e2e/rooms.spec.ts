@@ -63,7 +63,7 @@ async function signedIn(page: Page, includeOtherMember = false) {
   );
 }
 
-test("确认本地网易云身份后建房，进入房间默认搜索歌曲而不创建云端歌单", async ({ page }) => {
+test("确认本地网易云身份后建房，进入房间默认展示点歌台而不创建云端歌单", async ({ page }) => {
   await signedIn(page);
   await page.route("**/api/rooms", async route => {
     if (route.request().method() === "GET") return route.fulfill({ json: { rooms: [], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} } });
@@ -89,11 +89,10 @@ test("确认本地网易云身份后建房，进入房间默认搜索歌曲而�
   await expect(page.getByRole("button", { name: "创建并进入房间" })).toBeEnabled();
   await page.getByRole("button", { name: "创建并进入房间" }).click();
   await expect(page).toHaveURL(new RegExp(`/rooms/${roomId}$`));
-  await expect(page.getByRole("heading", { name: "搜索歌曲", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "房间导航" }).getByRole("button")).toHaveText([
-    "搜索歌曲",
-    "我的歌单",
     "点歌台",
+    "我的歌单",
     "房间成员",
     "房间设置"
   ]);
@@ -101,7 +100,7 @@ test("确认本地网易云身份后建房，进入房间默认搜索歌曲而�
 });
 
 for (const width of [320, 900, 1440]) {
-  test(`${width}px 五入口保持独立成员详情和滚动，重按回顶，离开房间清除状态`, async ({ page }) => {
+  test(`${width}px 四入口保持独立成员详情和滚动，重按回顶，离开房间清除状态`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
     await signedIn(page);
     const members = Array.from({ length: 10 }, (_, index) => ({
@@ -120,8 +119,8 @@ for (const width of [320, 900, 1440]) {
     await expect(page.getByText(`房间：${room.name}`, { exact: true })).toBeVisible();
     await expect(page.getByText("房主", { exact: true })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "房间导航" });
-    await expect(nav.getByRole("button")).toHaveText(["搜索歌曲", "我的歌单", "点歌台", "房间成员", "房间设置"]);
-    await expect(nav.getByRole("button", { name: "搜索歌曲" })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("button")).toHaveText(["点歌台", "我的歌单", "房间成员", "房间设置"]);
+    await expect(nav.getByRole("button", { name: "点歌台" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("button", { name: "房间成员" }).click();
     const memberCard = page.locator(".member-card").filter({ has: page.getByRole("button", { name: "查看室友1的歌单", exact: true }) });
     await expect(memberCard).toBeVisible();
@@ -164,7 +163,7 @@ for (const width of [320, 900, 1440]) {
       .toBe(true);
     await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
     await page.getByRole("link", { name: `进入房间：${room.name}` }).click();
-    await expect(nav.getByRole("button", { name: "搜索歌曲" })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("button", { name: "点歌台" })).toHaveAttribute("aria-current", "page");
     await nav.getByRole("button", { name: "房间成员" }).click();
     await expect(page.getByRole("heading", { name: "房间成员", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "室友1", exact: true })).toHaveCount(0);
@@ -202,7 +201,7 @@ test("完整应用：注册扫码绑定后创建同名房间，身份规范化�
     await page.getByRole("button", { name: "创建并进入房间" }).click();
     await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     createdUrls.push(page.url());
-    await expect(page.getByRole("heading", { name: "搜索歌曲", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "点歌台", exact: true })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "房间导航" });
     await nav.getByRole("button", { name: "房间成员" }).click();
     const selfCard = page.locator(".member-card").filter({ hasText: nickname.trim().normalize("NFC") });
@@ -242,7 +241,7 @@ test("窄屏虚拟键盘仅在输入聚焦且 visualViewport 缩小时隐藏底�
   await expect(nav).toBeVisible();
   // Chromium desktop has no OS keyboard. Simulate its public viewport events and an editable
   // control without introducing an unimplemented search/form into the delivered room UI.
-  await page.getByRole("region", { name: "搜索歌曲", exact: true }).evaluate(element => {
+  await page.getByRole("region", { name: "点歌台", exact: true }).evaluate(element => {
     const input = document.createElement("input");
     input.setAttribute("aria-label", "键盘测试输入");
     element.append(input);
@@ -300,7 +299,7 @@ test("从成员详情离开并进入另一房间，不继承详情、角色或�
   await page.getByRole("link", { name: "返回房间列表", exact: true }).click();
   await page.getByRole("link", { name: `进入房间：${other.name}` }).click();
   await expect(page.getByText("室友", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "搜索歌曲", exact: true })).toHaveAttribute(
+  await expect(page.getByRole("button", { name: "点歌台", exact: true })).toHaveAttribute(
     "aria-current",
     "page"
   );
@@ -515,7 +514,7 @@ test("Ticket 02: 房间工作台双栏吸附居中布局与移动端紧凑顶部
   expect(mobileSidebarPos).toBe("static");
 
   // 顶部紧凑信息不遮挡第一视口：主标题位于顶部附近
-  const contentHeading = page.getByRole("heading", { name: "搜索歌曲", exact: true });
+  const contentHeading = page.getByRole("heading", { name: "点歌台", exact: true });
   await expect(contentHeading).toBeVisible();
   const headingBox = await contentHeading.boundingBox();
   expect(headingBox).not.toBeNull();
@@ -533,7 +532,7 @@ test("Ticket 02: 房间工作台双栏吸附居中布局与移动端紧凑顶部
   expect(mobileNavStyles.bottom).toBe("0px");
 
   // 3. 移动端输入聚焦与软键盘展开时不破坏工作台布局与视口滚动
-  await page.getByRole("region", { name: "搜索歌曲", exact: true }).evaluate((el) => {
+  await page.getByRole("region", { name: "点歌台", exact: true }).evaluate((el) => {
     const testInput = document.createElement("input");
     testInput.setAttribute("aria-label", "工作台软键盘适配测试输入");
     el.prepend(testInput);

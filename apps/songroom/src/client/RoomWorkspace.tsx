@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, Bell, ListMusic, Music2, Search, Settings, UserPlus, Users } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { v7 } from "uuid";
@@ -127,6 +127,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
   });
   type RoomTab = "public" | "personal" | "members" | "settings";
   const [active, setActive] = useState<RoomTab>("public");
+  const [guideAssignSelf, setGuideAssignSelf] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -232,7 +233,16 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
           <PublicPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "public"} />
         </section>
         <section hidden={active !== "personal"} aria-label="我的歌单">
-          <PersonalPlaylistPane sessionId={sessionId} roomId={roomId} active={active === "personal"} />
+          <PersonalPlaylistPane
+            sessionId={sessionId}
+            roomId={roomId}
+            active={active === "personal"}
+            isOwner={room.role === "owner"}
+            onGoToAssign={() => {
+              selectTab("members");
+              setGuideAssignSelf(true);
+            }}
+          />
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
           <MembersPane
@@ -240,6 +250,8 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             roomId={roomId}
             active={active === "members"}
             pendingCount={query.data.pendingCount}
+            guideAssignSelf={guideAssignSelf}
+            onGuideAssignSelfHandled={() => setGuideAssignSelf(false)}
           />
         </section>
         <section hidden={active !== "settings"} aria-label="房间设置" className="room-settings-pane">
@@ -348,12 +360,16 @@ function MembersPane({
   sessionId,
   roomId,
   active,
-  pendingCount
+  pendingCount,
+  guideAssignSelf = false,
+  onGuideAssignSelfHandled
 }: {
   sessionId: string;
   roomId: string;
   active: boolean;
   pendingCount: number | null;
+  guideAssignSelf?: boolean;
+  onGuideAssignSelfHandled?: () => void;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -374,6 +390,16 @@ function MembersPane({
   const [unassignError, setUnassignError] = useState("");
   const listScroll = useRef(0);
   const selected = query.data?.members.find(member => member.id === memberId && !member.isSelf);
+
+  useEffect(() => {
+    if (!guideAssignSelf || !query.data?.members) return;
+    const selfMember = query.data.members.find(member => member.isSelf);
+    if (selfMember && !selfMember.hasPersonalPlaylist) {
+      setAssignTarget({ id: selfMember.id, nickname: selfMember.nickname, hasPersonalPlaylist: false });
+      setAssignOpen(true);
+    }
+    onGuideAssignSelfHandled?.();
+  }, [guideAssignSelf, query.data?.members, onGuideAssignSelfHandled]);
 
   const unassignMutation = useMutation({
     mutationFn: () => {

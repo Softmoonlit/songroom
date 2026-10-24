@@ -421,4 +421,67 @@ describe("PersonalPlaylists operations", () => {
     expect(unassigned.playlist).toBeNull();
     expect(service.read("owner", roomId, roommateMemberId).playlist).toBeNull();
   });
+
+  it("外部收藏歌单在网易云失效（作者删除或房主取消收藏）：刷新记录 TARGET_PERMISSION，保留原有快照与歌曲", async () => {
+    const { adapter, service, roomId, roommateMemberId } = fixture();
+    adapter.detail = async () => ({
+      ok: true,
+      data: {
+        playlist: {
+          id: "pl-fav-expiring",
+          name: "将失效歌单",
+          creatorId: "other-creator",
+          subscribed: true,
+          status: 0
+        },
+        songIds: ["song-keep-1", "song-keep-2"],
+        songs: [
+          { id: "song-keep-1", name: "保留歌曲1", artists: ["歌手A"], album: "专辑A" },
+          { id: "song-keep-2", name: "保留歌曲2", artists: ["歌手B"], album: "专辑B" }
+        ]
+      }
+    });
+
+    // 1. 分配并建立初始成功快照
+    await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-fav-expiring" });
+    const initialView = service.read("roommate", roomId);
+    expect(initialView.snapshot?.tracks).toHaveLength(2);
+    expect(initialView.lastRefreshError).toBeNull();
+    expect(initialView.disabledReason).toBeNull();
+
+    // 2. 模拟房主取消了收藏 (subscribed = false)
+    adapter.detail = async () => ({
+      ok: true,
+      data: {
+        playlist: {
+          id: "pl-fav-expiring",
+          name: "将失效歌单",
+          creatorId: "other-creator",
+          subscribed: false,
+          status: 0
+        },
+        songIds: ["song-keep-1"],
+        songs: [{ id: "song-keep-1", name: "保留歌曲1", artists: ["歌手A"], album: "专辑A" }]
+      }
+    });
+
+    const refreshedView = await service.refresh("roommate", roomId);
+    expect(refreshedView.lastRefreshError).toBe("TARGET_PERMISSION");
+    expect(refreshedView.disabledReason).toBe("TARGET_BLOCKED");
+    // 保留最后一次成功快照
+    expect(refreshedView.snapshot?.tracks).toHaveLength(2);
+    expect(refreshedView.snapshot?.tracks[0].name).toBe("保留歌曲1");
+    expect(refreshedView.snapshot?.tracks[1].name).toBe("保留歌曲2");
+
+    // 3. 模拟作者删除了歌单 (status = 10 或 TARGET_PERMISSION)
+    adapter.detail = async () => ({
+      ok: false,
+      error: { code: "TARGET_PERMISSION", outcome: "failed" }
+    });
+
+    const refreshedDeleted = await service.refresh("roommate", roomId);
+    expect(refreshedDeleted.lastRefreshError).toBe("TARGET_PERMISSION");
+    expect(refreshedDeleted.disabledReason).toBe("TARGET_BLOCKED");
+    expect(refreshedDeleted.snapshot?.tracks).toHaveLength(2);
+  });
 });

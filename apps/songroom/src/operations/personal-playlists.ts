@@ -233,7 +233,7 @@ export class PersonalPlaylists {
       songs: Array<{ id: string; name: string; artists: string[]; album: string }>;
     };
 
-    if (data.playlist.id !== playlistId || data.playlist.status !== 0) {
+    if (data.playlist.id !== playlistId || data.playlist.status !== 0 || !data.playlist.subscribed) {
       this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION", readStartedAt);
       return;
     }

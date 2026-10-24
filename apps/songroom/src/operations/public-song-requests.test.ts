@@ -27,7 +27,7 @@ function defaultSourceDetail(playlistId: string): AdapterResult<"playlistDetail"
   return {
     ok: true,
     data: {
-      playlist: { id: playlistId, name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+      playlist: { id: playlistId, name: "个人收藏歌单", creatorId: "acc-other-author", subscribed: true, status: 0 },
       songIds: ["s-101", "s-202", "s-1", "s-2", "s-3", "s-owner", "s-half", "s-seam-1", "s-seam-2", "s-seam-3", "s-seam-4", "s-seam-5", "s-keep", "s-fail", "s-invalid", "s-unknown", "s-discrepancy", "s-check", "s-blocked", "s-new", "s-new-1", "s-auth", "s-malformed", "s-expired", "s-other"],
       songs: [
         { id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
@@ -1121,7 +1121,7 @@ it("调度阶段实时核验：来源歌单中歌曲已被移除时停止操作�
         return {
           ok: true,
           data: {
-            playlist: { id: "pl-roommate1", name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            playlist: { id: "pl-roommate1", name: "个人收藏歌单", creatorId: "acc-other-author", subscribed: true, status: 0 },
             songIds: ["s-other-song"],
             songs: [{ id: "s-other-song", name: "其他歌", artists: ["歌手"], album: "专辑" }]
           }
@@ -1159,7 +1159,7 @@ it("调度阶段实时核验：上游返回的歌单 ID 与来源歌单不匹配
         return {
           ok: true,
           data: {
-            playlist: { id: "pl-mismatched-other", name: "其他歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            playlist: { id: "pl-mismatched-other", name: "其他歌单", creatorId: "acc-other-author", subscribed: true, status: 0 },
             songIds: ["s-101"],
             songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
           }
@@ -1185,7 +1185,7 @@ it("调度阶段实时核验：上游返回的歌单 ID 与来源歌单不匹配
   f.playlists.stop();
 });
 
-it("调度阶段实时核验：来源歌单创建者账号与房主网易云账号不匹配时停止并标记 SOURCE_PLAYLIST_UNAVAILABLE", async () => {
+it("调度阶段实时核验：来源歌单为自建歌单或未收藏时停止并标记 SOURCE_PLAYLIST_UNAVAILABLE", async () => {
   const f = fixture();
   f.playlists.start();
 
@@ -1196,7 +1196,7 @@ it("调度阶段实时核验：来源歌单创建者账号与房主网易云账�
         return {
           ok: true,
           data: {
-            playlist: { id: "pl-roommate1", name: "个人歌单", creatorId: "acc-other-intruder", subscribed: false, status: 0 },
+            playlist: { id: "pl-roommate1", name: "个人自建歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
             songIds: ["s-101"],
             songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
           }
@@ -1245,7 +1245,7 @@ it("撤权竞态：调度执行开始读取来源后成员退出，来源读取�
         return {
           ok: true,
           data: {
-            playlist: { id: "pl-roommate1", name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            playlist: { id: "pl-roommate1", name: "个人收藏歌单", creatorId: "acc-other-author", subscribed: true, status: 0 },
             songIds: ["s-101"],
             songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
           }

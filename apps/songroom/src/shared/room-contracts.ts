@@ -42,6 +42,7 @@ export const roomMember = z.object({
 });
 export const roomShellView = z.object({ room: roomSummary, version: z.number().int().positive(), pendingCount: z.number().int().nonnegative().nullable(), allowedActions: z.array(roomIdentityActions), disabledReasons: roomIdentityDisabledReasons });
 export const roomMembersView = z.object({ version: z.number().int().positive(), members: z.array(roomMember), allowedActions: z.array(roomIdentityActions), disabledReasons: roomIdentityDisabledReasons });
+export type RoomMembersView = z.infer<typeof roomMembersView>;
 export const roomRenameCommand = z.strictObject({ idempotencyKey: uuidv7, name: roomName });
 export const nicknameRenameCommand = z.strictObject({ idempotencyKey: uuidv7, nickname: roomNickname });
 export const roomLeaveCommand = z.strictObject({ idempotencyKey: uuidv7 });

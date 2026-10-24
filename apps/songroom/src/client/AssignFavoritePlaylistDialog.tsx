@@ -149,7 +149,7 @@ export function AssignFavoritePlaylistDialog({
                 {candidates.map((playlist: FavoritePlaylistCandidate) => {
                   const isSelected = selectedId === playlist.id;
                   return (
-                    <li key={playlist.id}>
+                    <li key={playlist.id} role="none">
                       <button
                         type="button"
                         role="radio"

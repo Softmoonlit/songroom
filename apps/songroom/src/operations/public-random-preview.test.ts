@@ -39,7 +39,7 @@ class MockAdapter implements NeteaseAdapter {
       return {
         ok: true,
         data: {
-          playlist: { id: input.playlistId, name: "歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id: input.playlistId, name: "歌单", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: [],
           songs: []
         }
@@ -264,7 +264,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "房主个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "房主个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["new-owner-1", "new-owner-2"],
             songs: [
               { id: "new-owner-1", name: "新歌一", artists: ["A"], album: "Album" },
@@ -277,7 +277,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "室友个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "室友个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["new-roommate-1", "old-1"],
             songs: [
               { id: "new-roommate-1", name: "室友新歌", artists: ["B"], album: "Album" },
@@ -416,7 +416,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: [songId],
           songs: [{ id: songId, name: `新歌${callCount}`, artists: ["A"], album: "Album" }]
         }
@@ -491,7 +491,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: ["s_new"],
           songs: [{ id: "s_new", name: "新歌", artists: ["A"], album: "Album" }]
         }
@@ -557,7 +557,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: ["s_new"],
           songs: [{ id: "s_new", name: "新歌", artists: ["A"], album: "Album" }]
         }
@@ -626,7 +626,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: ["s_new"],
           songs: [{ id: "s_new", name: "新歌", artists: ["A"], album: "Album" }]
         }
@@ -724,7 +724,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "房主歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "房主歌单", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["s1", "s2"],
             songs: allOldSongs.slice(0, 2)
           }
@@ -734,7 +734,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "室友歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "室友歌单", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["s3"],
             songs: allOldSongs.slice(2, 3)
           }
@@ -866,7 +866,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "房主个人歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "房主个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["s_owner_1"],
             songs: [{ id: "s_owner_1", name: "房主歌曲", artists: ["周杰伦"], album: "范特西" }]
           }
@@ -925,7 +925,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "歌单", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "歌单", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: [],
           songs: []
         }
@@ -999,7 +999,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "房主", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "房主", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["s_owner_1"],
             songs: [{ id: "s_owner_1", name: "房主歌", artists: ["A"], album: "Album" }]
           }
@@ -1008,7 +1008,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "室友", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: ["s_roommate_1"],
           songs: [{ id: "s_roommate_1", name: "室友歌", artists: ["B"], album: "Album" }]
         }
@@ -1116,7 +1116,7 @@ describe("PublicRandomPreview", () => {
         return {
           ok: true,
           data: {
-            playlist: { id, name: "房主", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id, name: "房主", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["s_owner_1"],
             songs: [{ id: "s_owner_1", name: "房主歌", artists: ["A"], album: "Album" }]
           }
@@ -1125,7 +1125,7 @@ describe("PublicRandomPreview", () => {
       return {
         ok: true,
         data: {
-          playlist: { id, name: "室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id, name: "室友", creatorId: "other-creator", subscribed: true, status: 0 },
           songIds: ["s_roommate_1"],
           songs: [{ id: "s_roommate_1", name: "室友歌", artists: ["B"], album: "Album" }]
         }

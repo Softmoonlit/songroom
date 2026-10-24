@@ -60,10 +60,17 @@ class ReplacementTestAdapter implements NeteaseAdapter {
       if (!pl) {
         return { ok: false, error: { code: "TARGET_PERMISSION", outcome: "failed" } };
       }
+      const isPublic = input.playlistId === "public-pl-1";
       return {
         ok: true,
         data: {
-          playlist: { id: pl.id, name: pl.name, creatorId: "acc-owner", subscribed: false, status: pl.status ?? 0 },
+          playlist: {
+            id: pl.id,
+            name: pl.name,
+            creatorId: isPublic ? "acc-owner" : "acc-fav-author",
+            subscribed: !isPublic,
+            status: pl.status ?? 0
+          },
           songIds: pl.songs.map(s => s.id),
           songs: [...pl.songs]
         }

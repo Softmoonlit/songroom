@@ -317,7 +317,7 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
     return {
       ok: true,
       data: {
-        playlist: { id: "owner-personal-1", name: "房主个人歌单", creatorId: "test", subscribed: false, status: 0 },
+        playlist: { id: "owner-personal-1", name: "房主个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
         songIds: ["new-song-1", "old-song-1"],
         songs: [
           { id: "new-song-1", name: "新歌", artists: ["歌手"], album: "专辑" },
@@ -392,7 +392,7 @@ it("随机换歌确认与操作轮询路由鉴权、幂等受理与操作读取"
     return {
       ok: true,
       data: {
-        playlist: { id: "owner-personal-replace-http", name: "房主个人歌单", creatorId: "test", subscribed: false, status: 0 },
+        playlist: { id: "owner-personal-replace-http", name: "房主个人歌单", creatorId: "other-creator", subscribed: true, status: 0 },
         songIds: ["new-song-http"],
         songs: [{ id: "new-song-http", name: "新歌", artists: ["歌手"], album: "专辑" }]
       }

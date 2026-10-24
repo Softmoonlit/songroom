@@ -471,7 +471,7 @@ describe("失效公共歌单识别与重新创建 (ticket 13)", () => {
         return {
           ok: true,
           data: {
-            playlist: { id: "member-personal-pl", name: "songroom-宿舍-室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            playlist: { id: "member-personal-pl", name: "songroom-宿舍-室友", creatorId: "other-creator", subscribed: true, status: 0 },
             songIds: ["song-1"],
             songs: [{ id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
           }

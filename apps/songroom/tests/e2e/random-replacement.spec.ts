@@ -257,7 +257,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     await expect(disabledRoommateCheckbox).toBeVisible();
     await expect(disabledRoommateCheckbox).toBeDisabled();
-    await expect(modal.getByText("未创建歌单")).toBeVisible();
+    await expect(modal.getByText("未分配歌单")).toBeVisible();
 
     // 5. 全选 checkbox 初始为未选，且与下方成员复选框在同一垂直 X 坐标列对齐
     const selectAllCheckbox = modal.getByRole("checkbox", { name: "全选参与成员" });
