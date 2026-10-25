@@ -1,0 +1,11 @@
+.git
+.scratch
+apps/songroom/tests
+apps/songroom/test-results
+apps/songroom/playwright-report
+node_modules
+apps/songroom/node_modules
+packages/vendor/netease-cloud-music-api-enhanced/node_modules
+apps/songroom/dist
+*.log
+.DS_Store

@@ -21,14 +21,14 @@ pnpm start
 
 浏览器打开 `http://127.0.0.1:3000`。`SONGROOM_CONFIG` 只指定配置文件路径；配置中的路径以配置文件目录为基准。配置文件必须由当前用户持有，仅当前用户可读写。普通启动缺少配置、数据库、正确 schema 或客户端构建产物时失败，不会初始化、迁移、生成密钥或返回空白页面。
 
-生产入口必须配置精确 HTTPS origin，应用只监听 `127.0.0.1` 并仅信任本机代理。公网 Caddy、可信证书、systemd 和真实机器资源由部署工单验收，本地运行通过不代表可以上线。数据库、私有配置、凭据密钥和运行临时目录须放在静态资源目录之外。`credentialKeyPath` 指向当前用户持有、权限为 0600 或 0400 的独立 32 字节二进制主密钥文件；禁止重新生成或替换已有密钥。密钥缺失、权限错误及已有凭据无法解密时启动失败。`authSecret` 保存在受限配置文件中，两类密钥均不得放入环境变量或命令行。
+生产入口必须配置精确 HTTPS origin，应用只监听 `127.0.0.1` 并仅信任本机代理。公网 Caddy、可信证书、Docker 容器与宿主机资源由部署流程验证，本地运行通过不代表可以上线。数据库、私有配置、凭据密钥和运行临时目录须放在静态资源目录之外。`credentialKeyPath` 指向当前用户持有、权限为 0600 或 0400 的独立 32 字节二进制主密钥文件；禁止重新生成或替换已有密钥。密钥缺失、权限错误及已有凭据无法解密时启动失败。`authSecret` 保存在受限配置文件中，两类密钥均不得放入环境变量或命令行。
 
 ## 生产部署与运维
 
-SongRoom 第一期生产运行包采用单台公网 VPS 单体架构，由 systemd 保证唯一应用进程，Caddy 作为唯一公网入口：
-- **生产配置与单元文件**：
-  - `deploy/systemd/songroom.service`：受限专用系统用户（`songroom`）与 systemd 安全沙箱（`NoNewPrivileges`、`ProtectSystem=strict`、目录权限隔离、35 秒优雅停机上限）。
-  - `deploy/systemd/songroom-journald.conf`：本机结构化日志限量保留配置（上限 100 MiB、最长保留 7 天、速率限制）。
+SongRoom 采用 GitHub Actions 云端构建不可变镜像并推送到 GitHub Container Registry，生产 VPS 通过 Docker Compose 编排拉取镜像运行，由 Caddy 作为唯一公网入口：
+- **容器与反代配置文件**：
+  - `docker-compose.yml`：单实例 Docker Compose 编排，采用 `network_mode: host` 监听回环地址，挂载宿主机持久数据与凭据。
+  - `deploy/deploy.sh`：生产一键更新脚本（自动拉取 GHCR 镜像、优雅停机、执行数据库迁移与自检、重启容器）。
   - `deploy/caddy/Caddyfile`：公网可信 HTTPS 入口反向代理，提供浏览器默认受信任证书自动签发与续期、128 KiB 请求体限制及代理头传递。
   - `deploy/songroom.config.production.json`：生产私有配置文件基准模板。
 - **精简运维清单与操作手册**：
@@ -36,13 +36,13 @@ SongRoom 第一期生产运行包采用单台公网 VPS 单体架构，由 syste
 
 ## 数据库维护
 
-`pnpm db:init` 独占创建数据库并应用仓库中的 Drizzle 迁移，重复初始化拒绝覆盖。`pnpm db:migrate` 只显式迁移已有数据库；命令先占用与应用相同的回环端口，应用运行中或端口占用时拒绝执行。迁移期间应保持 systemd 停止；不增加数据库租约或分布式锁。
+`pnpm db:init` 独占创建数据库并应用仓库中的 Drizzle 迁移，重复初始化拒绝覆盖。`pnpm db:migrate` 只显式迁移已有数据库；命令先占用与应用相同的回环端口，应用运行中或端口占用时拒绝执行。迁移期间应保持容器停止；不增加数据库租约或分布式锁。
 
-`pnpm db:check` 只读检查迁移记录、schema、数据库完整性及 WAL；它不会创建数据库或修改业务状态。生产环境可以直接使用编译后的命令：
+`pnpm db:check` 只读检查迁移记录、schema、数据库完整性及 WAL；它不会创建数据库或修改业务状态。生产环境可以通过容器执行命令：
 
 ```bash
-node apps/songroom/dist/cli.js db check
-node apps/songroom/dist/cli.js db migrate
+docker compose run --rm songroom node dist/cli.js db check
+docker compose run --rm songroom node dist/cli.js db migrate
 ```
 
 普通启动只打开已有数据库并校验，外键和锁等待超时在每个运行连接上启用。不要把数据库初始化当作数据丢失后的自动恢复。
