@@ -1,13 +1,13 @@
 import type { z } from "zod";
 
 export const errorMessages: Record<string, string> = {
-  PLAYBACK_CONFLICT: "播放指示已变化，请核对后重新操作。",
-  PLAYLIST_CONFLICT: "歌单内容或顺序已变化，请核对后重新操作。",
+  PLAYBACK_CONFLICT: "播放状态已变化，请重试。",
+  PLAYLIST_CONFLICT: "歌单内容已变化，请重试。",
   PLAY_NEXT_NOOP: "歌曲已在目标位置，无需再次安排。",
   CONCURRENT_OPERATION_LIMIT_EXCEEDED: "你在此房间已有未完成的写入操作，请等待结果确认。",
   UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
   ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员明确恢复。",
-  TARGET_BLOCKED: "当前歌单目标有待确认的写入操作，请稍后刷新查看。",
+  TARGET_BLOCKED: "当前目标有待确认的写入操作，其他房间可继续使用。",
   RATE_LIMITED: "网易云风控或频繁请求已暂停整个账号，请联系管理员。",
   ACCOUNT_EMPTY: "网易云返回的账号为空，请房主恢复授权。",
   TARGET_PERMISSION: "当前歌单目标权限不足，等待处理。",
@@ -50,18 +50,25 @@ export const errorMessages: Record<string, string> = {
   SOURCE_SONG_REMOVED: "该歌曲已从你的个人歌单中移除，无法发起点歌。",
   SOURCE_PLAYLIST_UNAVAILABLE: "来源个人歌单暂时无法访问，请核对个人歌单状态。"
 };
+
 export class RoomRequestError extends Error {
   constructor(readonly code: string) {
     super(code);
   }
 }
-export function errorMessageForCode(code: string) {
+
+export function errorMessageForCode(code: string | null | undefined): string {
+  if (!code) {
+    return "暂时无法完成房间请求，请稍后重试。";
+  }
   return errorMessages[code] ?? "暂时无法完成房间请求，请稍后重试。";
 }
-export function errorMessage(error: unknown) {
+
+export function errorMessage(error: unknown): string {
   return error instanceof RoomRequestError ? errorMessageForCode(error.code)
     : "暂时无法完成房间请求，请稍后重试。";
 }
+
 export function request<T>(
   path: string,
   schema: z.ZodType<T>,
@@ -115,4 +122,5 @@ export async function apiRequest<T>(
   }
   return schema.parse(payload);
 }
+
 export const queryOptions = { retry: false, refetchOnWindowFocus: false, refetchOnMount: "always" as const };

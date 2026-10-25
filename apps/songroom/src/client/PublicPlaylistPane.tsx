@@ -24,23 +24,23 @@ import {
 const operationMessages: Record<NonNullable<PublicPlaylistView["operation"]>["status"], string> = {
   queued: "已排队，等待创建点歌台。",
   processing: "正在创建点歌台。",
-  awaitingConfirmation: "创建结果待确认（创建结果待核查），可能已在网易云创建。请勿重试创建。",
+  awaitingConfirmation: "创建结果待确认（创建结果待核查），请勿重试。",
   waitingAuthorization: "正在等待房主恢复网易云授权。",
-  needsAdministrator: "创建结果未知，需要管理员处理，已阻止该房间再次创建。",
+  needsAdministrator: "创建结果未知，需要管理员处理。",
   succeeded: "点歌台已创建并绑定。",
-  failed: "创建明确失败，请查看当前可用操作。",
+  failed: "创建明确失败，请重试。",
   stopped: "创建操作已停止。"
 };
 
 export function getOperationMessage(op: NonNullable<PublicPlaylistView["operation"]>): string {
   if (op.step === "confirming") {
     if (op.recovered) {
-      return "具体 ID 已恢复，正在核验并完成点歌台关联。";
+      return "具体 ID 已恢复，正在核验关联。";
     }
-    return "已获 ID 待关联，正在建立房间点歌台绑定。";
+    return "已获 ID 待关联，正在建立绑定。";
   }
   if (op.step === "unknown" || op.status === "needsAdministrator") {
-    return "创建结果未知，需要管理员处理，已阻止该房间再次创建。";
+    return "创建结果未知，需要管理员处理。";
   }
   return operationMessages[op.status];
 }
@@ -48,7 +48,7 @@ export function getOperationMessage(op: NonNullable<PublicPlaylistView["operatio
 function getPlaylistRefreshErrorMessage(code: string): string {
   switch (code) {
     case "MODULE_ERROR":
-      return "网易云服务暂时响应异常，请稍后刷新重试。";
+      return "网易云服务响应异常，请稍后重试。";
     case "NETWORK_ERROR":
       return "网络连接失败，请稍后重试。";
     case "DEADLINE":
@@ -58,7 +58,7 @@ function getPlaylistRefreshErrorMessage(code: string): string {
     case "RATE_LIMITED":
       return "网易云请求受限，请稍后重试。";
     case "AUTH_UNAVAILABLE":
-      return "网易云授权失效，请房主前往账号设置检查。";
+      return "网易云授权失效，请房主前往设置检查。";
     default:
       return errorMessageForCode(code);
   }
@@ -66,12 +66,12 @@ function getPlaylistRefreshErrorMessage(code: string): string {
 
 const disabledMessages = {
   OWNER_ONLY: "只有房主可以创建点歌台。",
-  NETEASE_AUTH_REQUIRED: "请房主先在账号设置中绑定有效的网易云账号。",
-  PUBLIC_PLAYLIST_EXISTS: "此房间已经绑定点歌台。",
-  ACCOUNT_PAUSED: "网易云账号因风控或频繁请求已暂停，请联系管理员恢复。",
-  TARGET_BLOCKED: "当前目标有待确认的写入操作，其他房间可继续使用。",
-  UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项排队或执行中的操作，请等待空位。",
-  OPERATION_PENDING: "已有未完成的创建操作，不能再次创建。"
+  NETEASE_AUTH_REQUIRED: "请房主先绑定有效的网易云账号。",
+  PUBLIC_PLAYLIST_EXISTS: "已经绑定点歌台。",
+  ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员明确恢复。",
+  TARGET_BLOCKED: "当前目标写入中，其他房间可继续使用。",
+  UPSTREAM_QUEUE_FULL: "网易云账号已有 20 项操作，请稍候。",
+  OPERATION_PENDING: "已有未完成的创建操作，请稍候。"
 };
 
 function TrackList({ tracks, active, highlight, onHighlightEnd, playback, isFilterActive, onClearFilter }: {
@@ -264,7 +264,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     refetchInterval: q =>
       q.state.data?.status &&
       ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status)
-        ? 2500
+        ? 1000
         : false,
     ...queryOptions
   });
@@ -289,7 +289,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       setActiveReplacementOperationId(null);
       setToast({
         id: uuidv7(),
-        message: "换歌成功！已更新点歌台。请在网易云官方客户端重新载入歌单并点击「播放全部」。",
+        message: "换歌成功，点歌台已更新。",
         type: "success"
       });
       void client.invalidateQueries({ queryKey });

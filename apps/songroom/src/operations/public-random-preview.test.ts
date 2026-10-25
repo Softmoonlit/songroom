@@ -1143,4 +1143,87 @@ describe("PublicRandomPreview", () => {
       code: "INVALID_MEMBER"
     }));
   });
+
+  it("短时间内（60s）重复生成时复用有效新鲜快照，过期后重新向网易云刷新", async () => {
+    const ctx = createTestContext();
+    fixtures.push(ctx);
+
+    const publicPlaylistId = "pub-pl-fresh-test";
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "公共歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    const ownerPlId = "owner-pl-fresh";
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.ownerMemberId,
+      accountId: "cloud-owner",
+      playlistId: ownerPlId,
+      name: "房主歌单",
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    ctx.adapter.detailHandler = (id: string) => {
+      if (id === publicPlaylistId) {
+        return {
+          ok: true,
+          data: {
+            playlist: { id, name: "公共", creatorId: "cloud-owner", subscribed: false, status: 0 },
+            songIds: [],
+            songs: []
+          }
+        };
+      }
+      return {
+        ok: true,
+        data: {
+          playlist: { id, name: "房主", creatorId: "other-creator", subscribed: true, status: 0 },
+          songIds: ["s_1", "s_2"],
+          songs: [
+            { id: "s_1", name: "歌1", artists: ["A"], album: "Album" },
+            { id: "s_2", name: "歌2", artists: ["B"], album: "Album" }
+          ]
+        }
+      };
+    };
+
+    // 1. 初次生成：公共歌单 + 房主歌单均无快照，发起 2 次上游调用
+    const initialCallCount = ctx.adapter.inputs.length;
+    const res1 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 5
+    });
+    expect(res1.actualCount).toBe(2);
+    expect(ctx.adapter.inputs.length - initialCallCount).toBe(2);
+
+    // 2. 10 秒后“换一组”：快照处于 60 秒新鲜期内，零上游网络调用，瞬间出结果
+    ctx.advanceTime(10_000);
+    const countBeforeReroll = ctx.adapter.inputs.length;
+    const res2 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 5
+    });
+    expect(res2.actualCount).toBe(2);
+    // 上游调用计数未增加
+    expect(ctx.adapter.inputs.length).toBe(countBeforeReroll);
+
+    // 3. 超过 60 秒（累计 75 秒）：快照过期，重新向网易云刷新
+    ctx.advanceTime(65_000);
+    const countBeforeExpire = ctx.adapter.inputs.length;
+    const res3 = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId],
+      count: 5
+    });
+    expect(res3.actualCount).toBe(2);
+    // 重新发起了公共与个人歌单的刷新
+    expect(ctx.adapter.inputs.length - countBeforeExpire).toBe(2);
+  });
 });

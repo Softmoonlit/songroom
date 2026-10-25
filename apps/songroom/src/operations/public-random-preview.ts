@@ -23,6 +23,7 @@ import type { PublicPlaylists } from "./public-playlists.js";
 import type { PersonalPlaylists } from "./personal-playlists.js";
 
 export const PREVIEW_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export const FRESH_SNAPSHOT_WINDOW_MS = 60 * 1000; // 60 seconds (新鲜快照复用窗口)
 
 export interface SourceBasis {
   memberId: string;
@@ -55,6 +56,7 @@ export interface StoredRandomPreview {
 
 export class PublicRandomPreview {
   readonly #previews = new Map<string, StoredRandomPreview>();
+  readonly #verifiedSources = new Map<string, number>(); // key: ${roomId}:${type}:${id} -> verifiedAt timestamp
 
   constructor(
     private readonly database: AppDatabase,
@@ -91,14 +93,22 @@ export class PublicRandomPreview {
       throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单");
     }
 
-    // 1. 刷新公共歌单并核实完整快照
-    const publicView = await this.publicPlaylists.refresh(userId, roomId);
+    // 1. 获取公共歌单快照（若本会话 60s 内已向网易云核验成功则复用，否则向网易云刷新）
+    const publicVerifiedKey = `${roomId}:public:${publicBinding.playlistId}`;
+    const lastPublicVerifiedAt = this.#verifiedSources.get(publicVerifiedKey);
+    let publicView = (lastPublicVerifiedAt && (this.now() - lastPublicVerifiedAt <= FRESH_SNAPSHOT_WINDOW_MS))
+      ? this.publicPlaylists.read(userId, roomId)
+      : await this.publicPlaylists.refresh(userId, roomId);
+
     if (publicView.lastRefreshError) {
+      this.#verifiedSources.delete(publicVerifiedKey);
       throw new BusinessError(502, publicView.lastRefreshError, `公共歌单读取失败: ${publicView.lastRefreshError}`);
     }
     if (!publicView.snapshot) {
+      this.#verifiedSources.delete(publicVerifiedKey);
       throw new BusinessError(502, "MODULE_ERROR", "公共歌单快照不可用");
     }
+    this.#verifiedSources.set(publicVerifiedKey, this.now());
 
     // 2. 验证所选成员集合
     const rawMemberIds = command.memberIds;
@@ -124,7 +134,7 @@ export class PublicRandomPreview {
       }
     }
 
-    // 3. 逐一刷新所选成员的个人歌单
+    // 3. 逐一获取所选成员的个人歌单（若本会话 60s 内已向网易云核验成功则复用，否则向网易云刷新）
     // 规格："任一所选来源读取失败、目标失效或无法证明读取完整时，整次预览失败并提示来源问题；不自动跳过，不将失败当作空歌单，也不凭旧快照放行。未选成员的来源故障不影响本次抽选。"
     const candidateMembers: CandidateMember[] = [];
     const sourceBases: SourceBasis[] = [];
@@ -132,14 +142,22 @@ export class PublicRandomPreview {
     for (const memberId of requestedMemberIds) {
       const memberInfo = memberMap.get(memberId)!;
       const b = bindingMap.get(memberId)!;
+      const memberVerifiedKey = `${roomId}:personal:${b.playlistId}`;
+      const lastMemberVerifiedAt = this.#verifiedSources.get(memberVerifiedKey);
 
-      const memberView = await this.personalPlaylists.refresh(userId, roomId, memberId);
+      let memberView = (lastMemberVerifiedAt && (this.now() - lastMemberVerifiedAt <= FRESH_SNAPSHOT_WINDOW_MS))
+        ? this.personalPlaylists.read(userId, roomId, memberId)
+        : await this.personalPlaylists.refresh(userId, roomId, memberId);
+
       if (memberView.lastRefreshError) {
+        this.#verifiedSources.delete(memberVerifiedKey);
         throw new BusinessError(502, memberView.lastRefreshError, `成员 ${memberInfo.nickname} 个人歌单读取失败: ${memberView.lastRefreshError}`);
       }
       if (!memberView.snapshot) {
+        this.#verifiedSources.delete(memberVerifiedKey);
         throw new BusinessError(502, "MODULE_ERROR", `成员 ${memberInfo.nickname} 个人歌单快照不可用`);
       }
+      this.#verifiedSources.set(memberVerifiedKey, this.now());
 
       const songIds = memberView.snapshot.tracks.map(t => t.songId);
       sourceBases.push({

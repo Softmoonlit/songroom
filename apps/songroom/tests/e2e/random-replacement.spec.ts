@@ -437,7 +437,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await modal.getByRole("button", { name: "生成预览" }).click();
 
     await expect(modal.locator(".error-banner")).toContainText(
-      "所选成员的歌单暂无歌曲。"
+      "所选成员歌单暂无歌曲。"
     );
     // 不能确认替换
     await expect(modal.getByRole("button", { name: "确认替换" })).toHaveCount(0);
@@ -495,7 +495,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 页面显示排队卡片
     const statusBanner = page.locator(".replacement-status-banner");
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("换歌操作已排队");
+    await expect(statusBanner).toContainText("换歌已排队");
 
     // 模拟推进：正在移除旧歌
     currentOpStatus = {
@@ -508,7 +508,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 2
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在从点歌台移除旧歌曲（已移除 1 首）…");
+    await expect(statusBanner).toContainText("正在移除旧歌曲（已移除 1 首）…");
 
     // 模拟推进：正在添加新歌
     currentOpStatus = {
@@ -521,7 +521,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 3
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 3 / 10 首）…");
+    await expect(statusBanner).toContainText("正在添加新歌曲（已添加 3 / 10 首）…");
 
     // 模拟推进：正在记录点歌人标签
     currentOpStatus = {
@@ -531,7 +531,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 4
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在记录各歌曲的点歌人标签…");
+    await expect(statusBanner).toContainText("正在记录点歌人标签…");
 
     // 模拟成功：更新公共歌单快照，附带各来源成员的点歌人标签
     publicView = {
@@ -561,7 +561,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 验证成功 Toast
     const toast = page.locator(".songroom-toast");
     await expect(toast).toBeVisible();
-    await expect(toast).toContainText("换歌成功！已更新点歌台。请在网易云官方客户端重新载入歌单并点击「播放全部」");
+    await expect(toast).toContainText("换歌成功，点歌台已更新。");
 
     // 状态卡片消失，歌单列表更新为新歌且带有来源成员点歌人标签
     await expect(statusBanner).toHaveCount(0);
@@ -620,7 +620,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     const statusBanner = page.locator(".replacement-status-banner");
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("换歌未完成");
+    await expect(statusBanner).toContainText("换歌失败");
     await expect(statusBanner).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 2 首，移除 1 首）");
 
     // 点击关闭按钮可清除失败卡片，允许重新发起换歌
@@ -683,7 +683,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 页面初次载入即可见恢复的操作状态
     const statusBanner = page.locator(".replacement-status-banner");
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 4 / 10 首）…");
+    await expect(statusBanner).toContainText("正在添加新歌曲（已添加 4 / 10 首）…");
 
     // 切换到「我的歌单」
     await page.getByRole("button", { name: "我的歌单" }).click();
@@ -692,14 +692,14 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 切回「公共歌单」
     await page.getByRole("button", { name: "点歌台" }).click();
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("正在添加歌曲到点歌台（已添加 4 / 10 首）…");
+    await expect(statusBanner).toContainText("正在添加新歌曲（已添加 4 / 10 首）…");
 
     // 刷新页面
     await page.reload();
     await page.getByRole("button", { name: "点歌台", exact: true }).click();
     await expect(page.locator(".replacement-status-banner")).toBeVisible();
     await expect(page.locator(".replacement-status-banner")).toContainText(
-      "正在添加歌曲到点歌台（已添加 4 / 10 首）…"
+      "正在添加新歌曲（已添加 4 / 10 首）…"
     );
   });
 
@@ -723,7 +723,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "确认替换" }).click();
 
     await expect(modal.locator(".error-banner")).toContainText(
-      "点歌台或成员来源已变更，当前预览已失效，请重新生成预览。"
+      "来源已变更，当前预览已失效，请重新抽选。"
     );
   });
 
@@ -824,7 +824,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await modal.getByRole("checkbox", { name: "全选参与成员" }).click();
     await modal.getByRole("button", { name: "生成预览" }).click();
 
-    await expect(modal.locator(".error-banner")).toContainText("网易云服务响应异常，请稍后重试。");
+    await expect(modal.locator(".error-banner")).toContainText("网易云接口异常，请稍后重试。");
   });
 
   test("并发写冲突防御：歌单正在执行写操作或用户有未完成写操作时展示友好提示", async ({ page }) => {
@@ -847,7 +847,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.getByRole("button", { name: "确认替换" }).click();
 
     await expect(modal.locator(".error-banner")).toContainText(
-      "当前点歌台正在执行其他写入操作，请稍候再试。"
+      "歌单正在执行其他写入，请稍候。"
     );
   });
 
@@ -972,7 +972,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 状态横幅准确展示清空成功、添加未完成
     const statusBanner = page.locator(".replacement-status-banner");
     await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("换歌未完成");
+    await expect(statusBanner).toContainText("换歌失败");
     await expect(statusBanner).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 0 首，移除 2 首）");
 
     // 公共歌单更新为清空后的空快照，不自动回滚旧歌

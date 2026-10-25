@@ -5,7 +5,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-IMAGE_REF="${1:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/softmoonlit/songroom:latest}"
+DEFAULT_REGISTRY="swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/softmoonlit/songroom"
+RAW_INPUT="${1:-latest}"
+
+# 若输入包含 '/' 则视为完整镜像引用，否则自动拼接默认镜像站与版本 tag（自动剥离可选的前缀 'v'）
+if [[ "$RAW_INPUT" == *"/"* ]]; then
+  IMAGE_REF="$RAW_INPUT"
+else
+  CLEAN_TAG="${RAW_INPUT#v}"
+  IMAGE_REF="${DEFAULT_REGISTRY}:${CLEAN_TAG}"
+fi
+
 export APP_IMAGE="$IMAGE_REF"
 
 echo "==> 拉取镜像: $APP_IMAGE ..."

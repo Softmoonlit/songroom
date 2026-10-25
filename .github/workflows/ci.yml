@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
 
 permissions:
@@ -40,7 +42,7 @@ jobs:
 
   build-and-push:
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -62,8 +64,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=semver,pattern={{version}}
             type=raw,value=latest
-            type=sha,prefix=,format=short
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6

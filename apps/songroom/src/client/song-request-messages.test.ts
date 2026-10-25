@@ -6,78 +6,78 @@ import {
 
 describe("song-request-messages", () => {
   describe("getFriendlySongRequestErrorMessage", () => {
-    it("将排队与限流等系统错误码转换为温和人性化提示", () => {
+    it("将排队与限流等系统错误码转换为精炼直接提示", () => {
       // 队列占满
       expect(getFriendlySongRequestErrorMessage("UPSTREAM_QUEUE_FULL")).toBe(
-        "当前点歌的小伙伴较多，通道正在有序排队中，请稍候片刻再试。"
+        "操作队列已满，请稍后重试。"
       );
 
       // 风控或频控保护
       expect(getFriendlySongRequestErrorMessage("RATE_LIMITED")).toBe(
-        "音乐平台访问稍显频繁，已暂时开启流控保护，请稍作休息后再试。"
+        "网易云请求受限，请稍后重试。"
       );
       expect(getFriendlySongRequestErrorMessage("ACCOUNT_PAUSED")).toBe(
-        "音乐平台访问稍显频繁，已暂时开启流控保护，请稍作休息后再试。"
+        "网易云请求受限，请稍后重试。"
       );
 
       // 目标写冲突锁定
       expect(getFriendlySongRequestErrorMessage("TARGET_BLOCKED")).toBe(
-        "前一首歌曲正在写入歌单，请稍等数秒再点下一首。"
+        "歌单写入中，请稍后重试。"
       );
 
       // 网络与超时
       expect(getFriendlySongRequestErrorMessage("DEADLINE")).toBe(
-        "网络连接稍有延迟，我们正在确认入单状态，请稍后查看歌单。"
+        "网络连接超时，正在核验状态。"
       );
       expect(getFriendlySongRequestErrorMessage("NETWORK_ERROR")).toBe(
-        "网络连接稍有延迟，我们正在确认入单状态，请稍后查看歌单。"
+        "网络连接超时，正在核验状态。"
       );
 
       // 授权失效
       expect(getFriendlySongRequestErrorMessage("AUTH_UNAVAILABLE")).toBe(
-        "房主的网易云授权需要重新连接，请提醒房主更新授权。"
+        "需房主重新授权网易云账号。"
       );
 
       // 个人歌单校验
       expect(getFriendlySongRequestErrorMessage("PERSONAL_PLAYLIST_NOT_FOUND")).toBe(
-        "尚未配置个人歌单，无法发起点歌。"
+        "尚未配置个人歌单。"
       );
       expect(getFriendlySongRequestErrorMessage("PUBLIC_PLAYLIST_NOT_FOUND")).toBe(
-        "房间尚未创建点歌台，无法发起点歌。可在房主创建点歌台后重试。"
+        "房间尚未创建点歌台。"
       );
       expect(getFriendlySongRequestErrorMessage("SOURCE_PLAYLIST_FORBIDDEN")).toBe(
-        "只能从自己的专用个人歌单发起点歌。"
+        "只能从个人专属歌单点歌。"
       );
       expect(getFriendlySongRequestErrorMessage("SOURCE_SONG_REMOVED")).toBe(
         "该歌曲已从你的个人歌单中移除，无法发起点歌。"
       );
       expect(getFriendlySongRequestErrorMessage("SOURCE_PLAYLIST_UNAVAILABLE")).toBe(
-        "来源个人歌单暂时无法访问，请核对个人歌单状态。"
+        "个人歌单暂时不可访问。"
       );
     });
 
-    it("空或未识别错误码返回温和托底提示", () => {
-      expect(getFriendlySongRequestErrorMessage(null)).toBe("点歌遇到了一点小问题，请稍后重试。");
-      expect(getFriendlySongRequestErrorMessage(undefined)).toBe("点歌遇到了一点小问题，请稍后重试。");
+    it("空或未识别错误码返回精炼托底提示", () => {
+      expect(getFriendlySongRequestErrorMessage(null)).toBe("点歌失败，请稍后重试。");
+      expect(getFriendlySongRequestErrorMessage(undefined)).toBe("点歌失败，请稍后重试。");
     });
   });
 
   describe("getFriendlyOperationStatusMessage", () => {
-    it("针对不同进行中状态生成友好的人性化提示", () => {
+    it("针对不同进行中状态生成精炼提示", () => {
       expect(getFriendlyOperationStatusMessage("queued", "晴天")).toBe(
-        "《晴天》已提交，正在排队等待网易云处理…"
+        "正在为房间排队添加《晴天》…"
       );
       expect(getFriendlyOperationStatusMessage("processing", "晴天")).toBe(
-        "正在为房间添加《晴天》并同步到网易云…"
+        "正在为房间添加《晴天》…"
       );
       expect(getFriendlyOperationStatusMessage("awaitingConfirmation", "晴天")).toBe(
-        "《晴天》已提交网易云，正在等待云端确认，请稍后刷新查看。"
+        "《晴天》已提交，正在核验…"
       );
       expect(getFriendlyOperationStatusMessage("waitingAuthorization")).toBe(
-        "房主的网易云授权需要重新确认，正在等待房主恢复授权…"
+        "等待房主恢复网易云授权…"
       );
       expect(getFriendlyOperationStatusMessage("needsAdministrator")).toBe(
-        "点歌操作需要管理员协助处理，请联系房主或管理员。"
+        "操作状态异常，请联系管理员。"
       );
     });
   });

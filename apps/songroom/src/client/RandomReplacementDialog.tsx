@@ -86,7 +86,7 @@ export function RandomReplacementDialog({
     onError: failure => {
       const code = failure instanceof RoomRequestError ? failure.code : null;
       if (code === "PREVIEW_INVALIDATED" || code === "PREVIEW_NOT_FOUND") {
-        setConfirmError("点歌台或成员来源已变更，当前预览已失效，请重新生成预览。");
+        setConfirmError("来源已变更，当前预览已失效，请重新抽选。");
       } else {
         setConfirmError(getFriendlyReplacementErrorMessage(code));
       }
@@ -236,7 +236,7 @@ export function RandomReplacementDialog({
             {previewMutation.isPending ? (
               <div className="random-replacement-loading" role="status">
                 <RotateCw size={24} className="spin-icon" aria-hidden="true" />
-                <p>正在读取成员个人歌单并公平抽选歌曲…</p>
+                <p>正在抽选歌曲…</p>
               </div>
             ) : preview ? (
               /* 预览结果模式 */

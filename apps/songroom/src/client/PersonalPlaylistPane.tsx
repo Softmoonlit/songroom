@@ -44,7 +44,7 @@ function getRefreshErrorMessage(code: string): string {
 const personalOperationMessages: Record<NonNullable<PersonalPlaylistView["operation"]>["status"], string> = {
   queued: "已排队，等待创建专用个人歌单。",
   processing: "正在创建专用个人歌单。",
-  awaitingConfirmation: "创建结果待确认，可能已在网易云创建。请勿重复创建。",
+  awaitingConfirmation: "创建结果待确认，请勿重复操作。",
   waitingAuthorization: "正在等待房主恢复网易云授权。",
   needsAdministrator: "创建结果未知，需要管理员处理。",
   succeeded: "专用个人歌单已创建并绑定。",
@@ -66,11 +66,11 @@ export function getPersonalOperationMessage(op: NonNullable<PersonalPlaylistView
 }
 
 const personalDisabledMessages: Record<NonNullable<PersonalPlaylistView["disabledReason"]>, string> = {
-  NETEASE_AUTH_REQUIRED: "房主网易云授权不可用，请等待房主完成授权。",
-  ACCOUNT_PAUSED: "房主网易云账号已暂停，请联系管理员核查。",
-  TARGET_BLOCKED: "目标歌单已被设为私密或已删除。",
-  PERSONAL_PLAYLIST_EXISTS: "当前已配置个人歌单。",
-  OPERATION_PENDING: "当前有未完成的写操作，请稍候。"
+  NETEASE_AUTH_REQUIRED: "等待房主完成网易云授权。",
+  ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员。",
+  TARGET_BLOCKED: "歌单为私密或已删除。",
+  PERSONAL_PLAYLIST_EXISTS: "已配置个人歌单。",
+  OPERATION_PENDING: "已有未完成的操作，请稍候。"
 };
 
 function PersonalTrackList({
