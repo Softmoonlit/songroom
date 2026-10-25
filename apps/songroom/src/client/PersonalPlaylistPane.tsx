@@ -253,7 +253,7 @@ export function PersonalPlaylistPane({
     queryKey: ["song-request-operation", activeOperationId],
     queryFn: ({ signal }) => request(`/${roomId}/song-requests/${activeOperationId}`, songRequestOperationView, signal),
     enabled: Boolean(activeOperationId && active),
-    refetchInterval: q => (q.state.data?.status && ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status) ? 2500 : false),
+    refetchInterval: q => (q.state.data?.status && ["queued", "processing", "awaitingConfirmation"].includes(q.state.data.status) ? 600 : false),
     ...queryOptions
   });
 

@@ -93,24 +93,7 @@ export class PublicRandomPreview {
       throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单");
     }
 
-    // 1. 获取公共歌单快照（若本会话 60s 内已向网易云核验成功则复用，否则向网易云刷新）
-    const publicVerifiedKey = `${roomId}:public:${publicBinding.playlistId}`;
-    const lastPublicVerifiedAt = this.#verifiedSources.get(publicVerifiedKey);
-    let publicView = (lastPublicVerifiedAt && (this.now() - lastPublicVerifiedAt <= FRESH_SNAPSHOT_WINDOW_MS))
-      ? this.publicPlaylists.read(userId, roomId)
-      : await this.publicPlaylists.refresh(userId, roomId);
-
-    if (publicView.lastRefreshError) {
-      this.#verifiedSources.delete(publicVerifiedKey);
-      throw new BusinessError(502, publicView.lastRefreshError, `公共歌单读取失败: ${publicView.lastRefreshError}`);
-    }
-    if (!publicView.snapshot) {
-      this.#verifiedSources.delete(publicVerifiedKey);
-      throw new BusinessError(502, "MODULE_ERROR", "公共歌单快照不可用");
-    }
-    this.#verifiedSources.set(publicVerifiedKey, this.now());
-
-    // 2. 验证所选成员集合
+    // 1. 校验所选成员集合与来源绑定，再同时刷新公共歌单和所有选中来源。
     const rawMemberIds = command.memberIds;
     const requestedMemberIds = Array.from(new Set(rawMemberIds));
 
@@ -134,21 +117,42 @@ export class PublicRandomPreview {
       }
     }
 
-    // 3. 逐一获取所选成员的个人歌单（若本会话 60s 内已向网易云核验成功则复用，否则向网易云刷新）
-    // 规格："任一所选来源读取失败、目标失效或无法证明读取完整时，整次预览失败并提示来源问题；不自动跳过，不将失败当作空歌单，也不凭旧快照放行。未选成员的来源故障不影响本次抽选。"
-    const candidateMembers: CandidateMember[] = [];
-    const sourceBases: SourceBasis[] = [];
+    const publicVerifiedKey = `${roomId}:public:${publicBinding.accountId}:${publicBinding.playlistId}:${publicBinding.generation}`;
+    const lastPublicVerifiedAt = this.#verifiedSources.get(publicVerifiedKey);
+    const publicViewPromise = lastPublicVerifiedAt !== undefined && this.now() - lastPublicVerifiedAt <= FRESH_SNAPSHOT_WINDOW_MS
+      ? Promise.resolve(this.publicPlaylists.read(userId, roomId))
+      : this.publicPlaylists.refresh(userId, roomId);
 
-    for (const memberId of requestedMemberIds) {
+    const memberViewPromises = requestedMemberIds.map(async memberId => {
       const memberInfo = memberMap.get(memberId)!;
-      const b = bindingMap.get(memberId)!;
-      const memberVerifiedKey = `${roomId}:personal:${b.playlistId}`;
+      const binding = bindingMap.get(memberId)!;
+      const memberVerifiedKey = `${roomId}:personal:${binding.accountId}:${binding.playlistId}:${binding.generation}`;
       const lastMemberVerifiedAt = this.#verifiedSources.get(memberVerifiedKey);
-
-      let memberView = (lastMemberVerifiedAt && (this.now() - lastMemberVerifiedAt <= FRESH_SNAPSHOT_WINDOW_MS))
+      const memberView = lastMemberVerifiedAt !== undefined && this.now() - lastMemberVerifiedAt <= FRESH_SNAPSHOT_WINDOW_MS
         ? this.personalPlaylists.read(userId, roomId, memberId)
         : await this.personalPlaylists.refresh(userId, roomId, memberId);
+      return { memberId, memberInfo, binding, memberVerifiedKey, memberView };
+    });
 
+    const [publicView, memberResults] = await Promise.all([
+      publicViewPromise,
+      Promise.all(memberViewPromises)
+    ]);
+
+    if (publicView.lastRefreshError) {
+      this.#verifiedSources.delete(publicVerifiedKey);
+      throw new BusinessError(502, publicView.lastRefreshError, `公共歌单读取失败: ${publicView.lastRefreshError}`);
+    }
+    if (!publicView.snapshot) {
+      this.#verifiedSources.delete(publicVerifiedKey);
+      throw new BusinessError(502, "MODULE_ERROR", "公共歌单快照不可用");
+    }
+    this.#verifiedSources.set(publicVerifiedKey, this.now());
+
+    // 规格：任一已配置来源读取失败，整次预览失败；不凭旧快照放行。
+    const candidateMembers: CandidateMember[] = [];
+    const sourceBases: SourceBasis[] = [];
+    for (const { memberInfo, binding, memberVerifiedKey, memberView } of memberResults) {
       if (memberView.lastRefreshError) {
         this.#verifiedSources.delete(memberVerifiedKey);
         throw new BusinessError(502, memberView.lastRefreshError, `成员 ${memberInfo.nickname} 个人歌单读取失败: ${memberView.lastRefreshError}`);
@@ -161,16 +165,16 @@ export class PublicRandomPreview {
 
       const songIds = memberView.snapshot.tracks.map(t => t.songId);
       sourceBases.push({
-        memberId: b.memberId,
-        bindingId: b.id,
-        playlistId: b.playlistId,
-        bindingGeneration: b.generation,
+        memberId: binding.memberId,
+        bindingId: binding.id,
+        playlistId: binding.playlistId,
+        bindingGeneration: binding.generation,
         snapshotVersion: memberView.snapshot.version,
         songIds
       });
 
       candidateMembers.push({
-        memberId: b.memberId,
+        memberId: binding.memberId,
         nickname: memberInfo.nickname,
         tracks: memberView.snapshot.tracks.map(t => ({
           id: t.songId,
@@ -181,7 +185,8 @@ export class PublicRandomPreview {
       });
     }
 
-    // 4. 统计旧公共歌单信息
+    // 2. 公共歌单与成员来源均已刷新并写入快照；后续抽选只读取本次最新快照。
+
     const publicTracks = publicView.snapshot.tracks;
     const oldTrackCount = publicTracks.length;
     const oldTracksWithRequesterCount = publicTracks.filter(t => t.requesters && t.requesters.length > 0).length;

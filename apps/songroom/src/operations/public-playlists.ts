@@ -17,6 +17,7 @@ import type { PublicPlaylistCleanupList } from "../shared/room-contracts.js";
 import { EventStreamService } from "../events/event-stream.js";
 import { PublicPlaylistReplacement } from "./public-playlist-replacement.js";
 import type { PublicRandomPreview } from "./public-random-preview.js";
+import type { ReplacementMetricReporter } from "./replacement-observability.js";
 
 type Operation = typeof operation.$inferSelect;
 type Status = Operation["status"];
@@ -54,7 +55,8 @@ export class PublicPlaylists {
       this.now,
       () => this.#beginRead(),
       (accountId, playlistId, generation, data, startedAt, authScope) =>
-        this.#commitSnapshot(accountId, playlistId, generation, data, startedAt, authScope)
+        this.#commitSnapshot(accountId, playlistId, generation, data, startedAt, authScope),
+      this.replacementMetricReporter
     );
     this.replacementService.setPlayNextService(this.playNextService);
     this.playNextService.setReplacementService(this.replacementService);
@@ -77,7 +79,8 @@ export class PublicPlaylists {
     readonly vault: CredentialVault,
     readonly scheduler: UpstreamScheduler,
     readonly eventStream: EventStreamService,
-    readonly now: () => number = () => Date.now()
+    readonly now: () => number = () => Date.now(),
+    readonly replacementMetricReporter: ReplacementMetricReporter = () => {}
   ) {
     this.playback = new PublicPlayback(database, adapter, vault, scheduler, now);
     this.playNextService = new PublicPlayNext(database, adapter, vault, scheduler, eventStream, now,
@@ -344,7 +347,7 @@ export class PublicPlaylists {
     try {
       result = await this.scheduler.executeMemoryTask(accountId, async () => {
         return this.adapter.call({ operation: "playlistDetail", cookie, playlistId });
-      });
+      }, { kind: "read" });
     } catch (err) {
       if (err instanceof BusinessError && err.code === "ACCOUNT_PAUSED") {
         this.#recordRefreshError(accountId, playlistId, "ACCOUNT_PAUSED", readStartedAt);
@@ -1814,7 +1817,7 @@ export class PublicPlaylists {
       const readStartedAt = this.#beginRead();
       const detailResult = await this.scheduler.executeMemoryTask(row.accountId!, async () => {
         return this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.playlistId });
-      });
+      }, { kind: "read" });
 
       if (!detailResult.ok) {
         if (detailResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);

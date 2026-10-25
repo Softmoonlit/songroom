@@ -184,6 +184,42 @@ it("同账号请求严格串行，快速完成后立即推进内存任务，保�
   await scheduler.settle();
 });
 
+it("明确标记的同账号只读任务并行，且不会与写入任务重叠", async () => {
+  vi.useFakeTimers();
+  const { db } = fixture();
+  const scheduler = new UpstreamScheduler(db, () => Date.now());
+  scheduler.start();
+
+  const firstGate = gate<void>();
+  const secondGate = gate<void>();
+  const started: string[] = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const runRead = (id: string, waitFor: Promise<void>) => scheduler.executeMemoryTask("shared-read", async () => {
+    started.push(id);
+    maxInFlight = Math.max(maxInFlight, ++inFlight);
+    await waitFor;
+    inFlight--;
+    return id;
+  }, { kind: "read" });
+
+  const first = runRead("first", firstGate.promise);
+  const second = runRead("second", secondGate.promise);
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(started).toEqual(["first", "second"]);
+  expect(maxInFlight).toBe(2);
+
+  firstGate.resolve();
+  secondGate.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await Promise.all([first, second])).toEqual(["first", "second"]);
+  expect(inFlight).toBe(0);
+
+  scheduler.stop();
+  await scheduler.settle();
+});
+
 it("同账号持久请求每次完成后立即让出并按最久未执行顺序公平轮转", async () => {
   vi.useFakeTimers();
   const { db } = fixture();

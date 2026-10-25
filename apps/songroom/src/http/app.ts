@@ -23,6 +23,7 @@ import { Invites } from "../invites/invites.js";
 import { registerInviteRoutes } from "./invites.js";
 import { PublicRandomPreview } from "../operations/public-random-preview.js";
 import { PublicPlaylists } from "../operations/public-playlists.js";
+import type { ReplacementMetric } from "../operations/replacement-observability.js";
 import { PersonalPlaylists } from "../operations/personal-playlists.js";
 import { UpstreamScheduler } from "../operations/upstream-scheduling.js";
 import { registerPublicPlaylistRoutes } from "./public-playlists.js";
@@ -93,7 +94,12 @@ export async function createApp(input: AppConfig, dependencies: { neteaseAdapter
   const auth = createAuth(database, config);
   const eventStream = new EventStreamService();
   const scheduler = new UpstreamScheduler(database, eventStream, dependencies.now);
-  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now);
+  const replacementMetricReporter = (metric: ReplacementMetric): void => {
+    if (config.nodeEnv !== "test") {
+      console.info(JSON.stringify({ event: "public_playlist_replacement", ...metric }));
+    }
+  };
+  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, dependencies.now, replacementMetricReporter);
   const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, dependencies.now);
   const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, dependencies.now);
   playlists.initReplacement(randomPreview);

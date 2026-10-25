@@ -113,7 +113,27 @@ describe("random-replacement-messages", () => {
       ).toBe("正在记录点歌人标签…");
     });
 
-    it("handles awaitingConfirmation", () => {
+    it("handles readback confirmation separately from unknown writes", () => {
+      const remove = getFriendlyReplacementOperationStatus({
+        ...baseOp,
+        status: "awaitingConfirmation",
+        step: "confirming",
+        currentAction: "remove"
+      });
+      expect(remove.title).toBe("正在核验歌单");
+      expect(remove.description).toBe("正在确认旧歌已清空…");
+
+      const add = getFriendlyReplacementOperationStatus({
+        ...baseOp,
+        status: "awaitingConfirmation",
+        step: "confirming",
+        currentAction: "add"
+      });
+      expect(add.title).toBe("正在核验歌单");
+      expect(add.description).toBe("正在确认新歌已加入…");
+    });
+
+    it("handles unknown writes", () => {
       const res = getFriendlyReplacementOperationStatus({ ...baseOp, status: "awaitingConfirmation", step: "unknown" });
       expect(res.title).toBe("换歌结果待确认");
       expect(res.description).toBe("已提交网易云，正在核验最终状态，请勿重试。");

@@ -30,6 +30,13 @@ import {
 import type { EventStreamService } from "../events/event-stream.js";
 import type { UpstreamScheduler, Operation } from "./upstream-scheduling.js";
 import type { PublicRandomPreview, SourceBasis } from "./public-random-preview.js";
+import {
+  noopReplacementMetricReporter,
+  type ReplacementMetric,
+  type ReplacementMetricOutcome,
+  type ReplacementMetricPhase,
+  type ReplacementMetricReporter
+} from "./replacement-observability.js";
 import type { SelectedTrack } from "./random-selector.js";
 import type { PublicPlayNext } from "./public-play-next.js";
 
@@ -46,6 +53,7 @@ const hasPassedWriteBoundary = (detail: ReplacementDetail) => {
   return added.length > 0 || removed.length > 0 || ["sending", "confirming", "unknown"].includes(detail.step);
 };
 const CONFIRMATION_DELAYS_MS = [5_000, 30_000, 120_000];
+const READBACK_DELAYS_MS = [500, 1_500, 5_000];
 
 export class PublicPlaylistReplacement {
   readonly #timers = new Map<string, NodeJS.Timeout>();
@@ -60,7 +68,8 @@ export class PublicPlaylistReplacement {
     readonly randomPreview: PublicRandomPreview,
     readonly now: () => number,
     readonly beginRead: () => number,
-    readonly commitSnapshot: (accountId: string, playlistId: string, generation: number, data: SnapshotData, readStartedAt: number, authScope: { id: string; generation: number }) => boolean
+    readonly commitSnapshot: (accountId: string, playlistId: string, generation: number, data: SnapshotData, readStartedAt: number, authScope: { id: string; generation: number }) => boolean,
+    readonly reportMetric: ReplacementMetricReporter = noopReplacementMetricReporter
   ) {
     scheduler.register("replacePublicPlaylist", {
       claim: (row) => this.#claim(row),
@@ -71,6 +80,28 @@ export class PublicPlaylistReplacement {
 
   setPlayNextService(service: PublicPlayNext): void {
     this.playNextService = service;
+  }
+
+  #reportMetric(operationId: string, phase: ReplacementMetricPhase, outcome: ReplacementMetricOutcome, elapsedMs?: number): void {
+    try {
+      this.reportMetric({
+        operationId,
+        phase,
+        outcome,
+        ...(elapsedMs === undefined ? {} : { elapsedMs: Math.max(0, Math.round(elapsedMs)) })
+      });
+    } catch {
+      // 指标上报失败不得改变云端写入与恢复状态。
+    }
+  }
+
+  #startMetric(operationId: string, phase: ReplacementMetricPhase): number {
+    this.#reportMetric(operationId, phase, "started");
+    return performance.now();
+  }
+
+  #completeMetric(operationId: string, phase: ReplacementMetricPhase, outcome: ReplacementMetricOutcome, startedAt: number): void {
+    this.#reportMetric(operationId, phase, outcome, performance.now() - startedAt);
   }
 
   #member(userId: string, roomId: string) {
@@ -301,6 +332,9 @@ export class PublicPlaylistReplacement {
     const context = this.#context(row, detail);
     if (!context) return;
     const { auth, cookie } = context;
+    if (detail.step === "ready" && detail.checkRound === 0) {
+      this.#reportMetric(row.id, "queue", "ok", Math.max(0, this.now() - row.createdAt));
+    }
 
     try {
       if (detail.step === "ready" || detail.step === "verified") {
@@ -337,6 +371,7 @@ export class PublicPlaylistReplacement {
         currentAction: "remove",
         currentSongId: null
       }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+      this.#notify(row.id);
 
       const sendingDetail: ReplacementDetail = {
         ...detail,
@@ -345,6 +380,7 @@ export class PublicPlaylistReplacement {
         currentSongId: null
       };
 
+      const removeStartedAt = this.#startMetric(row.id, "remove-write");
       const removeResult = await this.adapter.call({
         operation: "trackRemove",
         cookie,
@@ -352,7 +388,16 @@ export class PublicPlaylistReplacement {
         songIds: originalSongIds
       });
 
-      if (!this.#stillCurrent(row, sendingDetail)) return;
+      if (!this.#stillCurrent(row, sendingDetail)) {
+        this.#completeMetric(row.id, "remove-write", "aborted", removeStartedAt);
+        return;
+      }
+      this.#completeMetric(
+        row.id,
+        "remove-write",
+        removeResult.ok ? "ok" : removeResult.error.outcome === "unknown" ? "unknown" : "failed",
+        removeStartedAt
+      );
 
       if (!removeResult.ok) {
         if (removeResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
@@ -367,6 +412,7 @@ export class PublicPlaylistReplacement {
       this.database.update(publicPlaylistReplacement).set({
         step: "confirming"
       }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+      this.#notify(row.id);
 
       const confirmingDetail: ReplacementDetail = {
         ...sendingDetail,
@@ -410,6 +456,7 @@ export class PublicPlaylistReplacement {
         currentAction: "add",
         currentSongId: null
       }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+      this.#notify(row.id);
 
       const sendingDetail: ReplacementDetail = {
         ...detail,
@@ -418,6 +465,7 @@ export class PublicPlaylistReplacement {
         currentSongId: null
       };
 
+      const addStartedAt = this.#startMetric(row.id, "add-write");
       const addResult = await this.adapter.call({
         operation: "trackAdd",
         cookie,
@@ -425,7 +473,16 @@ export class PublicPlaylistReplacement {
         songIds: targetSongIds
       });
 
-      if (!this.#stillCurrent(row, sendingDetail)) return;
+      if (!this.#stillCurrent(row, sendingDetail)) {
+        this.#completeMetric(row.id, "add-write", "aborted", addStartedAt);
+        return;
+      }
+      this.#completeMetric(
+        row.id,
+        "add-write",
+        addResult.ok ? "ok" : addResult.error.outcome === "unknown" ? "unknown" : "failed",
+        addStartedAt
+      );
 
       if (!addResult.ok) {
         if (addResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
@@ -440,6 +497,7 @@ export class PublicPlaylistReplacement {
       this.database.update(publicPlaylistReplacement).set({
         step: "confirming"
       }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+      this.#notify(row.id);
 
       const confirmingDetail: ReplacementDetail = {
         ...sendingDetail,
@@ -462,6 +520,8 @@ export class PublicPlaylistReplacement {
     auth: Authorization,
     cookie: string
   ): Promise<void> {
+    const phase: ReplacementMetricPhase = detail.currentAction === "add" ? "add-readback" : "remove-readback";
+    const readMetricStartedAt = this.#startMetric(row.id, phase);
     const readStartedAt = this.beginRead();
     const detailResult = await this.adapter.call({
       operation: "playlistDetail",
@@ -469,9 +529,13 @@ export class PublicPlaylistReplacement {
       playlistId: detail.playlistId
     });
 
-    if (!this.#stillCurrent(row, detail)) return;
+    if (!this.#stillCurrent(row, detail)) {
+      this.#completeMetric(row.id, phase, "aborted", readMetricStartedAt);
+      return;
+    }
 
     if (!detailResult.ok) {
+      this.#completeMetric(row.id, phase, "unknown", readMetricStartedAt);
       if (detailResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
       this.#awaitConfirmation(row, detail, detailResult.error.code);
       return;
@@ -479,6 +543,7 @@ export class PublicPlaylistReplacement {
 
     const data = detailResult.data;
     if (data.playlist.id !== detail.playlistId || data.playlist.status !== 0 || data.songIds.length !== data.songs.length) {
+      this.#completeMetric(row.id, phase, "unknown", readMetricStartedAt);
       this.#awaitConfirmation(row, detail, "PARSE_ERROR");
       return;
     }
@@ -488,6 +553,7 @@ export class PublicPlaylistReplacement {
       generation: auth.generation
     });
     if (!committed) {
+      this.#completeMetric(row.id, phase, "unknown", readMetricStartedAt);
       this.#awaitConfirmation(row, detail, "PARSE_ERROR");
       return;
     }
@@ -502,7 +568,8 @@ export class PublicPlaylistReplacement {
       const unexpectedSongs = data.songIds.filter(id => !originalSongIds.includes(id));
 
       if (unexpectedSongs.length > 0) {
-        // 规格："外部并发导致集合变化时据实反馈，不通过清理意外歌曲掩盖冲突。"
+        this.#completeMetric(row.id, phase, "conflict", readMetricStartedAt);
+        // 外部并发导致集合变化时据实反馈，不通过清理意外歌曲掩盖冲突。
         this.database.update(publicPlaylistReplacement).set({
           step: "stopped"
         }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
@@ -511,8 +578,9 @@ export class PublicPlaylistReplacement {
       }
 
       if (remainingOldSongs.length === 0) {
+        this.#completeMetric(row.id, phase, "ok", readMetricStartedAt);
         // 清空已完整确认！
-        // 规格："清空确认移除后结束旧标签生命周期；重新加入歌曲仅按本轮最终来源成员记录标签"
+        // 规格：清空确认移除后结束旧标签生命周期；重新加入歌曲仅按本轮最终来源成员记录标签
         this.database.transaction(tx => {
           tx.delete(requesterTag).where(and(
             eq(requesterTag.roomId, row.roomId),
@@ -549,7 +617,8 @@ export class PublicPlaylistReplacement {
         }
 
         if (detail.checkRound < 3) {
-          this.#awaitConfirmation(row, { ...detail, removedSongIds: JSON.stringify(actuallyRemoved) }, null);
+          this.#completeMetric(row.id, phase, "stale", readMetricStartedAt);
+          this.#awaitReadback(row, { ...detail, removedSongIds: JSON.stringify(actuallyRemoved) }, null);
         } else {
           // 3 轮核验结束仍未全清
           if (actuallyRemoved.length > 0) {
@@ -587,6 +656,7 @@ export class PublicPlaylistReplacement {
       // 确认批量添加结果
       const unexpectedSongs = data.songIds.filter(id => !targetSongIds.includes(id));
       if (unexpectedSongs.length > 0) {
+        this.#completeMetric(row.id, phase, "conflict", readMetricStartedAt);
         // 外部并发修改
         this.database.update(publicPlaylistReplacement).set({
           step: "stopped"
@@ -599,6 +669,7 @@ export class PublicPlaylistReplacement {
       const missingTargetSongs = targetSongIds.filter(id => !data.songIds.includes(id));
 
       if (missingTargetSongs.length === 0) {
+        this.#completeMetric(row.id, phase, "ok", readMetricStartedAt);
         // 全部目标歌曲已读回确认！
         this.database.update(publicPlaylistReplacement).set({
           addedSongIds: JSON.stringify(targetSongIds),
@@ -620,7 +691,8 @@ export class PublicPlaylistReplacement {
       } else {
         // 存在缺失歌曲
         if (detail.checkRound < 3) {
-          this.#awaitConfirmation(row, detail, null);
+          this.#completeMetric(row.id, phase, "stale", readMetricStartedAt);
+          this.#awaitReadback(row, detail, null);
         } else {
           // 3 轮补查结束，仍不完整
           if (presentTargetSongs.length > 0) {
@@ -632,6 +704,7 @@ export class PublicPlaylistReplacement {
         }
       }
     } else {
+      this.#completeMetric(row.id, phase, "ok", readMetricStartedAt);
       // 无正在确认的动作，重入 verified
       this.database.update(publicPlaylistReplacement).set({
         checkRound: 0,
@@ -837,6 +910,21 @@ export class PublicPlaylistReplacement {
     this.scheduler.kick();
   }
 
+  #awaitReadback(row: Operation, detail: ReplacementDetail, code: Operation["errorCode"]): void {
+    const nextRound = Math.min(3, detail.checkRound + 1);
+    const delay = detail.checkRound < READBACK_DELAYS_MS.length ? READBACK_DELAYS_MS[detail.checkRound] : null;
+    const nextCheckAt = delay === null ? null : this.now() + delay;
+    this.database.transaction(tx => {
+      tx.update(publicPlaylistReplacement).set({
+        step: "confirming",
+        checkRound: nextRound,
+        nextCheckAt
+      }).where(eq(publicPlaylistReplacement.operationId, row.id)).run();
+      this.#status(row.id, "awaitingConfirmation", code);
+    });
+    if (nextCheckAt !== null) this.#schedule(row.id, nextCheckAt);
+  }
+
   #awaitConfirmation(row: Operation, detail: ReplacementDetail, code: Operation["errorCode"]): void {
     const nextRound = Math.min(3, detail.checkRound + 1);
     const nextCheckAt = detail.checkRound < CONFIRMATION_DELAYS_MS.length ? this.now() + CONFIRMATION_DELAYS_MS[detail.checkRound] : null;
@@ -941,6 +1029,13 @@ export class PublicPlaylistReplacement {
       if (isTerminalOperation(row) || row.status === "waitingAuthorization" || row.status === "needsAdministrator") continue;
       const loaded = this.#load(row.id);
       if (!loaded) continue;
+      if (row.status === "awaitingConfirmation" && loaded.detail.step === "confirming" && loaded.detail.nextCheckAt !== null) {
+        this.#schedule(row.id, loaded.detail.nextCheckAt);
+        continue;
+      }
+      if (row.status === "queued" && loaded.detail.step === "confirming" && loaded.detail.nextCheckAt === null) {
+        continue;
+      }
       if (hasPassedWriteBoundary(loaded.detail)) {
         const dueAt = loaded.detail.checkRound < 3 ? loaded.detail.nextCheckAt ?? this.now() + 5_000 : null;
         this.database.update(publicPlaylistReplacement).set({

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { v7 } from "uuid";
 import { eq } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeDatabase, openDatabase, type AppDatabase } from "../db/database.js";
 import {
   neteaseAuthorization,
@@ -25,7 +25,7 @@ import { PublicRandomPreview } from "./public-random-preview.js";
 
 class MockAdapter implements NeteaseAdapter {
   readonly inputs: AdapterInput[] = [];
-  detailHandler?: (playlistId: string) => AdapterResult<"playlistDetail">;
+  detailHandler?: (playlistId: string) => AdapterResult<"playlistDetail"> | Promise<AdapterResult<"playlistDetail">>;
 
   async assertVendorIntegrity(): Promise<void> {}
   async dispose(): Promise<void> {}
@@ -34,7 +34,7 @@ class MockAdapter implements NeteaseAdapter {
     this.inputs.push(input);
     if (input.operation === "playlistDetail") {
       if (this.detailHandler) {
-        return this.detailHandler(input.playlistId);
+        return await this.detailHandler(input.playlistId);
       }
       return {
         ok: true,
@@ -1142,6 +1142,81 @@ describe("PublicRandomPreview", () => {
       status: 400,
       code: "INVALID_MEMBER"
     }));
+  });
+
+  it("初次预览并行刷新公共歌单与所有选中成员来源", async () => {
+    const ctx = createTestContext();
+    const publicPlaylistId = "pub-pl-parallel";
+    const ownerPlaylistId = "owner-pl-parallel";
+    const roommatePlaylistId = "roommate-pl-parallel";
+
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "公共歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+    ctx.database.insert(personalPlaylistBinding).values([
+      {
+        id: v7(),
+        roomId: ctx.roomId,
+        memberId: ctx.ownerMemberId,
+        accountId: "cloud-owner",
+        playlistId: ownerPlaylistId,
+        name: "房主歌单",
+        generation: 1,
+        createdAt: ctx.now(),
+        updatedAt: ctx.now()
+      },
+      {
+        id: v7(),
+        roomId: ctx.roomId,
+        memberId: ctx.roommateMemberId,
+        accountId: "cloud-owner",
+        playlistId: roommatePlaylistId,
+        name: "室友歌单",
+        generation: 1,
+        createdAt: ctx.now(),
+        updatedAt: ctx.now()
+      }
+    ]).run();
+
+    let active = 0;
+    let maxActive = 0;
+    let arrivals = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    ctx.adapter.detailHandler = async id => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      arrivals++;
+      if (arrivals === 3) release();
+      await barrier;
+      active--;
+      const personal = id === ownerPlaylistId || id === roommatePlaylistId;
+      const songId = id === ownerPlaylistId ? "owner-song" : id === roommatePlaylistId ? "roommate-song" : null;
+      return {
+        ok: true,
+        data: {
+          playlist: { id, name: personal ? "个人歌单" : "公共歌单", creatorId: personal ? "other-creator" : "cloud-owner", subscribed: personal, status: 0 },
+          songIds: songId ? [songId] : [],
+          songs: songId ? [{ id: songId, name: songId, artists: ["歌手"], album: "专辑" }] : []
+        }
+      };
+    };
+
+    const preview = ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.ownerMemberId, ctx.roommateMemberId],
+      count: 5
+    });
+    await vi.waitFor(() => expect(arrivals).toBe(3));
+    release();
+    const result = await preview;
+
+    expect(result.actualCount).toBe(2);
+    expect(maxActive).toBe(3);
   });
 
   it("短时间内（60s）重复生成时复用有效新鲜快照，过期后重新向网易云刷新", async () => {

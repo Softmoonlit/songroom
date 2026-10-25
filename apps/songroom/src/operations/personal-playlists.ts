@@ -209,7 +209,7 @@ export class PersonalPlaylists {
     try {
       result = await this.scheduler.executeMemoryTask(accountId, async () => {
         return this.adapter.call({ operation: "playlistDetail", cookie, playlistId });
-      });
+      }, { kind: "read" });
     } catch (err) {
       if (err instanceof BusinessError && err.code === "ACCOUNT_PAUSED") {
         this.#recordRefreshError(accountId, playlistId, "ACCOUNT_PAUSED", readStartedAt);
@@ -512,7 +512,7 @@ export class PersonalPlaylists {
     try {
       detailResult = await this.scheduler.executeMemoryTask(auth.accountId, async () => {
         return this.adapter.call({ operation: "playlistDetail", cookie, playlistId });
-      });
+      }, { kind: "read" });
     } catch (err) {
       if (err instanceof BusinessError && err.code === "ACCOUNT_PAUSED") {
         throw err;

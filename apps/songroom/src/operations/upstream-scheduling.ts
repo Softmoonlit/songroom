@@ -13,9 +13,12 @@ export type OperationHandler = {
   recover?: () => void;
 };
 
+export type MemoryTaskKind = "serial" | "read";
+
 type MemoryTask<T = any> = {
   id: string;
   accountId: string;
+  kind: MemoryTaskKind;
   createdAt: number;
   lastGranted: number;
   allowPaused?: boolean;
@@ -28,10 +31,13 @@ type ClaimedTask =
   | { type: "operation"; row: Operation; handler: OperationHandler }
   | { type: "memory"; task: MemoryTask };
 
+const MAX_RUNNING_ACCOUNTS = 2;
+const MAX_READ_TASKS = 4;
+
 /**
  * 单进程统一上游调度器。
- * 全站最多 2 个请求并行、每个真实账号严格串行；
- * 候选按最久未获得执行机会者 (lastGranted, createdAt, id) 轮转，每次上游请求后让出。
+ * 写入与默认内存任务按真实账号严格串行；明确标记的只读任务可在同账号读槽内并行。
+ * 持久操作全站最多 2 个真实账号并行，候选按最久未获得执行机会者轮转。
  * 无 Redis、无内存队列真相、无通用工作流引擎，纯 SQLite 短事务认领。
  */
 export class UpstreamScheduler {
@@ -42,6 +48,7 @@ export class UpstreamScheduler {
   readonly #inFlight = new Set<Promise<void>>();
   readonly #handlers = new Map<Operation["kind"], OperationHandler>();
   readonly #memoryQueue: MemoryTask[] = [];
+  readonly #runningReadAccounts = new Map<string, number>();
   readonly eventStream?: EventStreamService;
   readonly now: () => number;
 
@@ -66,9 +73,10 @@ export class UpstreamScheduler {
     this.#handlers.set(kind, handler);
   }
 
-  executeMemoryTask<T>(accountId: string, run: () => Promise<T>, options?: { allowPaused?: boolean }): Promise<T> {
+  executeMemoryTask<T>(accountId: string, run: () => Promise<T>, options?: { allowPaused?: boolean; kind?: MemoryTaskKind }): Promise<T> {
     if (this.#stopped) throw new BusinessError(503, "APP_DRAINING", "服务正在停止，请稍后再试");
     const allowPaused = options?.allowPaused ?? false;
+    const kind = options?.kind ?? "serial";
     if (!allowPaused && this.paused(accountId)) throw new BusinessError(409, "ACCOUNT_PAUSED", "网易云账号已暂停，请联系管理员");
     if (!allowPaused) {
       const code = this.admissionCode(accountId);
@@ -80,6 +88,7 @@ export class UpstreamScheduler {
       this.#memoryQueue.push({
         id,
         accountId,
+        kind,
         createdAt: now,
         lastGranted: now,
         allowPaused,
@@ -187,7 +196,11 @@ export class UpstreamScheduler {
           let task: Promise<void>;
           if (claimed.type === "operation") {
             task = claimed.handler.execute(claimed.row).finally(() => {
-              this.#release(claimed.row.accountId!, claimed.row.id);
+              this.#release(
+                claimed.row.accountId!,
+                claimed.row.id,
+                "serial"
+              );
               this.#inFlight.delete(task);
               this.#wake?.();
             });
@@ -196,7 +209,7 @@ export class UpstreamScheduler {
               .then(() => claimed.task.run())
               .then(claimed.task.resolve, claimed.task.reject)
               .finally(() => {
-                this.#release(claimed.task.accountId, claimed.task.id);
+                this.#release(claimed.task.accountId, claimed.task.id, claimed.task.kind);
                 this.#inFlight.delete(task);
                 this.#wake?.();
               });
@@ -224,20 +237,35 @@ export class UpstreamScheduler {
     });
   }
 
-  #canStart(accountId: string, allowPaused = false): boolean {
+  #canStart(accountId: string, allowPaused = false, kind: MemoryTaskKind = "serial"): boolean {
     const accounts = this.database.select().from(upstreamAccount).all();
     const account = accounts.find(row => row.accountId === accountId);
-    return accounts.filter(row => row.runningOperationId).length < 2
-      && (allowPaused || !account?.paused) && !account?.runningOperationId;
+    if (allowPaused ? false : account?.paused) return false;
+    if (account?.runningOperationId) return false;
+
+    if (kind === "read") {
+      const readCount = [...this.#runningReadAccounts.values()].reduce((sum, count) => sum + count, 0);
+      const accountReadCount = this.#runningReadAccounts.get(accountId) ?? 0;
+      const activeAccounts = new Set(
+        accounts.filter(row => row.runningOperationId).map(row => row.accountId)
+      );
+      for (const activeAccountId of this.#runningReadAccounts.keys()) activeAccounts.add(activeAccountId);
+      return readCount < MAX_READ_TASKS
+        && accountReadCount < MAX_READ_TASKS
+        && (activeAccounts.has(accountId) || activeAccounts.size < MAX_RUNNING_ACCOUNTS);
+    }
+
+    return accounts.filter(row => row.runningOperationId).length < MAX_RUNNING_ACCOUNTS
+      && !this.#runningReadAccounts.has(accountId);
   }
 
   #claimNext(): ClaimedTask | undefined {
-    return this.database.transaction(tx => {
+    const claimed = this.database.transaction(tx => {
       let memoryCandidateIndex = -1;
       for (let i = 0; i < this.#memoryQueue.length; i++) {
         const task = this.#memoryQueue[i];
         if (!task.allowPaused && this.paused(task.accountId)) continue;
-        if (this.#canStart(task.accountId, task.allowPaused)) {
+        if (this.#canStart(task.accountId, task.allowPaused, task.kind)) {
           memoryCandidateIndex = i;
           break;
         }
@@ -270,8 +298,10 @@ export class UpstreamScheduler {
 
         if (memoryCandidate && memoryCandidate.lastGranted < row.lastGranted) {
           this.#memoryQueue.splice(memoryCandidateIndex, 1);
-          tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, runningOperationId: memoryCandidate.id })
-            .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: memoryCandidate.id } }).run();
+          if (memoryCandidate.kind !== "read") {
+            tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, runningOperationId: memoryCandidate.id })
+              .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: memoryCandidate.id } }).run();
+          }
           return { type: "memory", task: memoryCandidate };
         }
 
@@ -298,16 +328,31 @@ export class UpstreamScheduler {
 
       if (memoryCandidate) {
         this.#memoryQueue.splice(memoryCandidateIndex, 1);
-        tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, runningOperationId: memoryCandidate.id })
-          .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: memoryCandidate.id } }).run();
+        if (memoryCandidate.kind !== "read") {
+          tx.insert(upstreamAccount).values({ accountId: memoryCandidate.accountId, runningOperationId: memoryCandidate.id })
+            .onConflictDoUpdate({ target: upstreamAccount.accountId, set: { runningOperationId: memoryCandidate.id } }).run();
+        }
         return { type: "memory", task: memoryCandidate };
       }
 
       return undefined;
-    });
+    }) as ClaimedTask | undefined;
+    if (claimed?.type === "memory" && claimed.task.kind === "read") {
+      this.#runningReadAccounts.set(
+        claimed.task.accountId,
+        (this.#runningReadAccounts.get(claimed.task.accountId) ?? 0) + 1
+      );
+    }
+    return claimed;
   }
 
-  #release(accountId: string, operationId: string): void {
+  #release(accountId: string, operationId: string, kind: MemoryTaskKind): void {
+    if (kind === "read") {
+      const count = this.#runningReadAccounts.get(accountId) ?? 0;
+      if (count <= 1) this.#runningReadAccounts.delete(accountId);
+      else this.#runningReadAccounts.set(accountId, count - 1);
+      return;
+    }
     this.database.update(upstreamAccount).set({ runningOperationId: null })
       .where(and(eq(upstreamAccount.accountId, accountId), eq(upstreamAccount.runningOperationId, operationId))).run();
   }

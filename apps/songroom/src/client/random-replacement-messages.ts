@@ -64,6 +64,14 @@ export function getFriendlyReplacementOperationStatus(
       };
     }
     case "awaitingConfirmation":
+      if (op.step === "confirming") {
+        return {
+          title: "正在核验歌单",
+          description: op.currentAction === "remove"
+            ? "正在确认旧歌已清空…"
+            : "正在确认新歌已加入…"
+        };
+      }
       return {
         title: "换歌结果待确认",
         description: "已提交网易云，正在核验最终状态，请勿重试。"

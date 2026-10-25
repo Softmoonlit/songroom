@@ -29,6 +29,7 @@ import { PublicPlaylists } from "./public-playlists.js";
 import { PersonalPlaylists } from "./personal-playlists.js";
 import { PublicRandomPreview } from "./public-random-preview.js";
 import { and, eq } from "drizzle-orm";
+import type { ReplacementMetric } from "./replacement-observability.js";
 
 interface MockSong {
   id: string;
@@ -128,6 +129,7 @@ interface TestContext {
   roommate2MemberId: string;
   now: () => number;
   advanceTime: (ms: number) => void;
+  metrics: ReplacementMetric[];
 }
 
 const activeFixtures: TestContext[] = [];
@@ -325,8 +327,9 @@ function createTestContext(): TestContext {
 
   const eventStream = new EventStreamService();
   const scheduler = new UpstreamScheduler(database, eventStream, now);
+  const metrics: ReplacementMetric[] = [];
   scheduler.start();
-  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now);
+  const playlists = new PublicPlaylists(database, adapter, vault, scheduler, eventStream, now, metric => metrics.push(metric));
   const personalPlaylists = new PersonalPlaylists(database, vault, adapter, scheduler, eventStream, playlists, now);
   const randomPreview = new PublicRandomPreview(database, playlists, personalPlaylists, now, () => 0.1);
   playlists.initReplacement(randomPreview);
@@ -349,7 +352,8 @@ function createTestContext(): TestContext {
     roommate2UserId,
     roommate2MemberId,
     now,
-    advanceTime
+    advanceTime,
+    metrics
   };
   activeFixtures.push(ctx);
   return ctx;
@@ -476,6 +480,19 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     expect(ctx.adapter.inputs.some(input => input.operation === "playlistDetail" && input.playlistId === "rm1-playlist")).toBe(true);
     expect(ctx.adapter.inputs.some(input => input.operation === "playlistDetail" && input.playlistId === "rm2-playlist")).toBe(true);
 
+    expect(ctx.metrics.map(metric => `${metric.phase}:${metric.outcome}`)).toEqual([
+      "queue:ok",
+      "remove-write:started",
+      "remove-write:ok",
+      "remove-readback:started",
+      "remove-readback:ok",
+      "add-write:started",
+      "add-write:ok",
+      "add-readback:started",
+      "add-readback:ok"
+    ]);
+    expect(ctx.metrics.filter(metric => metric.outcome === "ok").every(metric => metric.elapsedMs !== undefined)).toBe(true);
+
     // 验证云端歌单：旧歌已清空，新歌全部加入
     const cloudSongs = ctx.adapter.playlists.get(ctx.publicPlaylistId)!.songs.map(s => s.id);
     expect(cloudSongs).not.toContain("old-song-1");
@@ -562,10 +579,50 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
     expect(ctx.adapter.inputs.filter(input => input.operation === "identity")).toHaveLength(0);
   });
 
-  it("验收清单 7: 发送后中断/超时时不重发，进入 awaitingConfirmation，3轮补查后停止自动请求", async () => {
+  it("明确写入后的读回延迟使用短确认，不提前添加也不进入未知写入长等待", async () => {
     const ctx = createTestContext();
     const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
 
+    let publicReadCount = 0;
+    ctx.adapter.trackRemoveHook = async () => ({ ok: true, data: { acknowledged: true } });
+    ctx.adapter.playlistDetailHook = async input => {
+      if (input.playlistId !== ctx.publicPlaylistId) return null;
+      publicReadCount++;
+      if (publicReadCount === 2) {
+        ctx.adapter.playlists.get(ctx.publicPlaylistId)!.songs = [];
+      }
+      return null;
+    };
+
+    const res = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
+      idempotencyKey: v7(),
+      previewId: preview.previewId
+    });
+    await ctx.playlists.settle();
+
+    const firstCheck = ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, res.operation.id);
+    expect(firstCheck.status).toBe("awaitingConfirmation");
+    expect(firstCheck.step).toBe("confirming");
+    expect(ctx.adapter.inputs.filter(input => input.operation === "trackAdd")).toHaveLength(0);
+    const pendingDetail = ctx.database.select().from(publicPlaylistReplacement)
+      .where(eq(publicPlaylistReplacement.operationId, res.operation.id)).get()!;
+    expect(pendingDetail.nextCheckAt).not.toBeNull();
+    const readbackDelay = pendingDetail.nextCheckAt! - ctx.now();
+    expect(readbackDelay).toBeGreaterThan(0);
+    expect(readbackDelay).toBeLessThanOrEqual(500);
+
+    ctx.advanceTime(501);
+    ctx.playlists.triggerDueChecks();
+    await ctx.playlists.settle();
+
+    const completed = ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, res.operation.id);
+    expect(completed.status).toBe("succeeded");
+    expect(publicReadCount).toBe(3);
+    expect(ctx.adapter.inputs.filter(input => input.operation === "trackAdd")).toHaveLength(1);
+  });
+  it("验收清单 7: 发送后中断/超时时不重发，进入 awaitingConfirmation，3轮补查后停止自动请求", async () => {
+    const ctx = createTestContext();
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });
     let firstAddAttempted = false;
     ctx.adapter.trackAddHook = async (input) => {
       if (!firstAddAttempted) {
