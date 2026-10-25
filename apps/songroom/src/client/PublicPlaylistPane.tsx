@@ -152,7 +152,7 @@ function TrackList({ tracks, active, highlight, onHighlightEnd, playback, isFilt
 
 export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: string; roomId: string; active: boolean }) {
   const client = useQueryClient();
-  const queryKey = ["room-public-playlist", sessionId, roomId];
+  const queryKey = useMemo(() => ["room-public-playlist", sessionId, roomId], [sessionId, roomId]);
   const query = useQuery({ queryKey, queryFn: ({ signal }) => request(`/${roomId}/public-playlist`, publicPlaylistView, signal), enabled: active, ...queryOptions });
   const [command, setCommand] = useState<PublicPlaylistCreateCommand | null>(null);
   const [message, setMessage] = useState("");
@@ -172,6 +172,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   // 随机换一组弹窗与持久操作状态
   const [isRandomDialogOpen, setIsRandomDialogOpen] = useState(false);
   const [activeReplacementOperationId, setActiveReplacementOperationId] = useState<string | null>(null);
+  const handledReplacementOperationKey = useRef<string | null>(null);
+  const handledReplacementOperationId = useRef<string | null>(null);
 
   const availableRequesters = useMemo(() => {
     if (!query.data?.snapshot?.tracks) return [];
@@ -276,7 +278,8 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
       v?.playlist &&
       v.operation?.kind === "replacePublicPlaylist" &&
       v.operation.status !== "succeeded" &&
-      !activeReplacementOperationId
+      !activeReplacementOperationId &&
+      handledReplacementOperationId.current !== v.operation.id
     ) {
       setActiveReplacementOperationId(v.operation.id);
     }
@@ -285,8 +288,13 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
   useEffect(() => {
     if (!replacementOperationQuery.data) return;
     const op = replacementOperationQuery.data;
+    if (["succeeded", "failed", "stopped"].includes(op.status)) {
+      const terminalKey = `${op.id}:${op.status}:${op.version}`;
+      if (handledReplacementOperationKey.current === terminalKey) return;
+      handledReplacementOperationKey.current = terminalKey;
+      handledReplacementOperationId.current = op.id;
+    }
     if (op.status === "succeeded") {
-      setActiveReplacementOperationId(null);
       setToast({
         id: uuidv7(),
         message: "换歌成功，点歌台已更新。",
@@ -518,7 +526,7 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
           </div>
         )}
 
-        {activeReplacementOperation && activeReplacementOperation.status !== "succeeded" && (
+        {!isRandomDialogOpen && activeReplacementOperation && activeReplacementOperation.status !== "succeeded" && (
           <div className={`replacement-status-banner status-${activeReplacementOperation.status}`} role="status">
             <div className="replacement-status-header">
               <RotateCw
@@ -597,16 +605,15 @@ export function PublicPlaylistPane({ sessionId, roomId, active }: { sessionId: s
     {/* 随机换一组抽选与替换弹窗 */}
     <RandomReplacementDialog
       open={isRandomDialogOpen}
-      onOpenChange={setIsRandomDialogOpen}
+      onOpenChange={nextOpen => {
+        setIsRandomDialogOpen(nextOpen);
+        if (!nextOpen) setActiveReplacementOperationId(null);
+      }}
       roomId={roomId}
       sessionId={sessionId}
+      replacementOperation={activeReplacementOperation}
       onReplacementStarted={opId => {
         setActiveReplacementOperationId(opId);
-        setToast({
-          id: uuidv7(),
-          message: "换歌操作已提交，正在执行云端替换…",
-          type: "info"
-        });
       }}
     />
 

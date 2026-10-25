@@ -218,7 +218,11 @@ test.describe("个人歌单下线自建与删除，收敛为4导航默认点歌�
     test(`${isOwner ? "房主" : "室友"}已绑定歌单展示歌曲，有点歌到点歌台按钮但无单首删除按钮`, async ({ page }) => {
       await setupRoom(page, isOwner);
       await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: boundPersonalView }));
-      await page.route(refreshEndpoint, route => route.fulfill({ json: boundPersonalView }));
+      let refreshCalls = 0;
+      await page.route(refreshEndpoint, route => {
+        refreshCalls += 1;
+        return route.fulfill({ json: boundPersonalView });
+      });
       await page.goto(`/rooms/${roomId}`);
       await page.getByRole("button", { name: "我的歌单", exact: true }).click();
 
@@ -227,6 +231,9 @@ test.describe("个人歌单下线自建与删除，收敛为4导航默认点歌�
       await expect(page.getByRole("button", { name: "点播《稻香》到点歌台" })).toBeVisible();
       await expect(page.getByRole("button", { name: /从个人歌单删除/ })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "创建专用个人歌单" })).toHaveCount(0);
+      expect(refreshCalls).toBe(0);
+      await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+      await expect.poll(() => refreshCalls).toBe(1);
     });
   }
 

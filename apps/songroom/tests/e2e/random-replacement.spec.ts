@@ -446,7 +446,11 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
   test("完整确认与持久操作推进：展示步骤进度、成功提示与点歌人标签及筛选", async ({ page }) => {
     await setupRoom(page, true);
     let publicView = { ...initialPublicView };
-    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: publicView }));
+    let publicPlaylistCalls = 0;
+    await page.route(publicPlaylistEndpoint, route => {
+      publicPlaylistCalls += 1;
+      return route.fulfill({ json: publicView });
+    });
     await page.route(randomPreviewEndpoint, route => route.fulfill({ json: mockPreview10 }));
 
     const operationId = v7();
@@ -488,14 +492,16 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     // 先选择成员并生成预览
     await selectAllAndGeneratePreview(page);
 
-    // 点击确认替换
+    // 点击确认替换后，状态留在弹窗内持续展示
     await modal.getByRole("button", { name: "确认替换" }).click();
-    await expect(modal).not.toBeVisible();
+    await expect(modal).toBeVisible();
 
-    // 页面显示排队卡片
-    const statusBanner = page.locator(".replacement-status-banner");
-    await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("换歌已排队");
+    // 页面不再显示独立的后台状态卡片
+    const statusBanner = page.locator(".public-playlist-view .replacement-status-banner");
+    await expect(statusBanner).toHaveCount(0);
+    const dialogStatus = modal.locator(".replacement-dialog-status");
+    await expect(dialogStatus).toBeVisible();
+    await expect(dialogStatus).toContainText("换歌已排队");
 
     // 模拟推进：正在移除旧歌
     currentOpStatus = {
@@ -508,7 +514,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 2
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在移除旧歌曲（已移除 1 首）…");
+    await expect(dialogStatus).toContainText("正在移除旧歌曲（已移除 1 首）…");
 
     // 模拟推进：正在添加新歌
     currentOpStatus = {
@@ -521,7 +527,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 3
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在添加新歌曲（已添加 3 / 10 首）…");
+    await expect(dialogStatus).toContainText("正在添加新歌曲（已添加 3 / 10 首）…");
 
     // 模拟推进：正在记录点歌人标签
     currentOpStatus = {
@@ -531,7 +537,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 4
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(statusBanner).toContainText("正在记录点歌人标签…");
+    await expect(dialogStatus).toContainText("正在记录点歌人标签…");
 
     // 模拟成功：更新公共歌单快照，附带各来源成员的点歌人标签
     publicView = {
@@ -558,17 +564,20 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     };
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
-    // 验证成功 Toast
+    // 成功状态继续留在弹窗内，确认成功快照已回读
     const toast = page.locator(".songroom-toast");
     await expect(toast).toBeVisible();
     await expect(toast).toContainText("换歌成功，点歌台已更新。");
-
-    // 状态卡片消失，歌单列表更新为新歌且带有来源成员点歌人标签
+    await expect(dialogStatus).toContainText("换歌成功");
     await expect(statusBanner).toHaveCount(0);
+    expect(publicPlaylistCalls).toBeLessThanOrEqual(3);
     await expect(page.getByText("青花瓷")).toBeVisible();
     const requesterCapsules = page.locator(".requester-capsule");
     await expect(requesterCapsules.filter({ hasText: "房主小林" }).first()).toBeVisible();
     await expect(requesterCapsules.filter({ hasText: "室友小明" }).first()).toBeVisible();
+
+    await modal.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(modal).not.toBeVisible();
 
     // 验证点歌人筛选中出现来源成员
     await page.getByRole("button", { name: "展开搜索筛选" }).click();
@@ -618,14 +627,15 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await selectAllAndGeneratePreview(page);
     await page.getByRole("button", { name: "确认替换" }).click();
 
-    const statusBanner = page.locator(".replacement-status-banner");
-    await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("换歌失败");
-    await expect(statusBanner).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 2 首，移除 1 首）");
+    const modal = page.locator(".random-replacement-modal");
+    const status = modal.locator(".replacement-dialog-status");
+    await expect(status).toBeVisible();
+    await expect(status).toContainText("换歌失败");
+    await expect(status).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 2 首，移除 1 首）");
 
-    // 点击关闭按钮可清除失败卡片，允许重新发起换歌
-    await statusBanner.locator(".status-dismiss-btn").click();
-    await expect(statusBanner).toHaveCount(0);
+    // 终结状态留在弹窗内，关闭后允许重新发起换歌
+    await modal.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(modal).not.toBeVisible();
     await expect(page.getByRole("button", { name: "随机点歌" })).toBeEnabled();
   });
 
@@ -800,7 +810,8 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     // 第二次点击确认替换，验证幂等键保持一致
     await modal.getByRole("button", { name: "确认替换" }).click();
-    await expect(modal).not.toBeVisible();
+    await expect(modal).toBeVisible();
+    await expect(modal.locator(".replacement-dialog-status")).toContainText("换歌已排队");
 
     expect(capturedKeys).toHaveLength(2);
     expect(capturedKeys[0]).toBe(capturedKeys[1]);
@@ -927,9 +938,10 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(modal.getByText("房主小林：1 首")).toBeVisible();
     await expect(modal.getByText("室友小明：1 首")).toBeVisible();
 
-    // 确认替换
+    // 确认替换后状态留在弹窗内
     await modal.getByRole("button", { name: "确认替换" }).click();
-    await expect(modal).not.toBeVisible();
+    await expect(modal).toBeVisible();
+    await expect(modal.locator(".replacement-dialog-status")).toContainText("换歌已排队");
     expect(replacementSubmitted).toBe(true);
   });
 
@@ -956,9 +968,18 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       version: 3
     };
 
-    await page.route(randomReplacementEndpoint, route =>
-      route.fulfill({ json: { replay: false, operation: clearSucceededAddFailedOp } })
-    );
+    await page.route(randomReplacementEndpoint, route => {
+      publicView = {
+        ...initialPublicView,
+        snapshot: {
+          version: 2,
+          syncedAt: Date.now(),
+          trackCount: 0,
+          tracks: []
+        }
+      };
+      return route.fulfill({ json: { replay: false, operation: clearSucceededAddFailedOp } });
+    });
     await page.route(`**/api/rooms/${roomId}/public-playlist/random-replacement/${operationId}`, route =>
       route.fulfill({ json: clearSucceededAddFailedOp })
     );
@@ -969,25 +990,15 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await selectAllAndGeneratePreview(page);
     await page.getByRole("button", { name: "确认替换" }).click();
 
-    // 状态横幅准确展示清空成功、添加未完成
-    const statusBanner = page.locator(".replacement-status-banner");
-    await expect(statusBanner).toBeVisible();
-    await expect(statusBanner).toContainText("换歌失败");
-    await expect(statusBanner).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 0 首，移除 2 首）");
+    // 状态准确展示清空成功、添加未完成
+    const modal = page.locator(".random-replacement-modal");
+    const status = modal.locator(".replacement-dialog-status");
+    await expect(status).toBeVisible();
+    await expect(status).toContainText("换歌失败");
+    await expect(status).toContainText("网络连接失败，请稍后重试。（云端已确认：添加 0 首，移除 2 首）");
+    await modal.getByRole("button", { name: "关闭", exact: true }).click();
 
     // 公共歌单更新为清空后的空快照，不自动回滚旧歌
-    publicView = {
-      ...initialPublicView,
-      snapshot: {
-        version: 2,
-        syncedAt: Date.now(),
-        trackCount: 0,
-        tracks: []
-      }
-    };
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-
-    // 页面不显示旧歌曲，呈现空歌单状态
     await expect(page.locator(".track-name", { hasText: "七里香" })).toHaveCount(0);
     await expect(page.locator(".track-name", { hasText: "红豆" })).toHaveCount(0);
     await expect(page.locator(".empty-playlist-card")).toBeVisible();

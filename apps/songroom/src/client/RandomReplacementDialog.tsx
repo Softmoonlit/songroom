@@ -6,17 +6,19 @@ import { v7 as uuidv7 } from "uuid";
 import {
   randomReplacementPreviewView,
   randomReplacementResponse,
+  type RandomReplacementOperationView,
   type RandomReplacementPreviewView
 } from "../shared/public-playlist-contracts.js";
 import { roomMembersView } from "../shared/room-contracts.js";
 import { queryOptions, request, RoomRequestError } from "./room-http.js";
-import { getFriendlyReplacementErrorMessage } from "./random-replacement-messages.js";
+import { getFriendlyReplacementErrorMessage, getFriendlyReplacementOperationStatus } from "./random-replacement-messages.js";
 
 export interface RandomReplacementDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   roomId: string;
   sessionId: string;
+  replacementOperation: RandomReplacementOperationView | null;
   onReplacementStarted: (operationId: string) => void;
 }
 
@@ -28,6 +30,7 @@ export function RandomReplacementDialog({
   onOpenChange,
   roomId,
   sessionId,
+  replacementOperation,
   onReplacementStarted
 }: RandomReplacementDialogProps) {
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -36,6 +39,7 @@ export function RandomReplacementDialog({
   const [previewError, setPreviewError] = useState("");
   const [confirmError, setConfirmError] = useState("");
   const [replacementCommand, setReplacementCommand] = useState<{ previewId: string; idempotencyKey: string } | null>(null);
+  const [replacementStarted, setReplacementStarted] = useState(false);
 
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
@@ -80,10 +84,14 @@ export function RandomReplacementDialog({
       ),
     onSuccess: res => {
       setReplacementCommand(null);
+      setReplacementStarted(true);
       onReplacementStarted(res.operation.id);
-      onOpenChange(false);
+    },
+    onMutate: () => {
+      setReplacementStarted(true);
     },
     onError: failure => {
+      setReplacementStarted(false);
       const code = failure instanceof RoomRequestError ? failure.code : null;
       if (code === "PREVIEW_INVALIDATED" || code === "PREVIEW_NOT_FOUND") {
         setConfirmError("来源已变更，当前预览已失效，请重新抽选。");
@@ -103,8 +111,16 @@ export function RandomReplacementDialog({
       setPreviewError("");
       setConfirmError("");
       setReplacementCommand(null);
+      setReplacementStarted(false);
     }
   }, [open, roomId]);
+
+  const replacementFinished = Boolean(
+    replacementOperation && ["succeeded", "failed", "stopped"].includes(replacementOperation.status)
+  );
+  const replacementStatus = replacementOperation
+    ? getFriendlyReplacementOperationStatus(replacementOperation)
+    : { title: "正在提交", description: "正在排队处理…" };
 
   const members = membersQuery.data?.members ?? [];
   const eligibleMembers = members.filter(m => m.hasPersonalPlaylist);
@@ -199,7 +215,7 @@ export function RandomReplacementDialog({
                 type="button"
                 className="invite-modal-close"
                 aria-label="关闭随机点歌窗口"
-                disabled={previewMutation.isPending || confirmMutation.isPending}
+                disabled={previewMutation.isPending || confirmMutation.isPending || (replacementStarted && !replacementFinished)}
               >
                 <X size={18} aria-hidden="true" />
               </button>
@@ -207,6 +223,22 @@ export function RandomReplacementDialog({
           </div>
 
           <div className="random-replacement-body">
+            {replacementStarted ? (
+              <div
+                className={`replacement-dialog-status replacement-status-banner status-${replacementOperation?.status ?? "queued"}`}
+                role="status"
+              >
+                <div className="replacement-status-header">
+                  <RotateCw
+                    size={16}
+                    className={replacementFinished ? "" : "spin-icon"}
+                    aria-hidden="true"
+                  />
+                  <strong>{replacementStatus.title}</strong>
+                </div>
+                <p className="replacement-status-desc">{replacementStatus.description}</p>
+              </div>
+            ) : <>
             {/* 错误提示 */}
             {previewError && (
               <div className="error-banner" role="alert">
@@ -236,7 +268,7 @@ export function RandomReplacementDialog({
             {previewMutation.isPending ? (
               <div className="random-replacement-loading" role="status">
                 <RotateCw size={24} className="spin-icon" aria-hidden="true" />
-                <p>正在抽选歌曲…</p>
+                <p>{preview ? "正在核验歌单…" : "正在同步歌单…"}</p>
               </div>
             ) : preview ? (
               /* 预览结果模式 */
@@ -393,10 +425,17 @@ export function RandomReplacementDialog({
                 </div>
               </div>
             )}
+            </>}
           </div>
 
           <div className="modal-actions random-modal-actions">
-            {preview ? (
+            {replacementStarted ? (
+              <AlertDialog.Cancel asChild>
+                <button type="button" className="secondary-button" disabled={!replacementFinished}>
+                  {replacementFinished ? "关闭" : "处理中…"}
+                </button>
+              </AlertDialog.Cancel>
+            ) : preview ? (
               <>
                 <button
                   type="button"

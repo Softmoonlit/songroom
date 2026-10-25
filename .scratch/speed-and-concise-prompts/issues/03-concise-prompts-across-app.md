@@ -19,6 +19,6 @@ Status: resolved
 ### 实现与验证记录
 1. 精简 `random-replacement-messages.ts`：排队、移除、添加、打标、失败、终止等标题与描述全面精简降噪。
 2. 精简 `song-request-messages.ts`：移除口语化说教，聚焦核心进度与动作。
-3. 精简 `RandomReplacementDialog.tsx`：弹窗加载提示由「正在读取成员个人歌单并公平抽选歌曲…」精简为「正在抽选歌曲…」；失效提示精简。
+3. 精简 `RandomReplacementDialog.tsx`：首次读取提示「正在同步歌单…」，已有预览重抽提示「正在核验歌单…」；失效提示精简。
 4. `PublicPlaylistPane.tsx` 与 `PersonalPlaylistPane.tsx` 针对操作状态与禁用提示做了精炼修饰。
 5. 单元测试与 E2E 测试全绿通过（545 个单元测试，206 个 E2E 测试全部通过）。

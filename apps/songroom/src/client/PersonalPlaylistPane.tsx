@@ -359,21 +359,6 @@ export function PersonalPlaylistPane({
     }
   });
 
-  // 进入页面触发一次显式刷新
-  const refreshedOnEnter = useRef<string | null>(null);
-  useEffect(() => {
-    const current = query.data;
-    if (active && current?.playlist && current.allowedActions.includes("refreshPersonalPlaylist")) {
-      const key = `${roomId}:${current.playlist.id}`;
-      if (refreshedOnEnter.current !== key) {
-        refreshedOnEnter.current = key;
-        refreshMutation.mutate();
-      }
-    } else if (!active) {
-      refreshedOnEnter.current = null;
-    }
-  }, [active, query.data?.playlist?.id, query.data?.allowedActions]);
-
   if (query.isPending) {
     return (
       <div className="personal-playlist-pane">
@@ -585,34 +570,12 @@ export function MemberPersonalPlaylistSection({
   memberId: string;
   active: boolean;
 }) {
-  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["member-personal-playlist", sessionId, roomId, memberId],
     queryFn: ({ signal }) => request(`/${roomId}/members/${memberId}/personal-playlist`, personalPlaylistView, signal),
     enabled: active,
     ...queryOptions
   });
-
-  const refreshMutation = useMutation({
-    mutationFn: () => request(`/${roomId}/members/${memberId}/personal-playlist/refresh`, personalPlaylistView),
-    onSuccess: data => {
-      queryClient.setQueryData(["member-personal-playlist", sessionId, roomId, memberId], data);
-    }
-  });
-
-  const refreshedOnEnter = useRef<string | null>(null);
-  useEffect(() => {
-    const current = query.data;
-    if (active && current?.playlist) {
-      const key = `${roomId}:${memberId}:${current.playlist.id}`;
-      if (refreshedOnEnter.current !== key) {
-        refreshedOnEnter.current = key;
-        refreshMutation.mutate();
-      }
-    } else if (!active) {
-      refreshedOnEnter.current = null;
-    }
-  }, [active, memberId, query.data?.playlist?.id]);
 
   if (query.isPending) return <p role="status">正在读取成员个人歌单…</p>;
   if (query.isError) return null;
