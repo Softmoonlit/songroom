@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-IMAGE_REF="${1:-ghcr.io/softmoonlit/songroom:latest}"
+IMAGE_REF="${1:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/softmoonlit/songroom:latest}"
 export APP_IMAGE="$IMAGE_REF"
 
 echo "==> 拉取镜像: $APP_IMAGE ..."

@@ -2,7 +2,7 @@ name: songroom
 
 services:
   songroom:
-    image: ${APP_IMAGE:-ghcr.io/softmoonlit/songroom:latest}
+    image: ${APP_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/softmoonlit/songroom:latest}
     restart: unless-stopped
     network_mode: host
     environment:
