@@ -93,6 +93,19 @@ describe("audited vendor through production adapter", () => {
       expect(await fixture.call({ operation: "search", cookie: "explicit", query: "search", limit: 20, offset: 0 })).toEqual({ ok: false, error: { code: "PARSE_ERROR", outcome: "failed", httpStatus: 200, businessCode: 200 } });
     } finally { await fixture.close(); }
   });
+  it("保留用户歌单的特殊类型供来源分组，不依赖歌单名称", async () => {
+    const fixture = await offlineAdapter(() => ({ body: { code: 200, more: false, playlist: [
+      { id: "liked", name: "改名后的歌单", creator: { userId: "owner" }, subscribed: false, status: 0, specialType: 5 },
+      { id: "created", name: "我喜欢的音乐", creator: { userId: "owner" }, subscribed: false, status: 0, specialType: 0 }
+    ] } }));
+    try {
+      expect(await fixture.call({ operation: "userPlaylists", cookie: "explicit", accountId: "owner", offset: 0, limit: 1000 }))
+        .toMatchObject({ ok: true, data: { more: false, playlists: [
+          { id: "liked", name: "改名后的歌单", specialType: 5 },
+          { id: "created", name: "我喜欢的音乐", specialType: 0 }
+        ] } });
+    } finally { await fixture.close(); }
+  });
   it("passes bounded search pagination through real encryption and preserves the total", async () => {
     const songs = Array.from({ length: 20 }, (_, index) => ({ id: index + 41, name: `歌曲 ${index + 41}`, ar: [{ name: "歌手" }], al: { name: "专辑" } }));
     const fixture = await offlineAdapter(() => ({ body: { code: 200, result: { songs, songCount: 60 } } }));

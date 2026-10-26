@@ -208,7 +208,7 @@ test.describe("个人歌单下线自建与删除，收敛为4导航默认点歌�
 
     await expect(page.getByRole("heading", { name: "我的歌单", exact: true })).toBeVisible();
     await expect(page.getByText("稻香", { exact: true })).toBeVisible();
-    await expect(page.getByText("该歌单已在外部失效（被作者删除或已被房主取消收藏），已保留最后一次成功快照。当前无法继续点歌。")).toBeVisible();
+    await expect(page.getByText("该歌单已在外部失效（被删除、取消收藏或失去读取权限），已保留最后一次成功快照。当前无法继续点歌。")).toBeVisible();
     const requestSongBtn = page.getByRole("button", { name: "点播《稻香》到点歌台" });
     await expect(requestSongBtn).toBeDisabled();
     await expect(requestSongBtn).toHaveAttribute("title", "歌单已在外部失效，无法点歌");

@@ -1,4 +1,5 @@
 import { v7 } from "uuid";
+import { isPersonalPlaylistSource } from "./personal-playlist-source.js";
 import { hasPersonalSongWrite, terminatePersonalPlaylistsInTx } from "./personal-playlist-lifecycle.js";
 import { PublicPlayback } from "./public-playback.js";
 import { PublicPlayNext } from "./public-play-next.js";
@@ -1387,7 +1388,7 @@ export class PublicPlaylists {
       )).get();
       if (!personalBinding) throw new BusinessError(409, "PERSONAL_PLAYLIST_NOT_FOUND", "尚未配置个人歌单，无法点歌");
       if (personalBinding.playlistId !== command.sourcePlaylistId) {
-        throw new BusinessError(403, "SOURCE_PLAYLIST_FORBIDDEN", "只能从自己的专用个人歌单点歌");
+        throw new BusinessError(403, "SOURCE_PLAYLIST_FORBIDDEN", "只能从自己已分配的个人歌单点歌");
       }
 
       const binding = tx.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
@@ -1927,9 +1928,7 @@ export class PublicPlaylists {
         const sourceData = sourceResult.data;
         if (
           sourceData.playlist.id !== detail.sourcePlaylistId ||
-          sourceData.playlist.status !== 0 ||
-          !sourceData.playlist.subscribed ||
-          sourceData.playlist.creatorId === row.accountId
+          !isPersonalPlaylistSource(sourceData.playlist, row.accountId!)
         ) {
           this.#status(row.id, "stopped", "SOURCE_PLAYLIST_UNAVAILABLE");
           return;

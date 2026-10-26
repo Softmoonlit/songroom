@@ -36,6 +36,7 @@ export const personalPlaylistOperation = z.strictObject({
 export type PersonalPlaylistOperation = z.infer<typeof personalPlaylistOperation>;
 
 export const favoritePlaylistCandidate = z.strictObject({
+  sourceType: z.enum(["liked", "created", "favorite"]),
   id: z.string().min(1),
   name: z.string(),
   coverImgUrl: z.string().nullable().optional(),

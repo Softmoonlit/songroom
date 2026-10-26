@@ -497,7 +497,7 @@ export function PersonalPlaylistPane({
       {data.lastRefreshError === "TARGET_PERMISSION" ? (
         <div className="warning-banner invalidation-warning-banner" role="alert">
           <AlertCircle size={16} aria-hidden="true" />
-          <span>该歌单已在外部失效（被作者删除或已被房主取消收藏），已保留最后一次成功快照。当前无法继续点歌。</span>
+          <span>该歌单已在外部失效（被删除、取消收藏或失去读取权限），已保留最后一次成功快照。当前无法继续点歌。</span>
         </div>
       ) : data.lastRefreshError ? (
         <div className="error-banner" role="alert">

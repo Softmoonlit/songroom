@@ -1185,7 +1185,7 @@ it("调度阶段实时核验：上游返回的歌单 ID 与来源歌单不匹配
   f.playlists.stop();
 });
 
-it("调度阶段实时核验：来源歌单为自建歌单或未收藏时停止并标记 SOURCE_PLAYLIST_UNAVAILABLE", async () => {
+it("调度阶段实时核验：来源歌单为未收藏的他人歌单时停止并标记 SOURCE_PLAYLIST_UNAVAILABLE", async () => {
   const f = fixture();
   f.playlists.start();
 
@@ -1196,7 +1196,7 @@ it("调度阶段实时核验：来源歌单为自建歌单或未收藏时停止�
         return {
           ok: true,
           data: {
-            playlist: { id: "pl-roommate1", name: "个人自建歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+            playlist: { id: "pl-roommate1", name: "未收藏的他人歌单", creatorId: "acc-other-author", subscribed: false, status: 0 },
             songIds: ["s-101"],
             songs: [{ id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" }]
           }
@@ -1329,4 +1329,31 @@ it.each(["revoked", "generation"] as const)("来源读取期间授权%s变化，
   await f.scheduler.settle();
   expect(f.adapter.inputs.filter(input => input.operation === "trackAdd")).toHaveLength(0);
   expect(f.playlists.readOperation("roommate1", f.roomId, accepted.operation.id).status).toBe("waitingAuthorization");
+});
+
+
+it.each([
+  { name: "自建", privacy: 0 },
+  { name: "我喜欢的音乐", privacy: 0, specialType: 5 },
+  { name: "私密自建", privacy: 10 }
+])("逐首点歌接受未收藏的房主 $name 来源并确认标签", async metadata => {
+  const f = fixture();
+  f.playlists.start();
+  const song = { id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" };
+  let added = false;
+  f.adapter.playlistDetail = input => ({ ok: true, data: {
+    playlist: { id: input.playlistId, ...metadata, creatorId: "acc-owner", subscribed: false, status: 0 },
+    songIds: input.playlistId === "pl-roommate1" || added ? [song.id] : [],
+    songs: input.playlistId === "pl-roommate1" || added ? [song] : []
+  } });
+  f.adapter.trackAdd = () => { added = true; return { ok: true, data: { acknowledged: true } }; };
+  const result = f.playlists.requestSong("roommate1", f.roomId, {
+    idempotencyKey: v7(), sourcePlaylistId: "pl-roommate1", songId: song.id,
+    name: song.name, artists: song.artists, album: song.album
+  });
+  await f.scheduler.settle();
+  expect(f.playlists.readOperation("roommate1", f.roomId, result.operation.id).status).toBe("succeeded");
+  expect(added).toBe(true);
+  expect(f.database.select().from(requesterTag).all()).toHaveLength(1);
+  f.playlists.stop();
 });

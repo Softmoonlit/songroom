@@ -107,7 +107,7 @@ function DeleteRoomDialog({
             </p>
           )}
           <p className="destructive-dialog-note">
-            本地删除立即生效，个人收藏歌单仅在本地解绑，绝不修改或删除网易云歌单。
+            本地删除立即生效，个人歌单仅在本地解绑，绝不修改或删除网易云歌单。
           </p>
         </>
       ) : null}
@@ -335,7 +335,7 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
                   <div className="danger-action-row">
                     <div className="danger-action-info">
                       <strong>删除房间</strong>
-                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动点歌台云端清理。本地解绑个人收藏歌单，不影响网易云收藏。</p>
+                      <p>永久解散并删除此房间，所有成员将立即失去访问权限，同时启动点歌台云端清理。本地解绑个人歌单，不影响网易云中的歌曲或收藏。</p>
                     </div>
                     <div className="danger-action-trigger">
                       <DeleteRoomDialog
@@ -661,7 +661,7 @@ function MembersPane({
           {unassignTarget && (
             <DestructiveConfirmDialog
               title={`解除“${unassignTarget.nickname}”的歌单分配？`}
-              descriptionText={`确定要解除该成员绑定的收藏歌单吗？解除后该成员将无法通过个人歌单点歌，但已点入公共歌单的歌曲将保持不变。`}
+              descriptionText={`确定要解除该成员绑定的个人歌单吗？解除后该成员将无法通过个人歌单点歌，但已点入公共歌单的歌曲将保持不变。`}
               badges={[
                 { label: "恢复为未分配状态", variant: "warning" },
                 { label: "保留已点歌曲", variant: "neutral" }

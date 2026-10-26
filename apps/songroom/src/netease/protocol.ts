@@ -43,6 +43,7 @@ export const playlistSchema = z.strictObject({
   creatorId: id,
   subscribed: z.boolean(),
   status: z.number().int(),
+  specialType: z.number().int().optional(),
   coverImgUrl: z.string().optional(),
   trackCount: z.number().int().optional(),
   creatorNickname: z.string().optional()

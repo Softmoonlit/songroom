@@ -53,6 +53,7 @@ function playlist(value: any) {
     subscribed: value.subscribed === true,
     status: value.status ?? 0
   };
+  if (typeof value.specialType === "number") result.specialType = value.specialType;
   if (typeof value.coverImgUrl === "string") result.coverImgUrl = value.coverImgUrl;
   if (typeof value.trackCount === "number") result.trackCount = value.trackCount;
   if (typeof value.creator?.nickname === "string") result.creatorNickname = value.creator.nickname;

@@ -1,5 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { v7 } from "uuid";
+import { isPersonalPlaylistSource } from "./personal-playlist-source.js";
 import { BusinessError } from "../shared/errors.js";
 import type { AppDatabase } from "../db/database.js";
 import {
@@ -8,6 +9,7 @@ import {
   personalPlaylistBinding,
   playlistSnapshot,
   playlistTrack,
+  publicPlaylistBinding,
   publicSongRequest,
   room,
   roomMembership
@@ -16,7 +18,8 @@ import type { CredentialVault } from "../netease/credentials.js";
 import type {
   AdapterErrorCode,
   AdapterResult,
-  NeteaseAdapter
+  NeteaseAdapter,
+  OperationData
 } from "../netease/protocol.js";
 import type { UpstreamScheduler } from "./upstream-scheduling.js";
 import type { EventStreamService } from "../events/event-stream.js";
@@ -233,7 +236,7 @@ export class PersonalPlaylists {
       songs: Array<{ id: string; name: string; artists: string[]; album: string }>;
     };
 
-    if (data.playlist.id !== playlistId || data.playlist.status !== 0 || !data.playlist.subscribed) {
+    if (data.playlist.id !== playlistId || !isPersonalPlaylistSource(data.playlist, accountId)) {
       this.#recordRefreshError(accountId, playlistId, "TARGET_PERMISSION", readStartedAt);
       return;
     }
@@ -385,8 +388,8 @@ export class PersonalPlaylists {
     cookie: string,
     accountId: string,
     callStrategy: (fn: () => Promise<AdapterResult<"userPlaylists">>) => Promise<AdapterResult<"userPlaylists">> = fn => fn()
-  ): Promise<Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number; coverImgUrl?: string; trackCount?: number; creatorNickname?: string }> | null> {
-    const list: Array<{ id: string; name: string; creatorId: string; subscribed: boolean; status: number; coverImgUrl?: string; trackCount?: number; creatorNickname?: string }> = [];
+  ): Promise<OperationData<"userPlaylists">["playlists"] | null> {
+    const list: OperationData<"userPlaylists">["playlists"] = [];
     let offset = 0;
     const limit = 1000;
     let pages = 0;
@@ -406,6 +409,7 @@ export class PersonalPlaylists {
           creatorId: p.creatorId,
           subscribed: p.subscribed,
           status: p.status,
+          specialType: p.specialType,
           coverImgUrl: p.coverImgUrl,
           trackCount: p.trackCount,
           creatorNickname: p.creatorNickname
@@ -422,7 +426,7 @@ export class PersonalPlaylists {
     this.#getMember(userId, roomId);
     const roomRow = this.#getRoom(roomId);
     if (roomRow.ownerUserId !== userId) {
-      throw new BusinessError(403, "ROOM_OWNER_REQUIRED", "只有房主可以查看收藏歌单候选");
+      throw new BusinessError(403, "ROOM_OWNER_REQUIRED", "只有房主可以查看歌单候选");
     }
 
     const auth = this.database.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, roomRow.ownerUserId)).get();
@@ -450,9 +454,13 @@ export class PersonalPlaylists {
       throw new BusinessError(502, "MODULE_ERROR", "读取网易云歌单失败");
     }
 
+    const publicTargets = new Set(this.database.select({ playlistId: publicPlaylistBinding.playlistId })
+      .from(publicPlaylistBinding).where(eq(publicPlaylistBinding.accountId, auth.accountId)).all()
+      .map(binding => binding.playlistId));
     const candidates = allPlaylists
-      .filter(p => p.creatorId !== auth.accountId && p.subscribed === true && p.status === 0)
-      .map(p => ({
+      .filter(p => isPersonalPlaylistSource(p, auth.accountId) && !publicTargets.has(p.id))
+      .map((p): FavoritePlaylistCandidatesView["candidates"][number] => ({
+        sourceType: p.creatorId === auth.accountId ? (p.specialType === 5 ? "liked" : "created") : "favorite",
         id: p.id,
         name: p.name,
         coverImgUrl: p.coverImgUrl ?? null,
@@ -534,12 +542,17 @@ export class PersonalPlaylists {
       songs: Array<{ id: string; name: string; artists: string[]; album: string }>;
     };
 
-    if (data.playlist.creatorId === auth.accountId || !data.playlist.subscribed || data.playlist.status !== 0) {
-      throw new BusinessError(400, "TARGET_PERMISSION", "只能分配房主收藏的他人公开歌单，不可分配自建歌单或私密歌单");
+    if (data.playlist.id !== playlistId || !isPersonalPlaylistSource(data.playlist, auth.accountId)) {
+      throw new BusinessError(400, "TARGET_PERMISSION", "只能分配房主账号下有效的自建歌单、我喜欢的音乐或已收藏歌单");
     }
 
     const now = this.now();
     const result = this.database.transaction(tx => {
+      const publicTarget = tx.select({ roomId: publicPlaylistBinding.roomId }).from(publicPlaylistBinding)
+        .where(and(eq(publicPlaylistBinding.accountId, auth.accountId), eq(publicPlaylistBinding.playlistId, playlistId))).get();
+      if (publicTarget) {
+        throw new BusinessError(409, "PLAYLIST_TARGET_CONFLICT", "该歌单已作为房间公共歌单，不能分配为个人点歌来源");
+      }
       let generation = 1;
       if (existingBinding) {
         generation = existingBinding.generation + 1;

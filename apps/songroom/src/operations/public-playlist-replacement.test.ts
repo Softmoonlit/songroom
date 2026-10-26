@@ -360,6 +360,37 @@ function createTestContext(): TestContext {
 }
 
 describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
+  it("随机换歌接受房主私密自建与已收藏来源", async () => {
+    const ctx = createTestContext();
+    ctx.adapter.playlistDetailHook = input => {
+      if (input.playlistId === ctx.publicPlaylistId) return null;
+      const source = ctx.adapter.playlists.get(input.playlistId)!;
+      return { ok: true, data: {
+        playlist: {
+          id: source.id, name: source.name,
+          creatorId: source.id === "rm1-playlist" ? "acc-owner" : "other-author",
+          subscribed: source.id !== "rm1-playlist", status: 0, privacy: source.id === "rm1-playlist" ? 10 : 0
+        },
+        songIds: source.songs.map(song => song.id), songs: [...source.songs]
+      } };
+    };
+    const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+      memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5
+    });
+    expect(preview.tracks).toHaveLength(4);
+    expect(new Set(preview.tracks.map(track => track.sourceMemberId)))
+      .toEqual(new Set([ctx.roommate1MemberId, ctx.roommate2MemberId]));
+    const result = ctx.playlists.replacePublicPlaylist(ctx.ownerUserId, ctx.roomId, {
+      idempotencyKey: v7(), previewId: preview.previewId
+    });
+    await ctx.playlists.settle();
+    expect(ctx.playlists.readRandomReplacementOperation(ctx.ownerUserId, ctx.roomId, result.operation.id))
+      .toMatchObject({ status: "succeeded", tagConfirmed: true });
+    expect(new Set(ctx.adapter.playlists.get(ctx.publicPlaylistId)!.songs.map(song => song.id)))
+      .toEqual(new Set(preview.tracks.map(track => track.songId)));
+    expect(ctx.database.select().from(requesterTag).all()).toHaveLength(4);
+  });
+
   it("验收清单 1 & 2: 仅房主可确认、幂等性、同键不同内容拒绝、过期键拒绝、不重新抽选", async () => {
     const ctx = createTestContext();
     const preview = await ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, { memberIds: [ctx.roommate1MemberId, ctx.roommate2MemberId], count: 5 });

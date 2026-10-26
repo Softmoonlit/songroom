@@ -58,6 +58,7 @@ const mockCandidates: FavoritePlaylistCandidatesView = {
   candidates: [
     {
       id: "fav-pl-jay",
+      sourceType: "favorite",
       name: "周杰伦精选集",
       trackCount: 30,
       coverImgUrl: null,
@@ -65,6 +66,7 @@ const mockCandidates: FavoritePlaylistCandidatesView = {
     },
     {
       id: "fav-pl-eason",
+      sourceType: "favorite",
       name: "陈奕迅经典粤语",
       trackCount: 25,
       coverImgUrl: null,
@@ -258,7 +260,7 @@ test.describe("房主分配收藏歌单完整链路与状态适配 (Ticket 03)",
     await expect(page.getByText("夜曲", { exact: true })).toBeVisible();
 
     // 展示失效横幅
-    await expect(page.getByText("该歌单已在外部失效（被作者删除或已被房主取消收藏），已保留最后一次成功快照。当前无法继续点歌。")).toBeVisible();
+    await expect(page.getByText("该歌单已在外部失效（被删除、取消收藏或失去读取权限），已保留最后一次成功快照。当前无法继续点歌。")).toBeVisible();
 
     // 点歌按钮被明确禁用
     const reqBtn = page.getByRole("button", { name: "点播《稻香》到点歌台" });
@@ -302,6 +304,54 @@ test.describe("房主分配收藏歌单完整链路与状态适配 (Ticket 03)",
 
     // 恢复为未分配状态按钮
     await expect(page.getByRole("button", { name: "为室友小明分配歌单" })).toBeVisible();
+  });
+
+  test("候选按来源分组，显示数量、保留组内顺序、跨组单选并隐藏空组", async ({ page }) => {
+    await setupBaseRoom(page, true);
+    await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: emptyPersonalView }));
+    await page.route(membersEndpoint, route => route.fulfill({ json: createMembersView(false, false) }));
+    let candidates: FavoritePlaylistCandidatesView["candidates"] = [
+      { id: "favorite-1", name: "收藏甲", trackCount: 3, sourceType: "favorite" },
+      { id: "created-1", name: "自建甲", trackCount: 4, sourceType: "created" },
+      { id: "liked-1", name: "喜欢甲", trackCount: 5, sourceType: "liked" },
+      { id: "favorite-2", name: "收藏乙", trackCount: 6, sourceType: "favorite" },
+      { id: "created-2", name: "自建乙", trackCount: 7, sourceType: "created" }
+    ];
+    await page.route(candidatesEndpoint, route => route.fulfill({ json: { candidates, version: 1 } }));
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "房间成员", exact: true }).click();
+    const openDialog = page.getByRole("button", { name: "为室友小明分配歌单" });
+    await openDialog.click();
+    const dialog = page.getByRole("alertdialog");
+    const radioGroup = dialog.getByRole("radiogroup", { name: "歌单列表" });
+    await expect(dialog.getByRole("radiogroup")).toHaveCount(1);
+    await expect(radioGroup.getByRole("heading", { level: 3 })).toHaveText([
+      "我喜欢的音乐1", "自建歌单2", "收藏歌单2"
+    ]);
+    await expect(radioGroup.getByRole("radio")).toHaveText([
+      "喜欢甲5 首歌曲", "自建甲4 首歌曲", "自建乙7 首歌曲", "收藏甲3 首歌曲", "收藏乙6 首歌曲"
+    ]);
+
+    const liked = radioGroup.getByRole("radio", { name: /喜欢甲/ });
+    const favorite = radioGroup.getByRole("radio", { name: /收藏乙/ });
+    await liked.click();
+    await expect(liked).toHaveAttribute("aria-checked", "true");
+    await favorite.click();
+    await expect(liked).toHaveAttribute("aria-checked", "false");
+    await expect(favorite).toHaveAttribute("aria-checked", "true");
+    await expect(radioGroup.getByRole("radio", { checked: true })).toHaveCount(1);
+    await expect(dialog.getByRole("button", { name: "确认分配" })).toBeEnabled();
+
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    candidates = candidates.filter(candidate => candidate.sourceType === "liked");
+    await page.reload();
+    await page.getByRole("button", { name: "房间成员", exact: true }).click();
+    await openDialog.click();
+    await expect(radioGroup.getByRole("heading", { level: 3 })).toHaveText(["我喜欢的音乐1"]);
+    await expect(radioGroup.getByRole("group")).toHaveCount(1);
+    await expect(radioGroup.getByRole("radio")).toHaveCount(1);
+    await expect(radioGroup.getByRole("radio", { checked: true })).toHaveCount(0);
   });
 
   for (const width of [320, 900, 1440]) {
