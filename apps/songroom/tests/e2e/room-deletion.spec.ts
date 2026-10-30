@@ -142,7 +142,7 @@ test.describe("Ticket 03: 房间删除完整影响展示与清理生命周期规
     await expect(page.getByText("立即生效", { exact: true })).toBeVisible();
     await expect(page.getByText("云端歌单清理", { exact: true })).toBeVisible();
     await expect(page.getByText("专用点歌台“songroom-测试音乐间-公共”将启动网易云删除清理。")).toBeVisible();
-    await expect(page.getByText("本地删除立即生效，个人收藏歌单仅在本地解绑，绝不修改或删除网易云歌单。")).toBeVisible();
+    await expect(page.getByText("本地删除立即生效，个人歌单仅在本地解绑，绝不修改或删除网易云歌单。")).toBeVisible();
 
     // 绝不再有专用个人歌单清理文案
     await expect(page.getByText(/专用个人歌单.*启动网易云删除清理/)).toHaveCount(0);
@@ -170,7 +170,7 @@ test.describe("Ticket 03: 房间删除完整影响展示与清理生命周期规
     await expect(dialog.getByRole("button", { name: "确认永久删除" })).toBeEnabled();
     await expect(dialog.getByText("云端歌单清理", { exact: true })).toHaveCount(0);
     await expect(dialog.getByText(/将启动网易云删除清理/)).toHaveCount(0);
-    await expect(dialog.getByText("本地删除立即生效，个人收藏歌单仅在本地解绑，绝不修改或删除网易云歌单。")).toBeVisible();
+    await expect(dialog.getByText("本地删除立即生效，个人歌单仅在本地解绑，绝不修改或删除网易云歌单。")).toBeVisible();
   });
 
   test("房主提交删除发生版本冲突时，展示错误提示并重新核对最新版本影响范围", async ({ page }) => {

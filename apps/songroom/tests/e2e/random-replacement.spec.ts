@@ -1140,4 +1140,118 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
       await expect(modal).not.toBeVisible();
     }
   });
+
+  test("首数滚轮选择器手势与业务闭环验收：桌面滚轮、移动端触摸、边界拦截与候选不足提示", async ({ page }) => {
+    await setupRoom(page, true);
+    let publicView = { ...initialPublicView };
+    await page.route(publicPlaylistEndpoint, route => route.fulfill({ json: publicView }));
+
+    let requestedPreviewBody: { memberIds: string[]; count: number } | null = null;
+    const shortfallPreview25: RandomReplacementPreviewView = {
+      ...mockPreview10,
+      previewId: v7(),
+      targetCount: 25,
+      actualCount: 18,
+      tracks: mockPreview10.tracks,
+      memberContributions: [
+        { memberId: ownerMemberId, nickname: "房主小林", count: 10 },
+        { memberId: roommateMemberId, nickname: "室友小明", count: 8 }
+      ],
+      oldTrackCount: 2,
+      oldTracksWithRequesterCount: 2
+    };
+
+    await page.route(randomPreviewEndpoint, async route => {
+      requestedPreviewBody = route.request().postDataJSON() as { memberIds: string[]; count: number };
+      return route.fulfill({ json: shortfallPreview25 });
+    });
+
+    const operationId = v7();
+    const currentOpStatus: RandomReplacementOperationView = {
+      id: operationId,
+      roomId,
+      status: "succeeded",
+      step: "succeeded",
+      targetCount: 25,
+      targetSongIds: mockPreview10.tracks.map(t => t.songId),
+      addedSongIds: mockPreview10.tracks.map(t => t.songId),
+      removedSongIds: ["old-1", "old-2"],
+      tagConfirmed: true,
+      currentAction: null,
+      currentSongId: null,
+      errorCode: null,
+      version: 5
+    };
+
+    await page.route(randomReplacementEndpoint, route => {
+      return route.fulfill({ json: { replay: false, operation: currentOpStatus } });
+    });
+    await page.route(`**/api/rooms/${roomId}/public-playlist/random-replacement/${operationId}`, route =>
+      route.fulfill({ json: currentOpStatus })
+    );
+
+    await page.goto(`/rooms/${roomId}`);
+    await page.getByRole("button", { name: "点歌台", exact: true }).click();
+    await page.getByRole("button", { name: "随机点歌" }).click();
+
+    const modal = page.locator(".random-replacement-modal");
+    await expect(modal).toBeVisible();
+
+    const spinbutton = modal.getByRole("spinbutton", { name: "期望抽选首数" });
+    await expect(spinbutton).toBeVisible();
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "20");
+
+    // 1. 桌面端滚轮滚动测试：悬停在滚动区域滚动滚轮触发增减
+    await spinbutton.hover();
+    await page.mouse.wheel(0, 100);
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "21");
+
+    await page.mouse.wheel(0, 100);
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "22");
+
+    await page.mouse.wheel(0, -100);
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "21");
+
+    // 2. 键盘上下方向键微调测试
+    await spinbutton.focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "20");
+
+    await page.keyboard.press("ArrowDown");
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "21");
+
+    // 3. 边界拦截测试：滚动到最小值 10 与最大值 50
+    await modal.locator(".wheel-picker-item", { hasText: "10" }).click();
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "10");
+    await page.mouse.wheel(0, -200);
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "10");
+
+    await modal.locator(".wheel-picker-item", { hasText: "50" }).click();
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "50");
+    await page.mouse.wheel(0, 200);
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "50");
+
+    // 4. 选择自定义首数 25 首
+    await modal.locator(".wheel-picker-item", { hasText: "25" }).click();
+    await expect(spinbutton).toHaveAttribute("aria-valuenow", "25");
+
+    // 5. 业务闭环与候选不足提示测试
+    await modal.getByRole("checkbox", { name: "全选参与成员" }).click();
+    await modal.getByRole("button", { name: "生成预览" }).click();
+
+    expect(requestedPreviewBody).not.toBeNull();
+    expect(requestedPreviewBody!.count).toBe(25);
+
+    // 验证候选不足差额展示
+    await expect(modal.locator(".random-replacement-content")).toBeVisible();
+    await expect(modal.getByText("本次抽选：18 首")).toBeVisible();
+    await expect(modal.getByText("（目标 25 首，可用候选不足）")).toBeVisible();
+
+    // 确认替换
+    await modal.getByRole("button", { name: "确认替换" }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(modal.getByText("换歌成功")).toBeVisible();
+    await modal.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(modal).not.toBeVisible();
+  });
 });

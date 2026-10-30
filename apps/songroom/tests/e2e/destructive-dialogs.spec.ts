@@ -157,7 +157,7 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
     await expect(dialog.getByText("立即生效", { exact: true })).toBeVisible();
     await expect(dialog.getByText("云端歌单清理", { exact: true })).toBeVisible();
     await expect(dialog.getByText("专用点歌台“songroom-测试音乐间-公共”将启动网易云删除清理。", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("本地删除立即生效，个人收藏歌单仅在本地解绑，绝不修改或删除网易云歌单。", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("本地删除立即生效，个人歌单仅在本地解绑，绝不修改或删除网易云歌单。", { exact: true })).toBeVisible();
 
     // 4. 彻底废除统计行、排比后果清单与调试聚合版本号
     await expect(dialog.locator(".leave-consequences")).toHaveCount(0);

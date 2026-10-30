@@ -25,6 +25,8 @@ export function WheelPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   const isScrollingRef = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isProgrammaticScrollRef = useRef(false);
+  const programmaticScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wheelAccumulatorRef = useRef(0);
   const wheelResetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const internalValueRef = useRef(value);
@@ -46,7 +48,14 @@ export function WheelPicker({
     const targetScrollTop = (clamped - min) * ITEM_HEIGHT;
     if (Math.abs(container.scrollTop - targetScrollTop) > 1) {
       if (smooth) {
+        isProgrammaticScrollRef.current = true;
+        if (programmaticScrollTimeoutRef.current) {
+          clearTimeout(programmaticScrollTimeoutRef.current);
+        }
         container.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+        programmaticScrollTimeoutRef.current = setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 220);
       } else {
         container.scrollTop = targetScrollTop;
       }
@@ -55,13 +64,16 @@ export function WheelPicker({
 
   // 初始及外部受控 value 变化时对齐滚动位置
   useEffect(() => {
-    if (!isScrollingRef.current) {
+    if (!isScrollingRef.current && !isProgrammaticScrollRef.current) {
       scrollToValue(value, false);
     }
   }, [value, min]);
 
   // 处理原生滚动事件及吸附计算（主要用于移动端触控滑动与吸附对齐）
   const handleScroll = () => {
+    if (isProgrammaticScrollRef.current) {
+      return;
+    }
     const container = containerRef.current;
     if (!container) return;
 
@@ -75,6 +87,7 @@ export function WheelPicker({
     const candidateValue = Math.max(min, Math.min(max, min + index));
 
     if (candidateValue !== internalValueRef.current) {
+      internalValueRef.current = candidateValue;
       onChange(candidateValue);
     }
 
@@ -122,6 +135,7 @@ export function WheelPicker({
         wheelAccumulatorRef.current = 0;
         const nextVal = Math.max(min, Math.min(max, currentVal + direction));
         if (nextVal !== currentVal) {
+          internalValueRef.current = nextVal;
           onChange(nextVal);
           scrollToValue(nextVal, true);
         }
@@ -134,6 +148,9 @@ export function WheelPicker({
       if (wheelResetTimeoutRef.current) {
         clearTimeout(wheelResetTimeoutRef.current);
       }
+      if (programmaticScrollTimeoutRef.current) {
+        clearTimeout(programmaticScrollTimeoutRef.current);
+      }
     };
   }, [disabled, min, max, onChange]);
 
@@ -143,22 +160,26 @@ export function WheelPicker({
 
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      const nextVal = Math.max(min, value - 1);
+      const nextVal = Math.max(min, internalValueRef.current - 1);
+      internalValueRef.current = nextVal;
       onChange(nextVal);
       scrollToValue(nextVal, true);
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      const nextVal = Math.min(max, value + 1);
+      const nextVal = Math.min(max, internalValueRef.current + 1);
+      internalValueRef.current = nextVal;
       onChange(nextVal);
       scrollToValue(nextVal, true);
     } else if (e.key === "PageUp") {
       e.preventDefault();
-      const nextVal = Math.max(min, value - 5);
+      const nextVal = Math.max(min, internalValueRef.current - 5);
+      internalValueRef.current = nextVal;
       onChange(nextVal);
       scrollToValue(nextVal, true);
     } else if (e.key === "PageDown") {
       e.preventDefault();
-      const nextVal = Math.min(max, value + 5);
+      const nextVal = Math.min(max, internalValueRef.current + 5);
+      internalValueRef.current = nextVal;
       onChange(nextVal);
       scrollToValue(nextVal, true);
     }
@@ -167,6 +188,7 @@ export function WheelPicker({
   // 点击非中心项直接滚动到该数值
   const handleItemClick = (num: number) => {
     if (disabled) return;
+    internalValueRef.current = num;
     onChange(num);
     scrollToValue(num, true);
   };
