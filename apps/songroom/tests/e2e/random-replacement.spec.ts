@@ -156,6 +156,25 @@ const mockPreview10: RandomReplacementPreviewView = {
   expiresAt: Date.now() + 600000
 };
 
+const mockPreview15: RandomReplacementPreviewView = {
+  ...mockPreview10,
+  previewId: v7(),
+  targetCount: 15,
+  actualCount: 15,
+  tracks: [
+    ...mockPreview10.tracks,
+    { songId: "track-11", name: "七里香", artists: ["周杰伦"], album: "七里香", sourceMemberId: ownerMemberId, sourceMemberNickname: "房主小林", isNew: true },
+    { songId: "track-12", name: "晴天", artists: ["周杰伦"], album: "叶惠美", sourceMemberId: roommateMemberId, sourceMemberNickname: "室友小明", isNew: true },
+    { songId: "track-13", name: "安静", artists: ["周杰伦"], album: "范特西", sourceMemberId: ownerMemberId, sourceMemberNickname: "房主小林", isNew: true },
+    { songId: "track-14", name: "简单爱", artists: ["周杰伦"], album: "范特西", sourceMemberId: roommateMemberId, sourceMemberNickname: "室友小明", isNew: true },
+    { songId: "track-15", name: "开不了口", artists: ["周杰伦"], album: "范特西", sourceMemberId: ownerMemberId, sourceMemberNickname: "房主小林", isNew: true }
+  ],
+  memberContributions: [
+    { memberId: ownerMemberId, nickname: "房主小林", count: 8 },
+    { memberId: roommateMemberId, nickname: "室友小明", count: 7 }
+  ]
+};
+
 const mockPreview5: RandomReplacementPreviewView = {
   ...mockPreview10,
   previewId: previewId5,
@@ -210,8 +229,8 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await page.route(randomPreviewEndpoint, async route => {
       const body = route.request().postDataJSON() as { memberIds: string[]; count: number };
       previewCalls.push(body);
-      if (body.count === 5) {
-        await route.fulfill({ json: mockPreview5 });
+      if (body.count === 15) {
+        await route.fulfill({ json: mockPreview15 });
       } else {
         await route.fulfill({ json: mockPreview10 });
       }
@@ -238,9 +257,10 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(generateBtn).toBeDisabled();
     await expect(modal.getByText("请至少选择一位成员")).toBeVisible();
 
-    // 3. 首数默认 10 首
-    await expect(page.getByRole("radio", { name: "10首 (默认)" })).toBeVisible();
-    await expect(page.getByRole("radio", { name: "10首 (默认)" })).toHaveClass(/active/);
+    // 3. 首数默认 20 首
+    const countPicker = modal.getByRole("spinbutton", { name: "期望抽选首数" });
+    await expect(countPicker).toBeVisible();
+    await expect(countPicker).toHaveAttribute("aria-valuenow", "20");
 
     // 4. 成员列表展示：房主与室友按房间昵称展示；未建歌单的成员禁用并注明原因
     const ownerCheckbox = modal.getByRole("checkbox", { name: "选择成员 房主小林" });
@@ -291,8 +311,9 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(generateBtn).toBeDisabled();
     await expect(modal.getByText("请至少选择一位成员")).toBeVisible();
 
-    // 9. 切换首数为 5 首（切换不自动发请求）
-    await page.getByRole("radio", { name: "5首", exact: true }).click();
+    // 9. 切换首数为 15 首（切换不自动发请求）
+    await modal.locator(".wheel-picker-item", { hasText: "15" }).click();
+    await expect(countPicker).toHaveAttribute("aria-valuenow", "15");
     expect(previewCalls).toHaveLength(0);
 
     // 10. 重新勾选全选，点击生成预览
@@ -301,19 +322,19 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     // 验证发出带有明确 memberIds 和 count 的请求
     expect(previewCalls).toHaveLength(1);
-    expect(previewCalls[0].count).toBe(5);
+    expect(previewCalls[0].count).toBe(15);
     expect(previewCalls[0].memberIds).toEqual([ownerMemberId, roommateMemberId]);
 
     // 11. 预览展示
     await expect(modal.locator(".random-replacement-content")).toBeVisible();
-    await expect(modal.getByText("本次抽选：5 首")).toBeVisible();
-    await expect(modal.getByText("房主小林：3 首")).toBeVisible();
-    await expect(modal.getByText("室友小明：2 首")).toBeVisible();
+    await expect(modal.getByText("本次抽选：15 首")).toBeVisible();
+    await expect(modal.getByText("房主小林：8 首")).toBeVisible();
+    await expect(modal.getByText("室友小明：7 首")).toBeVisible();
 
     // 12. 重新抽选保留本次成员及首数
     await modal.getByRole("button", { name: "重新抽选预览" }).click();
     expect(previewCalls).toHaveLength(2);
-    expect(previewCalls[1].count).toBe(5);
+    expect(previewCalls[1].count).toBe(15);
     expect(previewCalls[1].memberIds).toEqual([ownerMemberId, roommateMemberId]);
 
     // 13. 返回调整：清空旧预览，回到选择界面，保持成员和首数，不能确认旧预览
@@ -323,7 +344,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(roommateCheckbox).toBeChecked();
     await expect(modal.getByRole("button", { name: "确认替换" })).toHaveCount(0);
 
-    // 14. 关闭弹窗后再打开：重置为默认全不选、10首
+    // 14. 关闭弹窗后再打开：重置为默认全不选、20首
     await modal.getByRole("button", { name: "取消" }).click();
     await expect(modal).not.toBeVisible();
 
@@ -331,7 +352,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
     await expect(modal).toBeVisible();
     await expect(ownerCheckbox).not.toBeChecked();
     await expect(roommateCheckbox).not.toBeChecked();
-    await expect(modal.getByRole("radio", { name: "10首 (默认)" })).toHaveClass(/active/);
+    await expect(modal.getByRole("spinbutton", { name: "期望抽选首数" })).toHaveAttribute("aria-valuenow", "20");
     await expect(modal.getByText("请至少选择一位成员")).toBeVisible();
   });
 

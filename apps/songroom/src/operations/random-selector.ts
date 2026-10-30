@@ -37,7 +37,7 @@ export interface RandomSelectionResult {
 }
 
 export interface RandomSelectionInput {
-  targetCount: 5 | 10 | 15 | 20 | number;
+  targetCount: number;
   publicSongIds: string[];
   members: CandidateMember[];
 }

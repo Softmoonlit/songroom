@@ -38,7 +38,7 @@ export interface StoredRandomPreview {
   previewId: string;
   roomId: string;
   ownerUserId: string;
-  targetCount: 5 | 10 | 15 | 20;
+  targetCount: number;
   actualCount: number;
   tracks: SelectedTrack[];
   memberContributions: MemberContribution[];

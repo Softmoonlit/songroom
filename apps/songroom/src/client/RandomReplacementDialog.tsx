@@ -12,6 +12,7 @@ import {
 import { roomMembersView } from "../shared/room-contracts.js";
 import { queryOptions, request, RoomRequestError } from "./room-http.js";
 import { getFriendlyReplacementErrorMessage, getFriendlyReplacementOperationStatus } from "./random-replacement-messages.js";
+import { WheelPicker } from "./WheelPicker.js";
 
 export interface RandomReplacementDialogProps {
   open: boolean;
@@ -22,9 +23,6 @@ export interface RandomReplacementDialogProps {
   onReplacementStarted: (operationId: string) => void;
 }
 
-const COUNT_OPTIONS = [5, 10, 15, 20] as const;
-type CountOption = (typeof COUNT_OPTIONS)[number];
-
 export function RandomReplacementDialog({
   open,
   onOpenChange,
@@ -34,7 +32,7 @@ export function RandomReplacementDialog({
   onReplacementStarted
 }: RandomReplacementDialogProps) {
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [selectedCount, setSelectedCount] = useState<CountOption>(10);
+  const [selectedCount, setSelectedCount] = useState<number>(20);
   const [preview, setPreview] = useState<RandomReplacementPreviewView | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [confirmError, setConfirmError] = useState("");
@@ -51,7 +49,7 @@ export function RandomReplacementDialog({
   });
 
   const previewMutation = useMutation({
-    mutationFn: (variables: { memberIds: string[]; count: CountOption }) =>
+    mutationFn: (variables: { memberIds: string[]; count: number }) =>
       request(
         `/${roomId}/public-playlist/random-preview`,
         randomReplacementPreviewView,
@@ -106,7 +104,7 @@ export function RandomReplacementDialog({
     if (!open) {
       previewMutation.reset();
       setSelectedMemberIds([]);
-      setSelectedCount(10);
+      setSelectedCount(20);
       setPreview(null);
       setPreviewError("");
       setConfirmError("");
@@ -155,7 +153,7 @@ export function RandomReplacementDialog({
     setPreviewError("");
   };
 
-  const handleCountChange = (count: CountOption) => {
+  const handleCountChange = (count: number) => {
     if (previewMutation.isPending || confirmMutation.isPending) return;
     setSelectedCount(count);
   };
@@ -405,23 +403,15 @@ export function RandomReplacementDialog({
                 </div>
 
                 {/* 数量选择器 */}
-                <div className="random-count-selector" role="radiogroup" aria-label="期望换歌首数">
+                <div className="random-count-selector">
                   <span className="random-count-label">期望首数：</span>
-                  <div className="random-count-buttons">
-                    {COUNT_OPTIONS.map(c => (
-                      <button
-                        key={c}
-                        type="button"
-                        className={`random-count-btn ${selectedCount === c ? "active" : ""}`}
-                        disabled={previewMutation.isPending || confirmMutation.isPending}
-                        onClick={() => handleCountChange(c)}
-                        aria-checked={selectedCount === c}
-                        role="radio"
-                      >
-                        {c}首{c === 10 ? " (默认)" : ""}
-                      </button>
-                    ))}
-                  </div>
+                  <WheelPicker
+                    value={selectedCount}
+                    onChange={handleCountChange}
+                    min={10}
+                    max={50}
+                    disabled={previewMutation.isPending || confirmMutation.isPending}
+                  />
                 </div>
               </div>
             )}

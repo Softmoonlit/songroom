@@ -274,9 +274,15 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
   const emptyMembersRes = await request(app, previewUrl, owner.cookie, { memberIds: [], count: 10 });
   expect(emptyMembersRes.statusCode).toBe(400);
 
-  // 非法 count 400
-  const invalidCountRes = await request(app, previewUrl, owner.cookie, { memberIds: [v7()], count: 7 });
-  expect(invalidCountRes.statusCode).toBe(400);
+  // 非法 count 400（低于10、高于50或非整数）
+  const invalidCount7 = await request(app, previewUrl, owner.cookie, { memberIds: [v7()], count: 7 });
+  expect(invalidCount7.statusCode).toBe(400);
+  const invalidCount9 = await request(app, previewUrl, owner.cookie, { memberIds: [v7()], count: 9 });
+  expect(invalidCount9.statusCode).toBe(400);
+  const invalidCount51 = await request(app, previewUrl, owner.cookie, { memberIds: [v7()], count: 51 });
+  expect(invalidCount51.statusCode).toBe(400);
+  const invalidCountFloat = await request(app, previewUrl, owner.cookie, { memberIds: [v7()], count: 23.5 });
+  expect(invalidCountFloat.statusCode).toBe(400);
 
   // 4. 房主成功生成预览
   // 先设置公共歌单与个人歌单数据
@@ -329,12 +335,21 @@ it("随机换歌预览路由鉴权、参数校验与预览只读获取", async (
 
   const previewRes = await request(app, previewUrl, owner.cookie, {
     memberIds: [memberRow.id],
-    count: 10
+    count: 23
   });
   expect(previewRes.statusCode).toBe(200);
   const preview = randomReplacementPreviewView.parse(previewRes.json());
+  expect(preview.targetCount).toBe(23);
   expect(preview.actualCount).toBe(2);
   expect(preview.oldTrackCount).toBe(1);
+
+  // 缺省 count 时默认 20
+  const defaultPreviewRes = await request(app, previewUrl, owner.cookie, {
+    memberIds: [memberRow.id]
+  });
+  expect(defaultPreviewRes.statusCode).toBe(200);
+  const defaultPreview = randomReplacementPreviewView.parse(defaultPreviewRes.json());
+  expect(defaultPreview.targetCount).toBe(20);
 
   // 5. GET 预览
   const getPreviewUrl = `${previewUrl}/${preview.previewId}`;
