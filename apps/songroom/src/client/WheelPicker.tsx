@@ -25,6 +25,8 @@ export function WheelPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   const isScrollingRef = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const wheelAccumulatorRef = useRef(0);
+  const wheelResetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const internalValueRef = useRef(value);
   internalValueRef.current = value;
 
@@ -58,7 +60,7 @@ export function WheelPicker({
     }
   }, [value, min]);
 
-  // 处理滚动事件及吸附计算
+  // 处理原生滚动事件及吸附计算（主要用于移动端触控滑动与吸附对齐）
   const handleScroll = () => {
     const container = containerRef.current;
     if (!container) return;
@@ -76,33 +78,64 @@ export function WheelPicker({
       onChange(candidateValue);
     }
 
-    // 滚动停止后复位标记并对齐吸附位置
+    // 滚动停止后复位标记并精细校准吸附位置
     scrollTimeoutRef.current = setTimeout(() => {
       isScrollingRef.current = false;
       scrollToValue(internalValueRef.current, true);
     }, 120);
   };
 
-  // 桌面端鼠标滚轮滚动阻断与穿透防护
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (disabled) return;
+  // 桌面端鼠标滚轮滚动：非 passive 原生监听，阻断穿透并平滑单步微调
+  useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const atTop = container.scrollTop <= 0 && e.deltaY < 0;
-    const maxScroll = (max - min) * ITEM_HEIGHT;
-    const atBottom = container.scrollTop >= maxScroll && e.deltaY > 0;
-
-    // 到达边界时彻底拦截，防止滚轮穿透致使父级弹窗和背景页面滚动
-    if (atTop || atBottom) {
-      e.preventDefault();
+    const onWheel = (e: WheelEvent) => {
+      if (disabled) return;
       e.stopPropagation();
-      return;
-    }
 
-    // 在滚轮内部滚动时也阻断向外冒泡
-    e.stopPropagation();
-  };
+      const currentVal = internalValueRef.current;
+      const isAtMin = currentVal <= min && e.deltaY < 0;
+      const isAtMax = currentVal >= max && e.deltaY > 0;
+
+      // 到达边界时彻底拦截默认滚动，杜绝外部弹窗或底层页面产生晃动
+      if (isAtMin || isAtMax) {
+        e.preventDefault();
+        wheelAccumulatorRef.current = 0;
+        return;
+      }
+
+      e.preventDefault();
+
+      if (wheelResetTimeoutRef.current) {
+        clearTimeout(wheelResetTimeoutRef.current);
+      }
+      wheelResetTimeoutRef.current = setTimeout(() => {
+        wheelAccumulatorRef.current = 0;
+      }, 150);
+
+      wheelAccumulatorRef.current += e.deltaY;
+      const THRESHOLD = 35; // 累积阈值，适配不同灵敏度的鼠标滚轮与触控板
+
+      if (Math.abs(wheelAccumulatorRef.current) >= THRESHOLD) {
+        const direction = wheelAccumulatorRef.current > 0 ? 1 : -1;
+        wheelAccumulatorRef.current = 0;
+        const nextVal = Math.max(min, Math.min(max, currentVal + direction));
+        if (nextVal !== currentVal) {
+          onChange(nextVal);
+          scrollToValue(nextVal, true);
+        }
+      }
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+      if (wheelResetTimeoutRef.current) {
+        clearTimeout(wheelResetTimeoutRef.current);
+      }
+    };
+  }, [disabled, min, max, onChange]);
 
   // 键盘无障碍支持：上下方向键单步微调
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -174,7 +207,6 @@ export function WheelPicker({
         aria-valuemin={min}
         aria-valuemax={max}
         onKeyDown={handleKeyDown}
-        onWheel={handleWheel}
         onScroll={handleScroll}
         style={{
           paddingTop: ITEM_HEIGHT,
