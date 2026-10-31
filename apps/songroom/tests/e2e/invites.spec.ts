@@ -282,8 +282,7 @@ test("完整应用：房主建房邀请，注册与登录回跳申请、撤回�
     await guest.getByRole("button", { name: "撤回申请", exact: true }).click();
     await expect(guest.getByRole("status")).toHaveText("申请已撤回");
     await guest.getByRole("button", { name: "账号菜单" }).click();
-    await guest.getByRole("link", { name: "账号设置", exact: true }).click();
-    await guest.getByRole("button", { name: "退出当前设备" }).click();
+    await guest.getByRole("button", { name: "退出登录" }).click();
     await expect(guest).toHaveURL(/\/$/);
     await guest.goto(`/join#${actualCode}`);
     await expect(guest).toHaveURL(/\/login$/);

@@ -520,18 +520,6 @@ function AccountPage({ session }: { session?: SessionData | null }) {
     }
   }
 
-  async function signOut(): Promise<void> {
-    setPending(true);
-    const result = await authAction("/sign-out", {});
-    if (!result.ok) {
-      setMessageError(true);
-      setMessage(result.message);
-      setPending(false);
-      return;
-    }
-    window.location.assign("/");
-  }
-
   return (
     <section className="account-page" aria-labelledby="account-heading">
       <Link className="back-link" to="/rooms">
@@ -601,12 +589,6 @@ function AccountPage({ session }: { session?: SessionData | null }) {
           {message}
         </p>
       )}
-      <div className="account-logout">
-        <button className="logout-button" type="button" onClick={() => void signOut()} disabled={pending}>
-          <LogOut size={17} aria-hidden="true" />
-          退出当前设备
-        </button>
-      </div>
     </section>
   );
 }
