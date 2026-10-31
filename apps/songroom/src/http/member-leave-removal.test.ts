@@ -75,6 +75,18 @@ async function fixture() {
     status: "active",
     credentials
   }).run();
+
+  const rm1AuthId = v7();
+  const rm1Creds = new CredentialVault(credentialKeyPath).encrypt("MUSIC_U=rm1", { authorizationId: rm1AuthId, accountId: "acc-rm1", generation: 1 });
+  app.database.insert(neteaseAuthorization).values({
+    id: rm1AuthId,
+    userId: roommate1.userId,
+    accountId: "acc-rm1",
+    nickname: "网易云室友甲",
+    generation: 1,
+    status: "active",
+    credentials: rm1Creds
+  }).run();
   app.database.insert(publicPlaylistBinding).values({
     roomId,
     accountId: "acc-owner",
@@ -113,7 +125,7 @@ async function fixture() {
     id: v7(),
     roomId,
     memberId: rm1MemberId,
-    accountId: "acc-owner",
+    accountId: "acc-rm1",
     playlistId: "pl-rm1",
     name: "songroom-测试宿舍-室友甲",
     generation: 1,
@@ -333,7 +345,7 @@ it("尚未发出的点歌请求在室友退出后立即清除，不向下游发�
       return {
         ok: true,
         data: {
-          playlist: { id: "pl-rm1", name: "个人歌单", creatorId: "acc-owner", subscribed: false, status: 0 },
+          playlist: { id: "pl-rm1", name: "个人歌单", creatorId: "acc-rm1", subscribed: false, status: 0 },
           songIds: ["new-song-99"],
           songs: [{ id: "new-song-99", name: "稻香", artists: ["周杰伦"], album: "魔杰座" }]
         }

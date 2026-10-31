@@ -95,6 +95,14 @@ function fixture() {
     id: authorizationId, userId: "owner", accountId: "acc-owner", nickname: "网易云房主", generation: 1, status: "active", credentials
   }).run();
 
+  for (const [rmUser, rmAccount] of [["roommate1", "acc-roommate1"], ["roommate2", "acc-roommate2"]] as const) {
+    const rmAuthId = v7();
+    const rmCreds = vault.encrypt(`MUSIC_U=${rmUser}-credential`, { authorizationId: rmAuthId, accountId: rmAccount, generation: 1 });
+    database.insert(neteaseAuthorization).values({
+      id: rmAuthId, userId: rmUser, accountId: rmAccount, nickname: `网易云${rmUser}`, generation: 1, status: "active", credentials: rmCreds
+    }).run();
+  }
+
   // 绑定公共歌单
   database.insert(publicPlaylistBinding).values({
     roomId, accountId: "acc-owner", playlistId: "pl-public", name: "songroom-测试宿舍-公共", creationOperationId: v7(), generation: 1
@@ -110,14 +118,14 @@ function fixture() {
   const ownerMember = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "owner"))).get()!;
 
   database.insert(personalPlaylistBinding).values([
-    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate1Member.id, playlistId: "pl-roommate1", name: "songroom-测试宿舍-室友甲", generation: 1, createdAt: now(), updatedAt: now() },
-    { id: v7(), roomId, accountId: "acc-owner", memberId: roommate2Member.id, playlistId: "pl-roommate2", name: "songroom-测试宿舍-室友乙", generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, accountId: "acc-roommate1", memberId: roommate1Member.id, playlistId: "pl-roommate1", name: "songroom-测试宿舍-室友甲", generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, accountId: "acc-roommate2", memberId: roommate2Member.id, playlistId: "pl-roommate2", name: "songroom-测试宿舍-室友乙", generation: 1, createdAt: now(), updatedAt: now() },
     { id: v7(), roomId, accountId: "acc-owner", memberId: ownerMember.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", generation: 1, createdAt: now(), updatedAt: now() }
   ]).run();
 
   database.insert(playlistSnapshot).values([
-    { accountId: "acc-owner", playlistId: "pl-roommate1", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() },
-    { accountId: "acc-owner", playlistId: "pl-roommate2", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() },
+    { accountId: "acc-roommate1", playlistId: "pl-roommate1", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() },
+    { accountId: "acc-roommate2", playlistId: "pl-roommate2", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() },
     { accountId: "acc-owner", playlistId: "pl-owner", snapshotVersion: 1, syncedAt: now(), createdAt: now(), updatedAt: now() }
   ]).run();
 
@@ -908,7 +916,7 @@ it("目标冲突隔离：awaitingConfirmation 仅阻塞同一规范化歌单的�
   f.database.insert(personalPlaylistBinding).values({
     id: v7(),
     roomId: room2Id,
-    accountId: "acc-owner",
+    accountId: "acc-roommate2",
     memberId: rm2Other.id,
     playlistId: "pl-rm2-other",
     name: "songroom-二号宿舍-室友乙",
@@ -917,7 +925,7 @@ it("目标冲突隔离：awaitingConfirmation 仅阻塞同一规范化歌单的�
     updatedAt: f.now()
   }).run();
   f.database.insert(playlistSnapshot).values({
-    accountId: "acc-owner", playlistId: "pl-rm2-other", snapshotVersion: 1, syncedAt: f.now(), createdAt: f.now(), updatedAt: f.now()
+    accountId: "acc-roommate2", playlistId: "pl-rm2-other", snapshotVersion: 1, syncedAt: f.now(), createdAt: f.now(), updatedAt: f.now()
   }).run();
 
   // 二号房间未受阻塞，可以正常点歌！
@@ -1336,13 +1344,13 @@ it.each([
   { name: "自建", privacy: 0 },
   { name: "我喜欢的音乐", privacy: 0, specialType: 5 },
   { name: "私密自建", privacy: 10 }
-])("逐首点歌接受未收藏的房主 $name 来源并确认标签", async metadata => {
+])("逐首点歌接受未收藏的成员自建 $name 来源并确认标签", async metadata => {
   const f = fixture();
   f.playlists.start();
   const song = { id: "s-101", name: "晴天", artists: ["周杰伦"], album: "叶惠美" };
   let added = false;
   f.adapter.playlistDetail = input => ({ ok: true, data: {
-    playlist: { id: input.playlistId, ...metadata, creatorId: "acc-owner", subscribed: false, status: 0 },
+    playlist: { id: input.playlistId, ...metadata, creatorId: "acc-roommate1", subscribed: false, status: 0 },
     songIds: input.playlistId === "pl-roommate1" || added ? [song.id] : [],
     songs: input.playlistId === "pl-roommate1" || added ? [song] : []
   } });

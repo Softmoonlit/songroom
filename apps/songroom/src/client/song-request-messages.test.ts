@@ -35,7 +35,7 @@ describe("song-request-messages", () => {
 
       // 授权失效
       expect(getFriendlySongRequestErrorMessage("AUTH_UNAVAILABLE")).toBe(
-        "需房主重新授权网易云账号。"
+        "网易云授权失效，请前往账号设置检查或重新授权。"
       );
 
       // 个人歌单校验
@@ -74,7 +74,7 @@ describe("song-request-messages", () => {
         "《晴天》已提交，正在核验…"
       );
       expect(getFriendlyOperationStatusMessage("waitingAuthorization")).toBe(
-        "等待房主恢复网易云授权…"
+        "等待网易云授权恢复…"
       );
       expect(getFriendlyOperationStatusMessage("needsAdministrator")).toBe(
         "操作状态异常，请联系管理员。"

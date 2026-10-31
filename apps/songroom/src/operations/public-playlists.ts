@@ -1083,6 +1083,27 @@ export class PublicPlaylists {
   }
 
   #authorizationError(row: Operation): "ACCOUNT_MISMATCH" | "AUTH_UNAVAILABLE" {
+    if (row.kind === "requestPublicSong") {
+      const current = this.database.select().from(room).where(eq(room.id, row.roomId)).get();
+      const memberAuth = this.#authorization(row.userId);
+      const detail = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get();
+      if (detail?.sourceMemberId) {
+        const personalBinding = this.database.select().from(personalPlaylistBinding).where(and(
+          eq(personalPlaylistBinding.roomId, row.roomId),
+          eq(personalPlaylistBinding.memberId, detail.sourceMemberId)
+        )).get();
+        if (memberAuth && personalBinding && memberAuth.accountId !== personalBinding.accountId) {
+          return "ACCOUNT_MISMATCH";
+        }
+      }
+      if (current) {
+        const ownerAuth = this.#authorization(current.ownerUserId);
+        if (ownerAuth && ownerAuth.accountId !== row.accountId) {
+          return "ACCOUNT_MISMATCH";
+        }
+      }
+      return "AUTH_UNAVAILABLE";
+    }
     const auth = this.#authorization(row.userId);
     return auth && auth.accountId !== row.accountId ? "ACCOUNT_MISMATCH" : "AUTH_UNAVAILABLE";
   }
@@ -1388,22 +1409,32 @@ export class PublicPlaylists {
       )).get();
       if (!personalBinding) throw new BusinessError(409, "PERSONAL_PLAYLIST_NOT_FOUND", "尚未配置个人歌单，无法点歌");
       if (personalBinding.playlistId !== command.sourcePlaylistId) {
-        throw new BusinessError(403, "SOURCE_PLAYLIST_FORBIDDEN", "只能从自己已分配的个人歌单点歌");
+        throw new BusinessError(403, "SOURCE_PLAYLIST_FORBIDDEN", "只能从自己已绑定的个人歌单点歌");
       }
 
       const binding = tx.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, roomId)).get();
       if (!binding) throw new BusinessError(409, "PUBLIC_PLAYLIST_NOT_FOUND", "房间尚未绑定公共歌单");
 
-      const auth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.ownerUserId)).get();
-      if (!auth || auth.status !== "active" || !auth.credentials) throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
-
-      if (personalBinding.accountId !== auth.accountId) {
-        throw new BusinessError(409, "AUTHORIZATION_CHANGED", "网易云账号已变化，请重新读取并确认身份");
+      // 1. 点歌人授权校验
+      const memberAuth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, userId)).get();
+      if (!memberAuth || memberAuth.status !== "active" || !memberAuth.credentials) {
+        throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "你的网易云授权不可用，请前往账号设置授权");
+      }
+      if (personalBinding.accountId !== memberAuth.accountId) {
+        throw new BusinessError(409, "AUTHORIZATION_CHANGED", "你的网易云账号已变化，请重新绑定个人歌单");
+      }
+      if (this.scheduler.paused(memberAuth.accountId)) {
+        throw new BusinessError(409, "ACCOUNT_PAUSED", "你的网易云账号已暂停，请联系管理员");
       }
 
-      const admissionCode = this.scheduler.admissionCode(auth.accountId);
+      // 2. 房主授权校验
+      const ownerAuth = tx.select().from(neteaseAuthorization).where(eq(neteaseAuthorization.userId, current.ownerUserId)).get();
+      if (!ownerAuth || ownerAuth.status !== "active" || !ownerAuth.credentials) {
+        throw new BusinessError(409, "NETEASE_AUTH_REQUIRED", "请房主先完成网易云授权");
+      }
+      const admissionCode = this.scheduler.admissionCode(ownerAuth.accountId);
       if (admissionCode) {
-        throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
+        throw new BusinessError(409, admissionCode, admissionCode === "ACCOUNT_PAUSED" ? "房主网易云账号已暂停，请联系管理员" : "网易云账号操作队列已满");
       }
 
       // 待确认只阻塞同一规范化公共歌单的冲突写入，其他目标继续推进
@@ -1424,6 +1455,22 @@ export class PublicPlaylists {
         throw new BusinessError(409, "CONCURRENT_OPERATION_LIMIT_EXCEEDED", "你在该房间已有未完成的写操作，请等待处理");
       }
 
+      // 来源校验：若个人歌单快照中已有歌曲记录，校验歌曲仍在快照中
+      const hasAnyTracks = tx.select({ songId: playlistTrack.songId }).from(playlistTrack).where(and(
+        eq(playlistTrack.accountId, personalBinding.accountId),
+        eq(playlistTrack.playlistId, personalBinding.playlistId)
+      )).limit(1).get();
+      if (hasAnyTracks) {
+        const trackInSnapshot = tx.select({ songId: playlistTrack.songId }).from(playlistTrack).where(and(
+          eq(playlistTrack.accountId, personalBinding.accountId),
+          eq(playlistTrack.playlistId, personalBinding.playlistId),
+          eq(playlistTrack.songId, command.songId)
+        )).get();
+        if (!trackInSnapshot) {
+          throw new BusinessError(400, "SOURCE_SONG_REMOVED", "该歌曲不存在于你的个人歌单快照中");
+        }
+      }
+
       // 目标入队排队（实时核验来源由调度执行阶段发起，不凭旧快照放行）
       const id = v7();
       tx.insert(operation).values({
@@ -1431,9 +1478,9 @@ export class PublicPlaylists {
         kind: "requestPublicSong",
         userId,
         roomId,
-        accountId: auth.accountId,
-        authorizationId: auth.id,
-        generation: auth.generation,
+        accountId: ownerAuth.accountId,
+        authorizationId: ownerAuth.id,
+        generation: ownerAuth.generation,
         lastGranted: this.now(),
         status: "queued",
         errorCode: null,
@@ -1512,13 +1559,25 @@ export class PublicPlaylists {
     }
 
     const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get()!;
-    const auth = this.#authorization(currentRoom.ownerUserId);
-    if (!auth || !auth.credentials) {
+    const ownerAuth = this.#authorization(currentRoom.ownerUserId);
+    if (!ownerAuth || !ownerAuth.credentials) {
       this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
       return false;
     }
     try {
-      this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
+      this.vault.decrypt(ownerAuth.credentials, { authorizationId: ownerAuth.id, accountId: ownerAuth.accountId, generation: ownerAuth.generation });
+    } catch {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return false;
+    }
+
+    const memberAuth = this.#authorization(row.userId);
+    if (!memberAuth || !memberAuth.credentials) {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return false;
+    }
+    try {
+      this.vault.decrypt(memberAuth.credentials, { authorizationId: memberAuth.id, accountId: memberAuth.accountId, generation: memberAuth.generation });
     } catch {
       this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
       return false;
@@ -1644,13 +1703,23 @@ export class PublicPlaylists {
       if (!personalBinding) return "stopped";
       if (
         personalBinding.playlistId !== detail.sourcePlaylistId ||
-        personalBinding.generation !== detail.sourceBindingGeneration ||
-        personalBinding.accountId !== row.accountId
+        personalBinding.generation !== detail.sourceBindingGeneration
       ) {
         return "stopped";
       }
       if (detail.sourceMemberId && detail.sourceMemberId !== member.id) {
         return "stopped";
+      }
+
+      // 点歌成员授权校验
+      const memberAuth = this.#authorization(member.userId);
+      if (
+        !memberAuth ||
+        memberAuth.status !== "active" ||
+        !memberAuth.credentials ||
+        memberAuth.accountId !== personalBinding.accountId
+      ) {
+        return "waitingAuthorization";
       }
     } else {
       if (["ready", "verified"].includes(detail.step)) {
@@ -1899,12 +1968,34 @@ export class PublicPlaylists {
     const detail = this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get()!;
     const currentRoom = this.database.select().from(room).where(eq(room.id, row.roomId)).get()!;
     const binding = this.database.select().from(publicPlaylistBinding).where(eq(publicPlaylistBinding.roomId, row.roomId)).get()!;
-    const auth = this.#authorization(currentRoom.ownerUserId)!;
-    if (!auth || !auth.credentials) {
+
+    // 1. 房主授权校验（用于公共歌单写入与写后读回）
+    const ownerAuth = this.#authorization(currentRoom.ownerUserId);
+    if (!ownerAuth || !ownerAuth.credentials || ownerAuth.status !== "active") {
       this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
       return;
     }
-    const cookie = this.vault.decrypt(auth.credentials, { authorizationId: auth.id, accountId: auth.accountId, generation: auth.generation });
+    let ownerCookie: string;
+    try {
+      ownerCookie = this.vault.decrypt(ownerAuth.credentials, { authorizationId: ownerAuth.id, accountId: ownerAuth.accountId, generation: ownerAuth.generation });
+    } catch {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
+
+    // 2. 点歌成员授权校验（用于实时读取来源歌单）
+    const memberAuth = this.#authorization(row.userId);
+    if (!memberAuth || !memberAuth.credentials || memberAuth.status !== "active") {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
+    let memberCookie: string;
+    try {
+      memberCookie = this.vault.decrypt(memberAuth.credentials, { authorizationId: memberAuth.id, accountId: memberAuth.accountId, generation: memberAuth.generation });
+    } catch {
+      this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
+      return;
+    }
 
     try {
       if (detail.step === "ready" || detail.step === "verified") {
@@ -1913,10 +2004,10 @@ export class PublicPlaylists {
           return;
         }
 
-        // 实时完整读取来源个人歌单并确认歌单身份及歌曲仍在；来源变化/读取失败停止，不凭旧快照放行
-        const sourceResult = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.sourcePlaylistId });
+        // 实时完整读取来源个人歌单并确认歌单身份及歌曲仍在；使用点歌成员自身凭据
+        const sourceResult = await this.adapter.call({ operation: "playlistDetail", cookie: memberCookie, playlistId: detail.sourcePlaylistId });
         if (!sourceResult.ok) {
-          if (sourceResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
+          if (sourceResult.error.code === "RATE_LIMITED") this.scheduler.pause(memberAuth.accountId);
           if (sourceResult.error.code === "AUTH_UNAVAILABLE") {
             this.#status(row.id, "waitingAuthorization", "AUTH_UNAVAILABLE");
             return;
@@ -1928,7 +2019,7 @@ export class PublicPlaylists {
         const sourceData = sourceResult.data;
         if (
           sourceData.playlist.id !== detail.sourcePlaylistId ||
-          !isPersonalPlaylistSource(sourceData.playlist, row.accountId!)
+          !isPersonalPlaylistSource(sourceData.playlist, memberAuth.accountId)
         ) {
           this.#status(row.id, "stopped", "SOURCE_PLAYLIST_UNAVAILABLE");
           return;
@@ -1966,7 +2057,7 @@ export class PublicPlaylists {
             !currentPersonal ||
             currentPersonal.playlistId !== currentDetail.sourcePlaylistId ||
             currentPersonal.generation !== currentDetail.sourceBindingGeneration ||
-            currentPersonal.accountId !== currentOp.accountId
+            currentPersonal.accountId !== memberAuth.accountId
           ) {
             return { valid: false as const };
           }
@@ -2013,7 +2104,7 @@ export class PublicPlaylists {
       }
 
       if (detail.step === "sending") {
-        const addResult = await this.adapter.call({ operation: "trackAdd", cookie, playlistId: detail.playlistId, songIds: [detail.songId] });
+        const addResult = await this.adapter.call({ operation: "trackAdd", cookie: ownerCookie, playlistId: detail.playlistId, songIds: [detail.songId] });
         if (!addResult.ok) {
           if (addResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
           if (addResult.error.outcome === "failed") {
@@ -2037,7 +2128,7 @@ export class PublicPlaylists {
 
       if (detail.step === "confirming" || this.database.select().from(publicSongRequest).where(eq(publicSongRequest.operationId, row.id)).get()?.step === "confirming") {
         const readStartedAt = this.#beginRead();
-        const detailResult = await this.adapter.call({ operation: "playlistDetail", cookie, playlistId: detail.playlistId });
+        const detailResult = await this.adapter.call({ operation: "playlistDetail", cookie: ownerCookie, playlistId: detail.playlistId });
         if (!detailResult.ok) {
           if (detailResult.error.code === "RATE_LIMITED") this.scheduler.pause(row.accountId!);
           this.#recordRefreshError(binding.accountId, binding.playlistId, detailResult.error.code);
@@ -2054,7 +2145,7 @@ export class PublicPlaylists {
         }
 
         // 调用统一的快照提交，严格以事务递增单调版本并清理已移除歌曲标签
-        const committed = this.#commitSnapshot(binding.accountId, binding.playlistId, binding.generation, data, readStartedAt, { id: auth.id, generation: auth.generation });
+        const committed = this.#commitSnapshot(binding.accountId, binding.playlistId, binding.generation, data, readStartedAt, { id: ownerAuth.id, generation: ownerAuth.generation });
         if (!committed) {
           this.#transitionToAwaitingConfirmation(row, "PARSE_ERROR");
           return;

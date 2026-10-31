@@ -46,13 +46,18 @@ async function fixture() {
   ]).run();
   const credentials = new CredentialVault(credentialKeyPath).encrypt("MUSIC_U=test", { authorizationId, accountId: "test", generation: 1 });
   app.database.insert(neteaseAuthorization).values({ id: authorizationId, userId: owner.userId, accountId: "test", nickname: "网易云", generation: 1, status: "active", credentials }).run();
+  
+  const memberAuthId = v7();
+  const memberCredentials = new CredentialVault(credentialKeyPath).encrypt("MUSIC_U=member-test", { authorizationId: memberAuthId, accountId: "member-test", generation: 1 });
+  app.database.insert(neteaseAuthorization).values({ id: memberAuthId, userId: member.userId, accountId: "member-test", nickname: "网易云室友", generation: 1, status: "active", credentials: memberCredentials }).run();
+
   app.database.insert(publicPlaylistBinding).values({ roomId, accountId: "test", playlistId: "pl-test", name: "songroom-测试宿舍-公共", creationOperationId: v7(), generation: 1 }).run();
 
   const memberRecord = app.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, member.userId))).get()!;
   const ownerRecord = app.database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, owner.userId))).get()!;
 
   app.database.insert(personalPlaylistBinding).values([
-    { id: v7(), roomId, accountId: "test", memberId: memberRecord.id, playlistId: "pl-member", name: "songroom-测试宿舍-室友", generation: 1, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: v7(), roomId, accountId: "member-test", memberId: memberRecord.id, playlistId: "pl-member", name: "songroom-测试宿舍-室友", generation: 1, createdAt: Date.now(), updatedAt: Date.now() },
     { id: v7(), roomId, accountId: "test", memberId: ownerRecord.id, playlistId: "pl-owner", name: "songroom-测试宿舍-房主", generation: 1, createdAt: Date.now(), updatedAt: Date.now() }
   ]).run();
 
@@ -87,7 +92,7 @@ it("通过 HTTP 提交点歌并在歌曲已有或新增时正确返回", async (
         return {
           ok: true,
           data: {
-            playlist: { id: input.playlistId, name: "个人歌单", creatorId: "test", subscribed: false, status: 0 },
+            playlist: { id: input.playlistId, name: "个人歌单", creatorId: input.playlistId === "pl-member" ? "member-test" : "test", subscribed: false, status: 0 },
             songIds: ["s-1", "s-2", "s-idem", "s-blocked"],
             songs: [
               { id: "s-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },

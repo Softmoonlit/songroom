@@ -83,6 +83,14 @@ function fixture() {
     id: authorizationId, userId: "owner", accountId: "acc-owner", nickname: "网易云房主", generation: 1, status: "active", credentials
   }).run();
 
+  for (const [rmUser, rmAccount] of [["roommate1", "acc-rm1"], ["roommate2", "acc-rm2"]] as const) {
+    const authId = v7();
+    const creds = vault.encrypt(`MUSIC_U=${rmAccount}`, { authorizationId: authId, accountId: rmAccount, generation: 1 });
+    database.insert(neteaseAuthorization).values({
+      id: authId, userId: rmUser, accountId: rmAccount, nickname: `网易云${rmUser}`, generation: 1, status: "active", credentials: creds
+    }).run();
+  }
+
   // 房间邀请码
   database.insert(roomInvite).values({
     roomId, code: "invite1234", generation: 1
@@ -102,8 +110,8 @@ function fixture() {
   const rm2Member = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "roommate2"))).get()!;
 
   database.insert(personalPlaylistBinding).values([
-    { id: v7(), roomId, memberId: rm1Member.id, accountId: "acc-owner", playlistId: "pl-rm1", name: "室友1歌单", generation: 1, createdAt: now(), updatedAt: now() },
-    { id: v7(), roomId, memberId: rm2Member.id, accountId: "acc-owner", playlistId: "pl-rm2", name: "室友2歌单", generation: 1, createdAt: now(), updatedAt: now() }
+    { id: v7(), roomId, memberId: rm1Member.id, accountId: "acc-rm1", playlistId: "pl-rm1", name: "室友1歌单", generation: 1, createdAt: now(), updatedAt: now() },
+    { id: v7(), roomId, memberId: rm2Member.id, accountId: "acc-rm2", playlistId: "pl-rm2", name: "室友2歌单", generation: 1, createdAt: now(), updatedAt: now() }
   ]).run();
 
   adapter.playlistDetail = async (input) => {

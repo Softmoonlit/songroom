@@ -192,6 +192,20 @@ function createTestContext(): TestContext {
     credentials
   }).run();
 
+  for (const [rmUser, rmAccount] of [[roommate1UserId, "acc-rm1"], [roommate2UserId, "acc-rm2"]] as const) {
+    const rmAuthId = v7();
+    const rmCreds = vault.encrypt("mock-cookie", { authorizationId: rmAuthId, accountId: rmAccount, generation: 1 });
+    database.insert(neteaseAuthorization).values({
+      id: rmAuthId,
+      userId: rmUser,
+      accountId: rmAccount,
+      nickname: `网易云${rmUser}`,
+      generation: 1,
+      status: "active",
+      credentials: rmCreds
+    }).run();
+  }
+
   const publicPlaylistId = "pub-playlist-1";
   database.insert(publicPlaylistBinding).values({
     roomId,
@@ -257,7 +271,7 @@ function createTestContext(): TestContext {
     id: v7(),
     roomId,
     memberId: roommate1MemberId,
-    accountId: "acc-owner",
+    accountId: "acc-rm1",
     playlistId: rm1PlaylistId,
     name: "室友1歌单",
     generation: 1,
@@ -265,7 +279,7 @@ function createTestContext(): TestContext {
     updatedAt: now()
   }).run();
   database.insert(playlistSnapshot).values({
-    accountId: "acc-owner",
+    accountId: "acc-rm1",
     playlistId: rm1PlaylistId,
     snapshotVersion: 1,
     syncedAt: now(),
@@ -274,7 +288,7 @@ function createTestContext(): TestContext {
   }).run();
   for (const [idx, s] of adapter.playlists.get(rm1PlaylistId)!.songs.entries()) {
     database.insert(playlistTrack).values({
-      accountId: "acc-owner",
+      accountId: "acc-rm1",
       playlistId: rm1PlaylistId,
       position: idx,
       songId: s.id,
@@ -298,7 +312,7 @@ function createTestContext(): TestContext {
     id: v7(),
     roomId,
     memberId: roommate2MemberId,
-    accountId: "acc-owner",
+    accountId: "acc-rm2",
     playlistId: rm2PlaylistId,
     name: "室友2歌单",
     generation: 1,
@@ -306,7 +320,7 @@ function createTestContext(): TestContext {
     updatedAt: now()
   }).run();
   database.insert(playlistSnapshot).values({
-    accountId: "acc-owner",
+    accountId: "acc-rm2",
     playlistId: rm2PlaylistId,
     snapshotVersion: 1,
     syncedAt: now(),
@@ -315,7 +329,7 @@ function createTestContext(): TestContext {
   }).run();
   for (const [idx, s] of adapter.playlists.get(rm2PlaylistId)!.songs.entries()) {
     database.insert(playlistTrack).values({
-      accountId: "acc-owner",
+      accountId: "acc-rm2",
       playlistId: rm2PlaylistId,
       position: idx,
       songId: s.id,
@@ -368,7 +382,7 @@ describe("PublicPlaylistReplacement (公共歌单持久整组替换)", () => {
       return { ok: true, data: {
         playlist: {
           id: source.id, name: source.name,
-          creatorId: source.id === "rm1-playlist" ? "acc-owner" : "other-author",
+          creatorId: source.id === "rm1-playlist" ? "acc-rm1" : "other-author",
           subscribed: source.id !== "rm1-playlist", status: 0, privacy: source.id === "rm1-playlist" ? 10 : 0
         },
         songIds: source.songs.map(song => song.id), songs: [...source.songs]

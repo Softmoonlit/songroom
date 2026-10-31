@@ -19,7 +19,7 @@ export function getFriendlySongRequestErrorMessage(code?: string | null): string
     case "AUTH_UNAVAILABLE":
     case "AUTHORIZATION_CHANGED":
     case "ACCOUNT_EMPTY":
-      return "需房主重新授权网易云账号。";
+      return "网易云授权失效，请前往账号设置检查或重新授权。";
     case "TARGET_PERMISSION":
       return "歌单权限不足，请核对设置。";
     case "MODULE_ERROR":
@@ -61,7 +61,7 @@ export function getFriendlyOperationStatusMessage(status: string, songName?: str
         ? `《${songName}》已提交，正在核验…`
         : "歌曲已提交，正在核验…";
     case "waitingAuthorization":
-      return "等待房主恢复网易云授权…";
+      return "等待网易云授权恢复…";
     case "needsAdministrator":
       return "操作状态异常，请联系管理员。";
     default:

@@ -45,7 +45,7 @@ class TestAdapter implements NeteaseAdapter {
       return {
         ok: true,
         data: {
-          playlist: { id: "member-personal-pl", name: "songroom-宿舍-室友", creatorId: "cloud-owner", subscribed: false, status: 0 },
+          playlist: { id: "member-personal-pl", name: "songroom-宿舍-室友", creatorId: "cloud-member", subscribed: false, status: 0 },
           songIds: ["song-1", "song-2"],
           songs: [
             { id: "song-1", name: "晴天", artists: ["周杰伦"], album: "叶惠美" },
@@ -143,12 +143,24 @@ function fixture() {
     credentials: vault.encrypt("MUSIC_U=owner", scope)
   }).run();
 
+  const memberAuthId = v7();
+  const memberScope = { authorizationId: memberAuthId, accountId: "cloud-member", generation: 1 };
+  database.insert(neteaseAuthorization).values({
+    id: memberAuthId,
+    userId: "member",
+    accountId: memberScope.accountId,
+    generation: 1,
+    nickname: "室友",
+    status: "active",
+    credentials: vault.encrypt("MUSIC_U=member", memberScope)
+  }).run();
+
   const memberMembership = database.select().from(roomMembership).where(and(eq(roomMembership.roomId, roomId), eq(roomMembership.userId, "member"))).get()!;
   database.insert(personalPlaylistBinding).values({
     id: v7(),
     roomId,
     memberId: memberMembership.id,
-    accountId: scope.accountId,
+    accountId: memberScope.accountId,
     playlistId: "member-personal-pl",
     name: "songroom-宿舍-室友",
     generation: 1,
