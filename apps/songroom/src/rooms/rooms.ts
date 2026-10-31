@@ -129,12 +129,6 @@ export class Rooms {
         if (shell.room.role === "owner" && member.role === "roommate") {
           allowedActions.push("removeMember");
         }
-        if (shell.room.role === "owner") {
-          allowedActions.push("assignPersonalPlaylist");
-          if (personalMemberIds.has(member.id)) {
-            allowedActions.push("unassignPersonalPlaylist");
-          }
-        }
         return {
           ...member,
           hasPersonalPlaylist: personalMemberIds.has(member.id),

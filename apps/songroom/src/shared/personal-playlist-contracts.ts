@@ -57,9 +57,6 @@ export const bindPersonalPlaylistCommand = z.strictObject({
 });
 export type BindPersonalPlaylistCommand = z.infer<typeof bindPersonalPlaylistCommand>;
 
-export const assignPersonalPlaylistCommand = bindPersonalPlaylistCommand;
-export type AssignPersonalPlaylistCommand = BindPersonalPlaylistCommand;
-
 export const personalPlaylistView = z.strictObject({
   playlist: z.strictObject({
     id: z.string().min(1),

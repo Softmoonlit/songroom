@@ -206,15 +206,11 @@ const terminalStatuses = new Set(["succeeded", "failed", "stopped"]);
 export function PersonalPlaylistPane({
   sessionId,
   roomId,
-  active,
-  isOwner = false,
-  onGoToAssign
+  active
 }: {
   sessionId: string;
   roomId: string;
   active: boolean;
-  isOwner?: boolean;
-  onGoToAssign?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [bindOpen, setBindOpen] = useState(false);
@@ -592,71 +588,6 @@ export function PersonalPlaylistPane({
         hasPersonalPlaylist={Boolean(playlist)}
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
-    </div>
-  );
-}
-
-export function MemberPersonalPlaylistSection({
-  sessionId,
-  roomId,
-  memberId,
-  active
-}: {
-  sessionId: string;
-  roomId: string;
-  memberId: string;
-  active: boolean;
-}) {
-  const query = useQuery({
-    queryKey: ["member-personal-playlist", sessionId, roomId, memberId],
-    queryFn: ({ signal }) => request(`/${roomId}/members/${memberId}/personal-playlist`, personalPlaylistView, signal),
-    enabled: active,
-    ...queryOptions
-  });
-
-  if (query.isPending) return <p role="status">正在读取成员个人歌单…</p>;
-  if (query.isError) return null;
-
-  const data = query.data;
-  if (!data?.playlist) {
-    return (
-      <div className="room-settings-section">
-        <div className="room-settings-section-header">
-          <h2>个人歌单</h2>
-        </div>
-        <p className="empty-hint">未配置个人歌单</p>
-      </div>
-    );
-  }
-
-  const tracks = data.snapshot?.tracks ?? [];
-  return (
-    <div className="room-settings-section">
-      <div className="room-settings-section-header">
-        <h2>个人歌单</h2>
-      </div>
-      <dl className="settings-card netease-identity">
-        <div>
-          <dt>歌单名称</dt>
-          <dd>{data.playlist.name}</dd>
-        </div>
-        <div>
-          <dt>歌曲数</dt>
-          <dd>{data.snapshot?.trackCount ?? tracks.length} 首</dd>
-        </div>
-        {data.snapshot?.syncedAt && (
-          <div>
-            <dt>快照时间</dt>
-            <dd>{new Date(data.snapshot.syncedAt).toLocaleString("zh-CN", { hour12: false })}</dd>
-          </div>
-        )}
-      </dl>
-
-      {tracks.length > 0 && (
-        <div className="member-playlist-tracks-preview">
-          <PersonalTrackList tracks={tracks} active={active} />
-        </div>
-      )}
     </div>
   );
 }

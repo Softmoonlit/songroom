@@ -14,9 +14,8 @@ import { IdentityForm } from "./IdentityForm";
 import { ApplicationsDrawer } from "./ApplicationsDrawer";
 import { InviteDialog } from "./InviteDialog";
 import { PublicPlaylistPane } from "./PublicPlaylistPane";
-import { MemberPersonalPlaylistSection, PersonalPlaylistPane } from "./PersonalPlaylistPane";
+import { PersonalPlaylistPane } from "./PersonalPlaylistPane";
 import { DestructiveConfirmDialog, type DestructiveBadge } from "./DestructiveConfirmDialog";
-import { AssignFavoritePlaylistDialog } from "./AssignFavoritePlaylistDialog";
 import { getMusicPlatform } from "./music-platforms";
 
 function DeleteRoomDialog({
@@ -127,7 +126,6 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
   });
   type RoomTab = "public" | "personal" | "members" | "settings";
   const [active, setActive] = useState<RoomTab>("public");
-  const [guideAssignSelf, setGuideAssignSelf] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -237,11 +235,6 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             sessionId={sessionId}
             roomId={roomId}
             active={active === "personal"}
-            isOwner={room.role === "owner"}
-            onGoToAssign={() => {
-              selectTab("members");
-              setGuideAssignSelf(true);
-            }}
           />
         </section>
         <section hidden={active !== "members"} aria-label="房间成员">
@@ -250,8 +243,6 @@ function RoomWorkspace({ sessionId, roomId }: { sessionId: string; roomId: strin
             roomId={roomId}
             active={active === "members"}
             pendingCount={query.data.pendingCount}
-            guideAssignSelf={guideAssignSelf}
-            onGuideAssignSelfHandled={() => setGuideAssignSelf(false)}
           />
         </section>
         <section hidden={active !== "settings"} aria-label="房间设置" className="room-settings-pane">
@@ -360,16 +351,12 @@ function MembersPane({
   sessionId,
   roomId,
   active,
-  pendingCount,
-  guideAssignSelf = false,
-  onGuideAssignSelfHandled
+  pendingCount
 }: {
   sessionId: string;
   roomId: string;
   active: boolean;
   pendingCount: number | null;
-  guideAssignSelf?: boolean;
-  onGuideAssignSelfHandled?: () => void;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -378,62 +365,22 @@ function MembersPane({
     enabled: active,
     ...queryOptions
   });
-  const [memberId, setMemberId] = useState<string | null>(null);
-  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeTargetId, setRemoveTargetId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [applicationsDrawerOpen, setApplicationsDrawerOpen] = useState(false);
-  const [assignTarget, setAssignTarget] = useState<{ id: string; nickname: string; hasPersonalPlaylist: boolean } | null>(null);
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [unassignTarget, setUnassignTarget] = useState<{ id: string; nickname: string } | null>(null);
-  const [unassignOpen, setUnassignOpen] = useState(false);
-  const [unassignError, setUnassignError] = useState("");
-  const listScroll = useRef(0);
-  const selected = query.data?.members.find(member => member.id === memberId && !member.isSelf);
-
-  useEffect(() => {
-    if (!guideAssignSelf || !query.data?.members) return;
-    const selfMember = query.data.members.find(member => member.isSelf);
-    if (selfMember && !selfMember.hasPersonalPlaylist) {
-      setAssignTarget({ id: selfMember.id, nickname: selfMember.nickname, hasPersonalPlaylist: false });
-      setAssignOpen(true);
-    }
-    onGuideAssignSelfHandled?.();
-  }, [guideAssignSelf, query.data?.members, onGuideAssignSelfHandled]);
-
-  const unassignMutation = useMutation({
-    mutationFn: () => {
-      if (!unassignTarget) throw new Error("MEMBER_NOT_FOUND");
-      return request(`/${roomId}/members/${unassignTarget.id}/personal-playlist/unassign`, personalPlaylistView);
-    },
-    retry: false,
-    onSuccess: () => {
-      setUnassignOpen(false);
-      setUnassignTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["room-members", sessionId, roomId] });
-      void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
-      if (unassignTarget) {
-        void queryClient.invalidateQueries({ queryKey: ["member-personal-playlist", sessionId, roomId, unassignTarget.id] });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["room-personal-playlist", sessionId, roomId] });
-    },
-    onError: failure => {
-      setUnassignError(errorMessage(failure));
-    }
-  });
 
   const removeMutation = useMutation({
-    mutationFn: () => {
-      if (!selected || !query.data) throw new Error("MEMBER_NOT_FOUND");
-      return request(`/${roomId}/members/${selected.id}/remove`, roomMembersView, undefined, {
+    mutationFn: (targetId: string) => {
+      if (!query.data) throw new Error("MEMBER_NOT_FOUND");
+      return request(`/${roomId}/members/${targetId}/remove`, roomMembersView, undefined, {
         idempotencyKey: v7(),
         version: query.data.version
       });
     },
     retry: false,
     onSuccess: data => {
-      setRemoveOpen(false);
-      setMemberId(null);
+      setRemoveTargetId(null);
       queryClient.setQueryData(["room-members", sessionId, roomId], data);
       void queryClient.invalidateQueries({ queryKey: ["room-members", sessionId, roomId] });
       void queryClient.invalidateQueries({ queryKey: ["room-shell", sessionId, roomId] });
@@ -446,60 +393,11 @@ function MembersPane({
       }
     }
   });
-  useLayoutEffect(() => {
-    if (active) window.scrollTo({ top: memberId ? 0 : listScroll.current, behavior: "instant" });
-    // Switching primary entries restores the workspace scroll, not the member list scroll.
-  }, [memberId]);
+
   if (query.isPending) return <p role="status">正在读取房间成员…</p>;
   if (query.isError)
     return <QueryError error={query.error} retrying={query.isFetching} retry={() => void query.refetch()} />;
-  if (selected)
-    return (
-      <section aria-label="成员详情">
-        <nav className="member-detail-context" aria-label="成员详情导航">
-          <button type="button" className="back-link text-button" onClick={() => setMemberId(null)}>
-            <ArrowLeft size={17} aria-hidden="true" />
-            返回成员列表
-          </button>
-        </nav>
-        <h1>{selected.nickname}</h1>
-        <dl className="netease-identity">
 
-          <div>
-            <dt>角色</dt>
-            <dd>{roleLabels[selected.role]}</dd>
-          </div>
-        </dl>
-        <MemberPersonalPlaylistSection
-          sessionId={sessionId}
-          roomId={roomId}
-          memberId={selected.id}
-          active={active}
-        />
-        {selected.allowedActions.includes("removeMember") && (
-          <div className="member-remove-action">
-            <DestructiveConfirmDialog
-              triggerText="移除成员"
-              title={`移除成员“${selected.nickname}”？`}
-              descriptionText={`确定要将“${selected.nickname}”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在点歌台上的点歌人标签。`}
-              badges={[
-                { label: "权限立即撤销", variant: "danger" },
-                { label: "清除点歌标签", variant: "danger" },
-                { label: `释放昵称“${selected.nickname}”`, variant: "neutral" }
-              ]}
-              confirmText="确认移除"
-              pendingText="正在移除…"
-              cancelText="取消"
-              open={removeOpen}
-              onOpenChange={open => { setRemoveOpen(open); if (open) setRemoveError(""); }}
-              onConfirm={() => removeMutation.mutate()}
-              isPending={removeMutation.isPending}
-              error={removeError}
-            />
-          </div>
-        )}
-      </section>
-    );
   const canReview = query.data.allowedActions.includes("reviewApplications");
   const hasPending = pendingCount !== null && pendingCount > 0;
 
@@ -548,7 +446,6 @@ function MembersPane({
               <span className="pending-review-banner-title">
                 有 {pendingCount} 位室友申请加入房间
               </span>
-
             </div>
           </div>
           <button
@@ -573,64 +470,43 @@ function MembersPane({
                 <span className="member-nickname-group">
                   <span className="member-nickname">{member.nickname}</span>
                   {member.isSelf && <span className="member-self-tag">（我）</span>}
+                  <span className={`status-pill role-${member.role}`}>
+                    {roleLabels[member.role]}
+                  </span>
                 </span>
               </div>
               <div className="member-card-actions">
-                <span className={`status-pill role-${member.role}`}>
-                  {roleLabels[member.role]}
-                </span>
-                {member.allowedActions.includes("assignPersonalPlaylist") && (
-                  !member.hasPersonalPlaylist ? (
-                    <button
-                      type="button"
-                      className="primary-button member-action-btn"
-                      aria-label={`为${member.nickname}分配歌单`}
-                      onClick={() => {
-                        setAssignTarget({ id: member.id, nickname: member.nickname, hasPersonalPlaylist: false });
-                        setAssignOpen(true);
-                      }}
-                    >
-                      分配歌单
-                    </button>
-                  ) : (
-                    <>
+                {member.allowedActions.includes("removeMember") && (
+                  <DestructiveConfirmDialog
+                    trigger={
                       <button
                         type="button"
-                        className="secondary-button member-action-btn"
-                        aria-label={`为${member.nickname}更换歌单`}
-                        onClick={() => {
-                          setAssignTarget({ id: member.id, nickname: member.nickname, hasPersonalPlaylist: true });
-                          setAssignOpen(true);
-                        }}
+                        className="secondary-button member-action-btn member-remove-btn"
+                        aria-label={`移除成员“${member.nickname}”`}
                       >
-                        更换歌单
+                        移除成员
                       </button>
-                      <button
-                        type="button"
-                        className="secondary-button member-action-btn unassign-btn"
-                        aria-label={`解除${member.nickname}的歌单分配`}
-                        onClick={() => {
-                          setUnassignTarget({ id: member.id, nickname: member.nickname });
-                          setUnassignOpen(true);
-                          setUnassignError("");
-                        }}
-                      >
-                        解除分配
-                      </button>
-                    </>
-                  )
+                    }
+                    title={`移除成员“${member.nickname}”？`}
+                    descriptionText={`确定要将“${member.nickname}”移出房间吗？移出后将立即撤销该成员的所有访问与操作权限，并清除其在点歌台上的点歌人标签。`}
+                    badges={[
+                      { label: "权限立即撤销", variant: "danger" },
+                      { label: "清除点歌标签", variant: "danger" },
+                      { label: `释放昵称“${member.nickname}”`, variant: "neutral" }
+                    ]}
+                    confirmText="确认移除"
+                    pendingText="正在移除…"
+                    cancelText="取消"
+                    open={removeTargetId === member.id}
+                    onOpenChange={open => {
+                      setRemoveTargetId(open ? member.id : null);
+                      if (open) setRemoveError("");
+                    }}
+                    onConfirm={() => removeMutation.mutate(member.id)}
+                    isPending={removeMutation.isPending && removeTargetId === member.id}
+                    error={removeTargetId === member.id ? removeError : ""}
+                  />
                 )}
-                {!member.isSelf && <button
-                  type="button"
-                  className="secondary-button"
-                  aria-label={`查看${member.nickname}的歌单`}
-                  onClick={() => {
-                    listScroll.current = window.scrollY;
-                    setMemberId(member.id);
-                  }}
-                >
-                  查看歌单
-                </button>}
               </div>
             </div>
           </li>
@@ -651,34 +527,6 @@ function MembersPane({
             sessionId={sessionId}
             roomId={roomId}
           />
-          <AssignFavoritePlaylistDialog
-            open={assignOpen}
-            onOpenChange={setAssignOpen}
-            sessionId={sessionId}
-            roomId={roomId}
-            targetMember={assignTarget}
-          />
-          {unassignTarget && (
-            <DestructiveConfirmDialog
-              title={`解除“${unassignTarget.nickname}”的歌单分配？`}
-              descriptionText={`确定要解除该成员绑定的个人歌单吗？解除后该成员将无法通过个人歌单点歌，但已点入公共歌单的歌曲将保持不变。`}
-              badges={[
-                { label: "恢复为未分配状态", variant: "warning" },
-                { label: "保留已点歌曲", variant: "neutral" }
-              ]}
-              confirmText="确认解除"
-              pendingText="正在解除…"
-              cancelText="取消"
-              open={unassignOpen}
-              onOpenChange={open => {
-                setUnassignOpen(open);
-                if (!open) setUnassignTarget(null);
-              }}
-              onConfirm={() => unassignMutation.mutate()}
-              isPending={unassignMutation.isPending}
-              error={unassignError}
-            />
-          )}
         </>
       )}
     </div>

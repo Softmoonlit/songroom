@@ -90,7 +90,7 @@ it("有效授权建房只建立房主成员，重复名称可建、查询隔离�
   }
   expect(await (await request(config, `/api/rooms/${summary.id}`, owner)).json()).toMatchObject({ room: { id: summary.id, role: "owner" }, version: 1 });
   const members = await request(config, `/api/rooms/${summary.id}/members`, owner);
-  expect(await members.json()).toEqual({ version: 1, members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname", "assignPersonalPlaylist"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"], disabledReasons: {} });
+  expect(await members.json()).toEqual({ version: 1, members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"], disabledReasons: {} });
   const body = await (await request(config, `/api/rooms/${summary.id}/members`, owner)).text();
   expect(body).not.toMatch(/email|ownerUserId|accountId|credentials|invitation|code/);
   await app.close();
@@ -244,6 +244,52 @@ it("操作键二十四小时到期及未来键拒绝，已有房间不会被重�
   expect(expired.status).toBe(409);
   expect(await expired.json()).toMatchObject({ error: { code: "IDEMPOTENCY_KEY_EXPIRED" } });
   expect((await (await request(config, "/api/rooms", cookie)).json()).rooms).toHaveLength(1);
+});
+
+it("房间成员列表视角权限与个人歌单隐私收敛：室友无卡片操作，房主仅对室友有移除权限，歌单下钻接口返回 404", async () => {
+  const { config } = await fixture();
+  const ownerCookie = await signUp(config, "owner-privacy@example.com");
+  const authId = await bind(config, ownerCookie);
+  const created = await (await request(config, "/api/rooms", ownerCookie, command(authId))).json();
+  const roomId = created.id;
+
+  const roommateCookie = await signUp(config, "roommate-privacy@example.com");
+  // 获取邀请码并申请加入
+  const inviteRes = await request(config, `/api/rooms/${roomId}/invite`, ownerCookie);
+  const invite = await inviteRes.json();
+  const appRes = await request(config, "/api/join-applications", roommateCookie, {
+    code: invite.code,
+    nickname: "室友小红",
+    idempotencyKey: v7()
+  });
+  const appBody = await appRes.json();
+  const appId = appBody.id;
+  await request(config, `/api/rooms/${roomId}/applications/${appId}/decision`, ownerCookie, {
+    idempotencyKey: v7(),
+    decision: "approve"
+  });
+
+  // 房主视角查看成员列表
+  const ownerViewRes = await request(config, `/api/rooms/${roomId}/members`, ownerCookie);
+  expect(ownerViewRes.status).toBe(200);
+  const ownerView = await ownerViewRes.json();
+  const ownerRow = ownerView.members.find((m: { isSelf: boolean }) => m.isSelf);
+  const rmRow = ownerView.members.find((m: { isSelf: boolean }) => !m.isSelf);
+  expect(ownerRow.allowedActions).toEqual(["renameNickname"]);
+  expect(rmRow.allowedActions).toEqual(["removeMember"]);
+
+  // 室友视角查看成员列表
+  const rmViewRes = await request(config, `/api/rooms/${roomId}/members`, roommateCookie);
+  expect(rmViewRes.status).toBe(200);
+  const rmView = await rmViewRes.json();
+  const selfRow = rmView.members.find((m: { isSelf: boolean }) => m.isSelf);
+  const otherRow = rmView.members.find((m: { isSelf: boolean }) => !m.isSelf);
+  expect(selfRow.allowedActions).toEqual(["renameNickname"]);
+  expect(otherRow.allowedActions).toEqual([]);
+
+  // 下钻查看他人歌单接口已下线，返回 404
+  const drillDownRes = await request(config, `/api/rooms/${roomId}/members/${rmRow.id}/personal-playlist`, ownerCookie);
+  expect(drillDownRes.status).toBe(404);
 });
 function parseKeyTime(key: string): number {
   return Number.parseInt(key.replaceAll("-", "").slice(0, 12), 16);

@@ -5411,12 +5411,12 @@ h1 {
   min-height: 32px;
 }
 
-.unassign-btn {
+.member-remove-btn {
   color: var(--error-text);
   border-color: var(--error-border);
 }
 
-.unassign-btn:hover:not(:disabled) {
+.member-remove-btn:hover:not(:disabled) {
   background: var(--error-bg);
   border-color: var(--error);
 }
