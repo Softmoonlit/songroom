@@ -90,7 +90,7 @@ it("有效授权建房只建立房主成员，重复名称可建、查询隔离�
   }
   expect(await (await request(config, `/api/rooms/${summary.id}`, owner)).json()).toMatchObject({ room: { id: summary.id, role: "owner" }, version: 1 });
   const members = await request(config, `/api/rooms/${summary.id}/members`, owner);
-  expect(await members.json()).toEqual({ version: 1, members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"], disabledReasons: {} });
+  expect(await members.json()).toEqual({ version: 1, members: [{ id: expect.any(String), nickname: "房主", role: "owner", isSelf: true, hasPersonalPlaylist: false, authStatus: "active", canSelect: false, disabledReason: "NO_PLAYLIST", allowedActions: ["renameNickname"], disabledReasons: {} }], allowedActions: ["renameRoom", "renameNickname", "reviewApplications", "readInvite", "deleteRoom"], disabledReasons: {} });
   const body = await (await request(config, `/api/rooms/${summary.id}/members`, owner)).text();
   expect(body).not.toMatch(/email|ownerUserId|accountId|credentials|invitation|code/);
   await app.close();
@@ -290,6 +290,69 @@ it("房间成员列表视角权限与个人歌单隐私收敛：室友无卡片�
   // 下钻查看他人歌单接口已下线，返回 404
   const drillDownRes = await request(config, `/api/rooms/${roomId}/members/${rmRow.id}/personal-playlist`, ownerCookie);
   expect(drillDownRes.status).toBe(404);
+});
+
+it("成员列表正确展示 hasPersonalPlaylist、authStatus、canSelect 及 disabledReason 状态", async () => {
+  const { config, adapter } = await fixture();
+  const ownerCookie = await signUp(config, "owner-select@example.com");
+  const authId = await bind(config, ownerCookie);
+  const roomRes = await request(config, "/api/rooms", ownerCookie, command(authId));
+  const roomId = (await roomRes.json()).id;
+
+  const rmCookie = await signUp(config, "rm-select@example.com");
+  const invite = await (await request(config, `/api/rooms/${roomId}/invite`, ownerCookie)).json();
+  const appRes = await request(config, "/api/join-applications", rmCookie, {
+    code: invite.code,
+    nickname: "待测室友",
+    idempotencyKey: v7()
+  });
+  const appId = (await appRes.json()).id;
+  await request(config, `/api/rooms/${roomId}/applications/${appId}/decision`, ownerCookie, {
+    idempotencyKey: v7(),
+    decision: "approve"
+  });
+
+  // 1. 此时室友尚未授权网易云，未绑定个人歌单
+  let membersRes = await request(config, `/api/rooms/${roomId}/members`, ownerCookie);
+  let members = (await membersRes.json()).members;
+  let rmMember = members.find((m: any) => !m.isSelf);
+  expect(rmMember.authStatus).toBe("unbound");
+  expect(rmMember.hasPersonalPlaylist).toBe(false);
+  expect(rmMember.canSelect).toBe(false);
+  expect(rmMember.disabledReason).toBe("NO_PLAYLIST");
+
+  // 2. 室友完成网易云授权，但仍未绑定个人歌单
+  await bind(config, rmCookie);
+  membersRes = await request(config, `/api/rooms/${roomId}/members`, ownerCookie);
+  members = (await membersRes.json()).members;
+  rmMember = members.find((m: any) => !m.isSelf);
+  expect(rmMember.authStatus).toBe("active");
+  expect(rmMember.hasPersonalPlaylist).toBe(false);
+  expect(rmMember.canSelect).toBe(false);
+  expect(rmMember.disabledReason).toBe("NO_PLAYLIST");
+
+  // 3. 室友绑定个人歌单
+  adapter.playlistDetail = input => ({
+    ok: true,
+    data: {
+      playlist: { id: input.playlistId, name: "室友歌单", creatorId: "test", subscribed: true, status: 0 },
+      songIds: [],
+      songs: []
+    }
+  });
+  const bindRes = await request(config, `/api/rooms/${roomId}/personal-playlist/bind`, rmCookie, {
+    idempotencyKey: v7(),
+    playlistId: "rm-pl-123"
+  });
+  expect(bindRes.status).toBe(200);
+
+  membersRes = await request(config, `/api/rooms/${roomId}/members`, ownerCookie);
+  members = (await membersRes.json()).members;
+  rmMember = members.find((m: any) => !m.isSelf);
+  expect(rmMember.authStatus).toBe("active");
+  expect(rmMember.hasPersonalPlaylist).toBe(true);
+  expect(rmMember.canSelect).toBe(true);
+  expect(rmMember.disabledReason).toBeNull();
 });
 function parseKeyTime(key: string): number {
   return Number.parseInt(key.replaceAll("-", "").slice(0, 12), 16);

@@ -4785,10 +4785,19 @@ h1 {
 .random-member-reason {
   margin-left: auto;
   font-size: var(--font-xs);
-  color: var(--text-muted);
-  background: var(--bg-elevated);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
+}
+
+.random-member-reason.disabled-reason-no-playlist {
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.random-member-reason.disabled-reason-auth-invalid {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
 }
 
 .random-member-loading,

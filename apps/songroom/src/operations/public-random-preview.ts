@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
 import {
+  neteaseAuthorization,
   personalPlaylistBinding,
   playlistSnapshot,
   publicPlaylistBinding,
@@ -111,9 +112,24 @@ export class PublicRandomPreview {
       .where(eq(personalPlaylistBinding.roomId, roomId)).all();
     const bindingMap = new Map(bindings.map(b => [b.memberId, b]));
 
+    const userIds = requestedMemberIds.map(id => memberMap.get(id)!.userId);
+    const auths = userIds.length > 0
+      ? this.database.select().from(neteaseAuthorization).where(inArray(neteaseAuthorization.userId, userIds)).all()
+      : [];
+    const authMap = new Map(auths.map(a => [a.userId, a]));
+
     for (const memberId of requestedMemberIds) {
-      if (!bindingMap.has(memberId)) {
-        throw new BusinessError(400, "MEMBER_PLAYLIST_NOT_CONFIGURED", "所选成员尚未配置个人歌单");
+      const binding = bindingMap.get(memberId);
+      const member = memberMap.get(memberId)!;
+      if (!binding) {
+        throw new BusinessError(400, "MEMBER_PLAYLIST_NOT_CONFIGURED", `成员 ${member.nickname} 尚未配置个人歌单`);
+      }
+      const auth = authMap.get(member.userId);
+      if (!auth || auth.status !== "active" || !auth.credentials) {
+        throw new BusinessError(400, "MEMBER_AUTH_INVALID", `成员 ${member.nickname} 网易云授权已失效，无法参与随机点歌`);
+      }
+      if (auth.accountId !== binding.accountId) {
+        throw new BusinessError(400, "MEMBER_AUTH_INVALID", `成员 ${member.nickname} 网易云账号已变更，无法参与随机点歌`);
       }
     }
 

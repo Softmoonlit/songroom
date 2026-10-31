@@ -139,6 +139,17 @@ function createTestContext(random?: () => number): TestContext {
     credentials: vault.encrypt("MUSIC_U=owner", { authorizationId: authId, accountId: "cloud-owner", generation: 1 })
   }).run();
 
+  const memberAuthId = v7();
+  database.insert(neteaseAuthorization).values({
+    id: memberAuthId,
+    userId: memberUserId,
+    accountId: "cloud-roommate",
+    generation: 1,
+    nickname: "网易云室友",
+    status: "active",
+    credentials: vault.encrypt("MUSIC_U=roommate", { authorizationId: memberAuthId, accountId: "cloud-roommate", generation: 1 })
+  }).run();
+
   const adapter = new MockAdapter();
   const eventStream = new EventStreamService();
   const scheduler = new UpstreamScheduler(database, eventStream, now);
@@ -237,7 +248,7 @@ describe("PublicRandomPreview", () => {
       id: v7(),
       roomId: ctx.roomId,
       memberId: ctx.roommateMemberId,
-      accountId: "cloud-owner",
+      accountId: "cloud-roommate",
       playlistId: roommatePlId,
       name: "室友个人歌单",
       generation: 1,
@@ -334,7 +345,7 @@ describe("PublicRandomPreview", () => {
       id: v7(),
       roomId: ctx.roomId,
       memberId: ctx.roommateMemberId,
-      accountId: "cloud-owner",
+      accountId: "cloud-roommate",
       playlistId: roommatePlId,
       name: "室友个人歌单",
       generation: 1,
@@ -694,7 +705,7 @@ describe("PublicRandomPreview", () => {
       id: v7(),
       roomId: ctx.roomId,
       memberId: ctx.roommateMemberId,
-      accountId: "cloud-owner",
+      accountId: "cloud-roommate",
       playlistId: roommatePlId,
       name: "室友个人歌单",
       generation: 1,
@@ -840,7 +851,7 @@ describe("PublicRandomPreview", () => {
       id: v7(),
       roomId: ctx.roomId,
       memberId: ctx.roommateMemberId,
-      accountId: "cloud-owner",
+      accountId: "cloud-roommate",
       playlistId: roommatePlId,
       name: "室友歌单(损坏)",
       generation: 1,
@@ -976,7 +987,7 @@ describe("PublicRandomPreview", () => {
       id: roommateBindingId,
       roomId: ctx.roomId,
       memberId: ctx.roommateMemberId,
-      accountId: "cloud-owner",
+      accountId: "cloud-roommate",
       playlistId: roommatePlId,
       name: "室友个人歌单",
       generation: 1,
@@ -1093,7 +1104,7 @@ describe("PublicRandomPreview", () => {
       id: roommateBindingId,
       roomId: ctx.roomId,
       memberId: ctx.roommateMemberId,
-      accountId: "cloud-owner",
+      accountId: "cloud-roommate",
       playlistId: roommatePlId,
       name: "室友歌单",
       generation: 1,
@@ -1174,7 +1185,7 @@ describe("PublicRandomPreview", () => {
         id: v7(),
         roomId: ctx.roomId,
         memberId: ctx.roommateMemberId,
-        accountId: "cloud-owner",
+        accountId: "cloud-roommate",
         playlistId: roommatePlaylistId,
         name: "室友歌单",
         generation: 1,
@@ -1300,5 +1311,59 @@ describe("PublicRandomPreview", () => {
     expect(res3.actualCount).toBe(2);
     // 重新发起了公共与个人歌单的刷新
     expect(ctx.adapter.inputs.length - countBeforeExpire).toBe(2);
+  });
+
+  it("随机选歌预览拒绝未配置个人歌单或授权失效的成员", async () => {
+    const ctx = createTestContext();
+    const publicPlaylistId = "pub-pl-invalid-members";
+
+    ctx.database.insert(publicPlaylistBinding).values({
+      roomId: ctx.roomId,
+      accountId: "cloud-owner",
+      playlistId: publicPlaylistId,
+      name: "公共歌单",
+      generation: 1,
+      creationOperationId: v7()
+    }).run();
+
+    // 1. 室友未绑定个人歌单，尝试抽选报错 MEMBER_PLAYLIST_NOT_CONFIGURED (400)
+    await expect(
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [ctx.roommateMemberId],
+        count: 5
+      })
+    ).rejects.toThrowError(expect.objectContaining({
+      status: 400,
+      code: "MEMBER_PLAYLIST_NOT_CONFIGURED"
+    }));
+
+    // 绑定个人歌单
+    ctx.database.insert(personalPlaylistBinding).values({
+      id: v7(),
+      roomId: ctx.roomId,
+      memberId: ctx.roommateMemberId,
+      accountId: "cloud-roommate",
+      playlistId: "roommate-pl",
+      name: "室友歌单",
+      generation: 1,
+      createdAt: ctx.now(),
+      updatedAt: ctx.now()
+    }).run();
+
+    // 2. 将室友网易云授权置为 waitingAuthorization，尝试抽选报错 MEMBER_AUTH_INVALID (400)
+    ctx.database.update(neteaseAuthorization)
+      .set({ status: "waitingAuthorization" })
+      .where(eq(neteaseAuthorization.userId, ctx.memberUserId))
+      .run();
+
+    await expect(
+      ctx.randomPreview.generate(ctx.ownerUserId, ctx.roomId, {
+        memberIds: [ctx.roommateMemberId],
+        count: 5
+      })
+    ).rejects.toThrowError(expect.objectContaining({
+      status: 400,
+      code: "MEMBER_AUTH_INVALID"
+    }));
   });
 });

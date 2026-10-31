@@ -121,7 +121,7 @@ export function RandomReplacementDialog({
     : { title: "正在提交", description: "正在排队处理…" };
 
   const members = membersQuery.data?.members ?? [];
-  const eligibleMembers = members.filter(m => m.hasPersonalPlaylist);
+  const eligibleMembers = members.filter(m => m.canSelect);
   const eligibleMemberIds = eligibleMembers.map(m => m.id);
 
   const isAllEligibleSelected =
@@ -372,7 +372,7 @@ export function RandomReplacementDialog({
                       <p className="random-member-empty">暂无成员</p>
                     ) : (
                       members.map(member => {
-                        const isEligible = member.hasPersonalPlaylist;
+                        const isEligible = member.canSelect;
                         const isChecked = selectedMemberIds.includes(member.id);
                         return (
                           <label
@@ -389,7 +389,15 @@ export function RandomReplacementDialog({
                             />
                             <span className="random-member-nickname">{member.nickname}</span>
                             {!isEligible && (
-                              <span className="random-member-reason">未分配歌单</span>
+                              <span
+                                className={`random-member-reason ${
+                                  member.disabledReason === "AUTH_INVALID"
+                                    ? "disabled-reason-auth-invalid"
+                                    : "disabled-reason-no-playlist"
+                                }`}
+                              >
+                                {member.disabledReason === "AUTH_INVALID" ? "授权失效" : "未绑定歌单"}
+                              </span>
                             )}
                           </label>
                         );

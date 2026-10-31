@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, asc, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { v7 } from "uuid";
 import type { AppDatabase } from "../db/database.js";
 import { room, roomInvite, roomMembership, joinApplication, neteaseAuthorization, requesterTag, retiredRoomInvite, publicPlaylistCleanup, personalPlaylistBinding, operation } from "../db/schema.js";
@@ -108,14 +108,26 @@ export class Rooms {
 
   readMembers(userId: string, roomId: string) {
     const shell = this.readShell(userId, roomId);
-    const personalBindings = this.database.select({ memberId: personalPlaylistBinding.memberId })
-      .from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).all();
-    const personalMemberIds = new Set(personalBindings.map(b => b.memberId));
+    const personalBindings = this.database.select({
+      memberId: personalPlaylistBinding.memberId,
+      accountId: personalPlaylistBinding.accountId
+    }).from(personalPlaylistBinding).where(eq(personalPlaylistBinding.roomId, roomId)).all();
+    const personalBindingMap = new Map(personalBindings.map(b => [b.memberId, b.accountId]));
 
-    const members = this.database.select({ id: roomMembership.id, nickname: roomMembership.nickname,
+    const members = this.database.select({
+      id: roomMembership.id,
+      userId: roomMembership.userId,
+      nickname: roomMembership.nickname,
       role: sql<"owner" | "roommate">`CASE WHEN ${room.ownerUserId} = ${roomMembership.userId} THEN 'owner' ELSE 'roommate' END`,
       isSelf: sql<boolean>`(${roomMembership.userId} = ${userId})`.mapWith(Boolean)
     }).from(roomMembership).innerJoin(room, eq(room.id, roomMembership.roomId)).where(eq(roomMembership.roomId, roomId)).orderBy(asc(roomMembership.id)).all();
+
+    const memberUserIds = members.map(m => m.userId);
+    const auths = memberUserIds.length > 0
+      ? this.database.select().from(neteaseAuthorization).where(inArray(neteaseAuthorization.userId, memberUserIds)).all()
+      : [];
+    const authMap = new Map(auths.map(a => [a.userId, a]));
+
     return {
       version: shell.version,
       members: members.map((member): RoomMember => {
@@ -129,9 +141,39 @@ export class Rooms {
         if (shell.room.role === "owner" && member.role === "roommate") {
           allowedActions.push("removeMember");
         }
+
+        const boundAccountId = personalBindingMap.get(member.id);
+        const hasPersonalPlaylist = Boolean(boundAccountId);
+        const auth = authMap.get(member.userId);
+        const authStatus: RoomMember["authStatus"] = !auth || !auth.credentials
+          ? "unbound"
+          : auth.status === "active"
+            ? "active"
+            : "waitingAuthorization";
+        const isAuthValid = authStatus === "active" && auth && boundAccountId && auth.accountId === boundAccountId;
+
+        let canSelect = false;
+        let disabledReason: RoomMember["disabledReason"] = null;
+        if (!hasPersonalPlaylist) {
+          canSelect = false;
+          disabledReason = "NO_PLAYLIST";
+        } else if (!isAuthValid) {
+          canSelect = false;
+          disabledReason = "AUTH_INVALID";
+        } else {
+          canSelect = true;
+          disabledReason = null;
+        }
+
         return {
-          ...member,
-          hasPersonalPlaylist: personalMemberIds.has(member.id),
+          id: member.id,
+          nickname: member.nickname,
+          role: member.role,
+          isSelf: member.isSelf,
+          hasPersonalPlaylist,
+          authStatus,
+          canSelect,
+          disabledReason,
           allowedActions,
           disabledReasons
         };

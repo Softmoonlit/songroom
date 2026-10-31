@@ -31,12 +31,21 @@ export const roomMemberAction = z.enum(["renameNickname", "removeMember"]);
 export const roomMemberDisabledReasons = z.strictObject({
   renameNickname: z.literal("SELF_ONLY").optional()
 });
+export const roomMemberAuthStatus = z.enum(["active", "waitingAuthorization", "unbound"]);
+export type RoomMemberAuthStatus = z.infer<typeof roomMemberAuthStatus>;
+
+export const roomMemberSelectionDisabledReason = z.enum(["NO_PLAYLIST", "AUTH_INVALID"]).nullable();
+export type RoomMemberSelectionDisabledReason = z.infer<typeof roomMemberSelectionDisabledReason>;
+
 export const roomMember = z.object({
   id: uuidv7,
   nickname: roomNickname,
   role: roomRole,
   isSelf: z.boolean(),
   hasPersonalPlaylist: z.boolean(),
+  authStatus: roomMemberAuthStatus,
+  canSelect: z.boolean(),
+  disabledReason: roomMemberSelectionDisabledReason,
   allowedActions: z.array(roomMemberAction),
   disabledReasons: roomMemberDisabledReasons
 });
