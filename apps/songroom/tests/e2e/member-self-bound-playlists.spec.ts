@@ -263,6 +263,20 @@ test.describe("ADR 0006: 成员自主绑定个人歌单", () => {
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "更换个人歌单" })).toBeVisible();
+
+    // 验证关闭按钮为 32px 方形
+    const closeBtn = dialog.getByRole("button", { name: "关闭" });
+    await expect(closeBtn).toBeVisible();
+    const closeBox = await closeBtn.boundingBox();
+    expect(closeBox).not.toBeNull();
+    expect(closeBox!.width).toBeCloseTo(32, 1);
+    expect(closeBox!.height).toBeCloseTo(32, 1);
+
+    // 验证当前绑定的歌单展示「当前绑定」标签且默认选中
+    await expect(dialog.getByText("当前绑定")).toBeVisible();
+    const currentCard = dialog.getByRole("radio", { name: /周杰伦精选集/ });
+    await expect(currentCard).toHaveAttribute("aria-checked", "true");
+
     await dialog.getByRole("button", { name: "取消" }).click();
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
   });

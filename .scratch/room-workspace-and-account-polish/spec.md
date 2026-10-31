@@ -1,6 +1,6 @@
 # 房间工作区与账号体验细节打磨规范
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
