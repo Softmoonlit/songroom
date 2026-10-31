@@ -1,6 +1,6 @@
 # 02 - 修复我的歌单同步接口 POST 调用、补齐反馈 Toast 并统一文案
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Blocked by:** none
 
 ## What it delivers
@@ -9,14 +9,20 @@
 
 ## Acceptance criteria
 
-- [ ] `PersonalPlaylistPane` 中的 `refreshMutation` 底层调用显式传递空对象 `{}`，确保向后端发送标准的 `POST /api/rooms/:roomId/personal-playlist/refresh`
-- [ ] 同步过程中按钮处于 disabled 状态，图标持续旋转，文案显示「正在同步…」
-- [ ] 同步成功后，歌曲列表更新，且屏幕右下角弹出 Toast 成功提示「歌单已同步」
-- [ ] 同步失败时（如网络超时或凭据失效），弹出 Toast 错误提示具体原因，不出现静默失败
-- [ ] 操作按钮名称与 `aria-label` 统一为「同步歌单」，与点歌台公共歌单心智和文案保持完全一致
+- [x] `PersonalPlaylistPane` 中的 `refreshMutation` 底层调用显式传递空对象 `{}`，确保向后端发送标准的 `POST /api/rooms/:roomId/personal-playlist/refresh`
+- [x] 同步过程中按钮处于 disabled 状态，图标持续旋转，文案显示「正在同步…」
+- [x] 同步成功后，歌曲列表更新，且屏幕右下角弹出 Toast 成功提示「歌单已同步」
+- [x] 同步失败时（如网络超时或凭据失效），弹出 Toast 错误提示具体原因，不出现静默失败
+- [x] 操作按钮名称与 `aria-label` 统一为「同步歌单」，与点歌台公共歌单心智和文案保持完全一致
 
 ## Comments
 
-### Notes
-- 核心修改位于 `apps/songroom/src/client/PersonalPlaylistPane.tsx`
-- 确保 `request` 调用携带正确的方法/请求体
+### 实现与验收记录
+1. **POST 请求与错误处理修复**：
+   - 在 `PersonalPlaylistPane.tsx` 的 `refreshMutation.mutationFn` 中显式传递请求体 `{}`，向后端正确发起 `POST /api/rooms/:roomId/personal-playlist/refresh`；
+   - 增加 `onError` 捕获异常并通过 Toast 提示具体错误原因，杜绝静默失败；
+   - 成功后触发 `setToast({ id: uuidv7(), message: "歌单已同步", type: "success" })`；
+2. **文案心智统一**：
+   - 按钮显示文案、悬浮 `title` 以及 `aria-label` 统一为「同步歌单」（Pending 状态为「正在同步…」）；
+3. **测试验证**：
+   - `tests/e2e/member-self-bound-playlists.spec.ts` 补充了点击「同步歌单」后验证 Toast「歌单已同步」的断言，7 项测试全部通过。

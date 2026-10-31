@@ -309,9 +309,15 @@ export function PersonalPlaylistPane({
   }, [operationQuery.data, queryClient, sessionId, roomId]);
 
   const refreshMutation = useMutation({
-    mutationFn: () => request(`/${roomId}/personal-playlist/refresh`, personalPlaylistView),
+    mutationFn: () => request(`/${roomId}/personal-playlist/refresh`, personalPlaylistView, undefined, {}),
     onSuccess: data => {
       queryClient.setQueryData(["room-personal-playlist", sessionId, roomId], data);
+      if (!data.lastRefreshError) {
+        setToast({ id: uuidv7(), message: "歌单已同步", type: "success" });
+      }
+    },
+    onError: failure => {
+      setToast({ id: uuidv7(), message: errorMessage(failure), type: "error" });
     }
   });
 
@@ -479,12 +485,12 @@ export function PersonalPlaylistPane({
               type="button"
               className="secondary-button sync-playlist-button"
               title="同步歌单最新歌曲"
-              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "手动刷新"}
+              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
               disabled={refreshMutation.isPending}
               onClick={() => refreshMutation.mutate()}
             >
               <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
-              <span className="sync-btn-text">{refreshMutation.isPending ? "正在同步…" : "手动刷新"}</span>
+              <span className="sync-btn-text">{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
             </button>
           )}
           <button

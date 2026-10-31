@@ -233,7 +233,7 @@ test.describe("ADR 0006: 成员自主绑定个人歌单", () => {
     await expect(page.getByText("稻香")).toBeVisible();
   });
 
-  test("已绑定歌单展示歌曲、手动刷新与「更换歌单」按钮，可更换绑定", async ({ page }) => {
+  test("已绑定歌单展示歌曲、同步歌单与「更换歌单」按钮，可更换绑定", async ({ page }) => {
     await setupBaseRoom(page, true);
     await page.route(personalPlaylistEndpoint, route => route.fulfill({ json: boundPersonalView }));
 
@@ -250,9 +250,10 @@ test.describe("ADR 0006: 成员自主绑定个人歌单", () => {
     await expect(page.getByText("稻香")).toBeVisible();
     await expect(page.getByText("夜曲")).toBeVisible();
 
-    // 手动刷新
-    await page.getByRole("button", { name: "手动刷新" }).click();
+    // 同步歌单
+    await page.getByRole("button", { name: "同步歌单" }).click();
     await expect.poll(() => refreshCalled).toBe(true);
+    await expect(page.getByText("歌单已同步")).toBeVisible();
 
     // 更换歌单
     const changeBtn = page.getByRole("button", { name: "更换歌单" });
