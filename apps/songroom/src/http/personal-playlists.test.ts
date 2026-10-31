@@ -129,67 +129,24 @@ describe("personal-playlist HTTP routes", () => {
     }
   });
 
-  it("自建专用歌单与单首删除接口已下线，请求返回 404", async () => {
-    const { app, owner, roomId } = await fixture();
-    const base = `/api/rooms/${roomId}/personal-playlist`;
-    expect((await request(app, `${base}/create`, owner.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
-    expect((await request(app, `${base}/songs/remove`, owner.cookie, { idempotencyKey: v7(), songId: "song-1" })).statusCode).toBe(404);
+  it("旧代分配、解除分配与他人歌单查看接口已下线，请求返回 404", async () => {
+    const { app, owner, roomId, ownerMemberId, roommateMemberId } = await fixture();
+    const base = `/api/rooms/${roomId}`;
+    expect((await request(app, `${base}/personal-playlist/create`, owner.cookie, { idempotencyKey: v7() })).statusCode).toBe(404);
+    expect((await request(app, `${base}/personal-playlist/songs/remove`, owner.cookie, { idempotencyKey: v7(), songId: "song-1" })).statusCode).toBe(404);
+    expect((await request(app, `${base}/members/${ownerMemberId}/personal-playlist`, owner.cookie)).statusCode).toBe(404);
+    expect((await request(app, `${base}/members/${roommateMemberId}/personal-playlist/assign`, owner.cookie, { playlistId: "pl-fav" })).statusCode).toBe(404);
+    expect((await request(app, `${base}/members/${roommateMemberId}/personal-playlist/unassign`, owner.cookie, {})).statusCode).toBe(404);
   });
 
-  it("室友可在成员详情中只读查看房主个人歌单，不暴露维护权限", async () => {
-    const { app, owner, member, outsider, roomId, ownerMemberId } = await fixture();
-    const { personalPlaylistBinding, playlistSnapshot, playlistTrack } = await import("../db/schema.js");
-    app.database.insert(personalPlaylistBinding).values({
-      id: v7(),
-      roomId,
-      memberId: ownerMemberId,
-      accountId: "cloud-owner",
-      playlistId: "pl-fav",
-      name: "摇滚精选",
-      generation: 1,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }).run();
-    app.database.insert(playlistSnapshot).values({
-      accountId: "cloud-owner",
-      playlistId: "pl-fav",
-      snapshotVersion: 1,
-      lastReadStartedAt: Date.now(),
-      syncedAt: Date.now(),
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }).run();
-    app.database.insert(playlistTrack).values({
-      accountId: "cloud-owner",
-      playlistId: "pl-fav",
-      position: 0,
-      songId: "track-1",
-      name: "Song 1",
-      artists: JSON.stringify(["Artist"]),
-      album: "Album"
-    }).run();
-
-    const memberViewUrl = `/api/rooms/${roomId}/members/${ownerMemberId}/personal-playlist`;
-
-    // 局外人
-    expect((await request(app, memberViewUrl, outsider.cookie)).statusCode).toBe(404);
-
-    // 室友只读查看房主
-    const memberRes = await request(app, memberViewUrl, member.cookie);
-    expect(memberRes.statusCode).toBe(200);
-    const memberView = personalPlaylistView.parse(memberRes.json());
-    expect(memberView.playlist).toEqual({ id: "pl-fav", name: "摇滚精选" });
-    expect(memberView.snapshot?.trackCount).toBe(1);
-    expect(memberView.allowedActions).toEqual([]);
-  });
-
-  it("房主可获取含我喜欢的自建与收藏歌单候选，非房主禁止访问", async () => {
+  it("已授权网易云成员可获取自身歌单候选，未授权成员返回 409", async () => {
     const { app, owner, member, outsider, roomId } = await fixture();
     const url = `/api/rooms/${roomId}/personal-playlist/candidates`;
 
     expect((await request(app, url)).statusCode).toBe(401);
     expect((await request(app, url, outsider.cookie)).statusCode).toBe(404);
-    expect((await request(app, url, member.cookie)).statusCode).toBe(403);
+    // member 未绑定网易云
+    expect((await request(app, url, member.cookie)).statusCode).toBe(409);
 
     const ownerRes = await request(app, url, owner.cookie);
     expect(ownerRes.statusCode).toBe(200);
@@ -205,18 +162,18 @@ describe("personal-playlist HTTP routes", () => {
     { name: "我喜欢的音乐", creatorId: "test", subscribed: false, privacy: 0, specialType: 5 },
     { name: "自建私密", creatorId: "test", subscribed: false, privacy: 10 },
     { name: "收藏", creatorId: "other", subscribed: true, privacy: 0 }
-  ])("HTTP 分配与刷新有效的 $name 歌单", async metadata => {
-    const { app, adapter, owner, member, roomId, roommateMemberId } = await fixture();
+  ])("HTTP 自主绑定与刷新有效的 $name 歌单", async metadata => {
+    const { app, adapter, owner, roomId } = await fixture();
     let songId = "before";
     adapter.playlistDetail = input => ({ ok: true, data: {
       playlist: { id: input.playlistId, ...metadata, status: 0 },
       songIds: [songId], songs: [{ id: songId, name: songId, artists: [], album: "" }]
     } });
-    const assigned = await request(app, `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/assign`, owner.cookie, { playlistId: "pl-source" });
-    expect(assigned.statusCode).toBe(200);
-    expect(personalPlaylistView.parse(assigned.json()).snapshot?.tracks[0].songId).toBe("before");
+    const bound = await request(app, `/api/rooms/${roomId}/personal-playlist/bind`, owner.cookie, { playlistId: "pl-source" });
+    expect(bound.statusCode).toBe(200);
+    expect(personalPlaylistView.parse(bound.json()).snapshot?.tracks[0].songId).toBe("before");
     songId = "after";
-    const refreshed = await request(app, `/api/rooms/${roomId}/personal-playlist/refresh`, member.cookie, {});
+    const refreshed = await request(app, `/api/rooms/${roomId}/personal-playlist/refresh`, owner.cookie, {});
     expect(refreshed.statusCode).toBe(200);
     expect(personalPlaylistView.parse(refreshed.json())).toMatchObject({
       playlist: { id: "pl-source", name: metadata.name }, lastRefreshError: null, disabledReason: null,
@@ -227,12 +184,12 @@ describe("personal-playlist HTTP routes", () => {
   it.each([
     { name: "未收藏他人", creatorId: "other", subscribed: false, status: 0 },
     { name: "失效自建", creatorId: "test", subscribed: false, status: -1 }
-  ])("HTTP 拒绝 $name 歌单分配", async metadata => {
-    const { app, adapter, owner, roomId, roommateMemberId } = await fixture();
+  ])("HTTP 拒绝 $name 歌单绑定", async metadata => {
+    const { app, adapter, owner, roomId } = await fixture();
     adapter.playlistDetail = input => ({ ok: true, data: {
       playlist: { id: input.playlistId, ...metadata }, songIds: [], songs: []
     } });
-    const response = await request(app, `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/assign`, owner.cookie, { playlistId: "pl-invalid" });
+    const response = await request(app, `/api/rooms/${roomId}/personal-playlist/bind`, owner.cookie, { playlistId: "pl-invalid" });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: { code: "TARGET_PERMISSION" } });
   });
@@ -255,47 +212,43 @@ describe("personal-playlist HTTP routes", () => {
     expect(response.json().candidates.map((candidate: { id: string }) => candidate.id)).toEqual(["ordinary-own"]);
   });
 
-  it.each(["本房间", "其他房间"])("HTTP 分配%s公共目标返回 409 并保留原个人歌单", async scope => {
-    const { app, owner, member, roomId, roommateMemberId } = await fixture();
-    const assignUrl = `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/assign`;
-    const original = await request(app, assignUrl, owner.cookie, { playlistId: "pl-sub-rock" });
+  it.each(["本房间", "其他房间"])("HTTP 绑定%s公共目标返回 409 并保留原个人歌单", async scope => {
+    const { app, owner, roomId } = await fixture();
+    const bindUrl = `/api/rooms/${roomId}/personal-playlist/bind`;
+    const original = await request(app, bindUrl, owner.cookie, { playlistId: "pl-sub-rock" });
     expect(original.statusCode).toBe(200);
     const targetRoomId = scope === "本房间" ? roomId : v7();
     if (targetRoomId !== roomId) app.database.insert(room).values({ id: targetRoomId, name: "另一房间", ownerUserId: owner.userId }).run();
     app.database.insert(publicPlaylistBinding).values({
       roomId: targetRoomId, accountId: "test", playlistId: "pl-my-fav", name: "公共目标", creationOperationId: v7()
     }).run();
-    const response = await request(app, assignUrl, owner.cookie, { playlistId: "pl-my-fav" });
+    const response = await request(app, bindUrl, owner.cookie, { playlistId: "pl-my-fav" });
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: { code: "PLAYLIST_TARGET_CONFLICT" } });
-    const current = await request(app, `/api/rooms/${roomId}/personal-playlist`, member.cookie);
+    const current = await request(app, `/api/rooms/${roomId}/personal-playlist`, owner.cookie);
     expect(current.statusCode).toBe(200);
     expect(personalPlaylistView.parse(current.json()).playlist).toEqual(personalPlaylistView.parse(original.json()).playlist);
     expect(personalPlaylistView.parse(current.json()).snapshot).toEqual(personalPlaylistView.parse(original.json()).snapshot);
   });
 
-  it("房主可分配与解除成员个人歌单，非房主禁止操作", async () => {
-    const { app, owner, member, roomId, roommateMemberId } = await fixture();
-    const assignUrl = `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/assign`;
-    const unassignUrl = `/api/rooms/${roomId}/members/${roommateMemberId}/personal-playlist/unassign`;
+  it("更换歌单直接覆盖原绑定，未授权网易云成员禁止绑定", async () => {
+    const { app, owner, member, roomId } = await fixture();
+    const bindUrl = `/api/rooms/${roomId}/personal-playlist/bind`;
 
-    // 非房主尝试分配
-    expect((await request(app, assignUrl, member.cookie, { playlistId: "pl-sub-rock" })).statusCode).toBe(403);
+    // 未授权网易云成员尝试绑定返回 409
+    expect((await request(app, bindUrl, member.cookie, { playlistId: "pl-sub-rock" })).statusCode).toBe(409);
 
-    // 房主分配
-    const assignRes = await request(app, assignUrl, owner.cookie, { playlistId: "pl-sub-rock" });
-    expect(assignRes.statusCode).toBe(200);
-    const assignedView = personalPlaylistView.parse(assignRes.json());
-    expect(assignedView.playlist?.id).toBe("pl-sub-rock");
+    // 绑定第一份歌单
+    const bindRes1 = await request(app, bindUrl, owner.cookie, { playlistId: "pl-sub-rock" });
+    expect(bindRes1.statusCode).toBe(200);
+    const view1 = personalPlaylistView.parse(bindRes1.json());
+    expect(view1.playlist?.id).toBe("pl-sub-rock");
 
-    // 非房主尝试解除
-    expect((await request(app, unassignUrl, member.cookie, {})).statusCode).toBe(403);
-
-    // 房主解除分配
-    const unassignRes = await request(app, unassignUrl, owner.cookie, {});
-    expect(unassignRes.statusCode).toBe(200);
-    const unassignedView = personalPlaylistView.parse(unassignRes.json());
-    expect(unassignedView.playlist).toBeNull();
+    // 更换为第二份歌单，直接覆盖
+    const bindRes2 = await request(app, bindUrl, owner.cookie, { playlistId: "pl-my-fav" });
+    expect(bindRes2.statusCode).toBe(200);
+    const view2 = personalPlaylistView.parse(bindRes2.json());
+    expect(view2.playlist?.id).toBe("pl-my-fav");
   });
 });
 

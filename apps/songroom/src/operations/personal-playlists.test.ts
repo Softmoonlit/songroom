@@ -286,8 +286,8 @@ describe("PersonalPlaylists operations", () => {
     expect(cleanups).toHaveLength(0);
   });
 
-  it("候选包含有效自建、我喜欢和私密自建，过滤非收藏他人歌单及失效自建，非房主禁止拉取", async () => {
-    const { adapter, service, roomId } = fixture();
+  it("候选包含有效自建、我喜欢和私密自建，过滤非收藏他人歌单及失效自建；未授权时报错，授权室友可拉取自身歌单", async () => {
+    const { database, vault, adapter, service, roomId } = fixture();
     adapter.userPlaylists = async () => ({
       ok: true,
       data: {
@@ -319,9 +319,34 @@ describe("PersonalPlaylists operations", () => {
       coverImgUrl: "http://cover/1.jpg", trackCount: 50
     });
 
+    // 室友未绑定网易云授权时拉取报错
     await expect(service.getCandidates("roommate", roomId)).rejects.toThrowError(
-      expect.objectContaining({ code: "ROOM_OWNER_REQUIRED" })
+      expect.objectContaining({ code: "NETEASE_AUTH_REQUIRED" })
     );
+
+    // 为室友添加网易云授权后，室友可获取自己的候选歌单
+    const rmAuthId = v7();
+    database.insert(neteaseAuthorization).values({
+      id: rmAuthId,
+      userId: "roommate",
+      accountId: "cloud-roommate",
+      generation: 1,
+      nickname: "室友网易云",
+      status: "active",
+      credentials: vault.encrypt("MUSIC_U=roommate-cookie", { authorizationId: rmAuthId, accountId: "cloud-roommate", generation: 1 })
+    }).run();
+
+    adapter.userPlaylists = async () => ({
+      ok: true,
+      data: {
+        playlists: [
+          { id: "pl-rm-fav", name: "室友自建", creatorId: "cloud-roommate", subscribed: false, status: 0 }
+        ],
+        more: false
+      }
+    });
+    const rmCandidates = await service.getCandidates("roommate", roomId);
+    expect(rmCandidates.candidates.map(c => c.id)).toEqual(["pl-rm-fav"]);
   });
 
   it("候选排除同账号本房间及其他房间公共目标，保留普通自建歌单", async () => {
@@ -341,29 +366,40 @@ describe("PersonalPlaylists operations", () => {
       .toEqual(["ordinary-own"]);
   });
 
-  it.each(["本房间", "其他房间"])("分配%s公共目标返回 409，保留原个人绑定与快照", async scope => {
-    const { database, adapter, service, roomId, roommateMemberId } = fixture();
+  it.each(["本房间", "其他房间"])("绑定%s公共目标返回 409，保留原个人绑定与快照", async scope => {
+    const { database, adapter, service, roomId } = fixture();
     adapter.detail = async (input: Extract<AdapterInput, { operation: "playlistDetail" }>) => ({ ok: true, data: {
       playlist: { id: input.playlistId, name: input.playlistId, creatorId: "cloud-owner", subscribed: false, status: 0 },
       songIds: ["kept"], songs: [{ id: "kept", name: "原歌曲", artists: [], album: "" }]
     } });
-    await service.assign("owner", roomId, roommateMemberId, { playlistId: "original-personal" });
-    const before = service.read("roommate", roomId);
+    await service.bind("owner", roomId, { playlistId: "original-personal" });
+    const before = service.read("owner", roomId);
     const targetRoomId = scope === "本房间" ? roomId : v7();
     if (targetRoomId !== roomId) database.insert(room).values({ id: targetRoomId, name: "另一房间", ownerUserId: "owner" }).run();
     database.insert(publicPlaylistBinding).values({
       roomId: targetRoomId, accountId: "cloud-owner", playlistId: "public-target", name: "公共目标", creationOperationId: v7()
     }).run();
-    await expect(service.assign("owner", roomId, roommateMemberId, { playlistId: "public-target" }))
+    await expect(service.bind("owner", roomId, { playlistId: "public-target" }))
       .rejects.toThrowError(expect.objectContaining({ status: 409, code: "PLAYLIST_TARGET_CONFLICT" }));
-    const after = service.read("roommate", roomId);
+    const after = service.read("owner", roomId);
     expect(after.playlist).toEqual(before.playlist);
     expect(after.snapshot).toEqual(before.snapshot);
     expect(database.select().from(personalPlaylistBinding).all()).toHaveLength(1);
   });
 
-  it("房主可为成员分配收藏歌单，记录快照与曲目，允许多人绑定同一歌单", async () => {
-    const { adapter, service, roomId, ownerMemberId, roommateMemberId } = fixture();
+  it("成员自主绑定个人歌单，记录快照与曲目，再次绑定直接覆盖原绑定", async () => {
+    const { database, vault, adapter, service, roomId } = fixture();
+    const rmAuthId = v7();
+    database.insert(neteaseAuthorization).values({
+      id: rmAuthId,
+      userId: "roommate",
+      accountId: "cloud-roommate",
+      generation: 1,
+      nickname: "室友网易云",
+      status: "active",
+      credentials: vault.encrypt("MUSIC_U=roommate-cookie", { authorizationId: rmAuthId, accountId: "cloud-roommate", generation: 1 })
+    }).run();
+
     adapter.detail = async () => ({
       ok: true,
       data: {
@@ -382,17 +418,17 @@ describe("PersonalPlaylists operations", () => {
       }
     });
 
-    // 1. 为室友分配
-    const rmView = await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-fav-shared" });
+    // 1. 室友自主绑定
+    const rmView = await service.bind("roommate", roomId, { playlistId: "pl-fav-shared" });
     expect(rmView.playlist).toEqual({ id: "pl-fav-shared", name: "热门榜" });
     expect(rmView.snapshot?.tracks).toHaveLength(2);
     expect(rmView.snapshot?.tracks[0].name).toBe("七里香");
 
-    // 2. 为房主本人也分配同一歌单（多对一支持）
-    const ownerView = await service.assign("owner", roomId, ownerMemberId, { playlistId: "pl-fav-shared" });
+    // 2. 房主也自主绑定同一歌单（多对一支持）
+    const ownerView = await service.bind("owner", roomId, { playlistId: "pl-fav-shared" });
     expect(ownerView.playlist).toEqual({ id: "pl-fav-shared", name: "热门榜" });
 
-    // 3. 更换室友歌单，generation 递增
+    // 3. 室友更换歌单覆盖原绑定，generation 递增
     adapter.detail = async () => ({
       ok: true,
       data: {
@@ -409,22 +445,22 @@ describe("PersonalPlaylists operations", () => {
         ]
       }
     });
-    const replaced = await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-fav-new" });
+    const replaced = await service.bind("roommate", roomId, { playlistId: "pl-fav-new" });
     expect(replaced.playlist).toEqual({ id: "pl-fav-new", name: "新歌单" });
 
-    // 4. 非房主禁止分配
-    await expect(service.assign("roommate", roomId, roommateMemberId, { playlistId: "pl-fav-new" })).rejects.toThrowError(
-      expect.objectContaining({ code: "ROOM_OWNER_REQUIRED" })
+    // 4. 未绑定网易云的用户禁止绑定歌单
+    await expect(service.bind("outsider", roomId, { playlistId: "pl-fav-new" })).rejects.toThrowError(
+      expect.objectContaining({ code: "ROOM_UNAVAILABLE" })
     );
 
-    // 5. 未收藏的自建歌单也可分配
+    // 5. 绑定自建歌单
     adapter.detail = async () => ({
       ok: true,
       data: {
         playlist: {
           id: "pl-self-created",
           name: "自建",
-          creatorId: "cloud-owner",
+          creatorId: "cloud-roommate",
           subscribed: false,
           status: 0
         },
@@ -432,7 +468,7 @@ describe("PersonalPlaylists operations", () => {
         songs: []
       }
     });
-    const ownView = await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-self-created" });
+    const ownView = await service.bind("roommate", roomId, { playlistId: "pl-self-created" });
     expect(ownView.playlist).toEqual({ id: "pl-self-created", name: "自建" });
     expect(ownView.lastRefreshError).toBeNull();
   });
@@ -442,17 +478,17 @@ describe("PersonalPlaylists operations", () => {
     { name: "我喜欢的音乐", creatorId: "cloud-owner", subscribed: false, privacy: 0, specialType: 5 },
     { name: "自建私密", creatorId: "cloud-owner", subscribed: false, privacy: 10 },
     { name: "收藏", creatorId: "other", subscribed: true, privacy: 0 }
-  ])("$name 分配后刷新仍有效并更新快照", async metadata => {
-    const { adapter, service, roomId, roommateMemberId } = fixture();
+  ])("$name 绑定后刷新仍有效并更新快照", async metadata => {
+    const { adapter, service, roomId } = fixture();
     let songId = "before";
     adapter.detail = async () => ({ ok: true, data: {
       playlist: { id: "pl-source", ...metadata, status: 0 },
       songIds: [songId], songs: [{ id: songId, name: songId, artists: [], album: "" }]
     } });
-    const assigned = await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-source" });
+    const assigned = await service.bind("owner", roomId, { playlistId: "pl-source" });
     expect(assigned.snapshot?.tracks.map(track => track.songId)).toEqual(["before"]);
     songId = "after";
-    const refreshed = await service.refresh("roommate", roomId);
+    const refreshed = await service.refresh("owner", roomId);
     expect(refreshed.playlist).toEqual({ id: "pl-source", name: metadata.name });
     expect(refreshed.lastRefreshError).toBeNull();
     expect(refreshed.disabledReason).toBeNull();
@@ -463,58 +499,27 @@ describe("PersonalPlaylists operations", () => {
     { name: "未收藏他人", creatorId: "other", subscribed: false, status: 0 },
     { name: "失效自建", creatorId: "cloud-owner", subscribed: false, status: -1 },
     { name: "失效自建且已收藏", creatorId: "cloud-owner", subscribed: true, status: 10 }
-  ])("$name 拒绝分配，已绑定后失效刷新保留最后成功快照", async metadata => {
-    const { adapter, service, roomId, roommateMemberId } = fixture();
+  ])("$name 拒绝绑定，已绑定后失效刷新保留最后成功快照", async metadata => {
+    const { adapter, service, roomId } = fixture();
     const detail = (playlist: typeof metadata) => ({ ok: true, data: {
       playlist: { id: "pl-invalid", ...playlist, privacy: 10 },
       songIds: ["kept"], songs: [{ id: "kept", name: "保留歌曲", artists: [], album: "" }]
     } });
     adapter.detail = async () => detail(metadata);
-    await expect(service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-invalid" }))
+    await expect(service.bind("owner", roomId, { playlistId: "pl-invalid" }))
       .rejects.toThrowError(expect.objectContaining({ code: "TARGET_PERMISSION" }));
-    expect(service.read("roommate", roomId).playlist).toBeNull();
+    expect(service.read("owner", roomId).playlist).toBeNull();
     adapter.detail = async () => detail({ ...metadata, creatorId: "cloud-owner", status: 0 });
-    await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-invalid" });
+    await service.bind("owner", roomId, { playlistId: "pl-invalid" });
     adapter.detail = async () => detail(metadata);
-    const refreshed = await service.refresh("roommate", roomId);
+    const refreshed = await service.refresh("owner", roomId);
     expect(refreshed.lastRefreshError).toBe("TARGET_PERMISSION");
     expect(refreshed.disabledReason).toBe("TARGET_BLOCKED");
     expect(refreshed.snapshot?.tracks.map(track => track.songId)).toEqual(["kept"]);
   });
 
-  it("房主可解除成员歌单分配，非房主禁止解除", async () => {
-    const { adapter, service, roomId, roommateMemberId } = fixture();
-    adapter.detail = async () => ({
-      ok: true,
-      data: {
-        playlist: {
-          id: "pl-to-unassign",
-          name: "待解除歌单",
-          creatorId: "other-creator",
-          subscribed: true,
-          status: 0
-        },
-        songIds: ["s1"],
-        songs: [{ id: "s1", name: "歌", artists: [], album: "" }]
-      }
-    });
-
-    await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-to-unassign" });
-    expect(service.read("owner", roomId, roommateMemberId).playlist).not.toBeNull();
-
-    // 非房主解除被拒绝
-    await expect(service.unassign("roommate", roomId, roommateMemberId)).rejects.toThrowError(
-      expect.objectContaining({ code: "ROOM_OWNER_REQUIRED" })
-    );
-
-    // 房主解除
-    const unassigned = await service.unassign("owner", roomId, roommateMemberId);
-    expect(unassigned.playlist).toBeNull();
-    expect(service.read("owner", roomId, roommateMemberId).playlist).toBeNull();
-  });
-
-  it("外部收藏歌单在网易云失效（作者删除或房主取消收藏）：刷新记录 TARGET_PERMISSION，保留原有快照与歌曲", async () => {
-    const { adapter, service, roomId, roommateMemberId } = fixture();
+  it("外部收藏歌单在网易云失效（作者删除或取消收藏）：刷新记录 TARGET_PERMISSION，保留原有快照与歌曲", async () => {
+    const { adapter, service, roomId } = fixture();
     adapter.detail = async () => ({
       ok: true,
       data: {
@@ -533,14 +538,14 @@ describe("PersonalPlaylists operations", () => {
       }
     });
 
-    // 1. 分配并建立初始成功快照
-    await service.assign("owner", roomId, roommateMemberId, { playlistId: "pl-fav-expiring" });
-    const initialView = service.read("roommate", roomId);
+    // 1. 绑定并建立初始成功快照
+    await service.bind("owner", roomId, { playlistId: "pl-fav-expiring" });
+    const initialView = service.read("owner", roomId);
     expect(initialView.snapshot?.tracks).toHaveLength(2);
     expect(initialView.lastRefreshError).toBeNull();
     expect(initialView.disabledReason).toBeNull();
 
-    // 2. 模拟房主取消了收藏 (subscribed = false)
+    // 2. 模拟取消了收藏 (subscribed = false)
     adapter.detail = async () => ({
       ok: true,
       data: {
@@ -556,7 +561,7 @@ describe("PersonalPlaylists operations", () => {
       }
     });
 
-    const refreshedView = await service.refresh("roommate", roomId);
+    const refreshedView = await service.refresh("owner", roomId);
     expect(refreshedView.lastRefreshError).toBe("TARGET_PERMISSION");
     expect(refreshedView.disabledReason).toBe("TARGET_BLOCKED");
     // 保留最后一次成功快照
@@ -570,7 +575,7 @@ describe("PersonalPlaylists operations", () => {
       error: { code: "TARGET_PERMISSION", outcome: "failed" }
     });
 
-    const refreshedDeleted = await service.refresh("roommate", roomId);
+    const refreshedDeleted = await service.refresh("owner", roomId);
     expect(refreshedDeleted.lastRefreshError).toBe("TARGET_PERMISSION");
     expect(refreshedDeleted.disabledReason).toBe("TARGET_BLOCKED");
     expect(refreshedDeleted.snapshot?.tracks).toHaveLength(2);

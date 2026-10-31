@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { AlertCircle, Info, ListMusic, Plus, RotateCw, Search, X } from "lucide-react";
 import { v7 as uuidv7 } from "uuid";
+import { BindPersonalPlaylistDialog } from "./BindPersonalPlaylistDialog.js";
 import {
   personalPlaylistView,
   type PersonalPlaylistTrack,
@@ -31,7 +33,7 @@ function getRefreshErrorMessage(code: string): string {
     case "RATE_LIMITED":
       return "网易云请求受限，请稍后重试。";
     case "AUTH_UNAVAILABLE":
-      return "网易云授权失效，请房主前往账号设置检查。";
+      return "网易云授权失效，请前往账号设置检查。";
     case "ACCOUNT_PAUSED":
       return "网易云账号已暂停，请联系管理员恢复。";
     case "TARGET_PERMISSION":
@@ -66,7 +68,7 @@ export function getPersonalOperationMessage(op: NonNullable<PersonalPlaylistView
 }
 
 const personalDisabledMessages: Record<NonNullable<PersonalPlaylistView["disabledReason"]>, string> = {
-  NETEASE_AUTH_REQUIRED: "等待房主完成网易云授权。",
+  NETEASE_AUTH_REQUIRED: "网易云授权不可用，请前往账号设置授权。",
   ACCOUNT_PAUSED: "网易云账号已暂停，请联系管理员。",
   TARGET_BLOCKED: "歌单为私密或已删除。",
   PERSONAL_PLAYLIST_EXISTS: "已配置个人歌单。",
@@ -215,6 +217,7 @@ export function PersonalPlaylistPane({
   onGoToAssign?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [bindOpen, setBindOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [requestingSongId, setRequestingSongId] = useState<string | null>(null);
@@ -384,19 +387,30 @@ export function PersonalPlaylistPane({
       <div className="personal-playlist-pane">
         <div className="empty-state">
           <ListMusic size={48} className="empty-state-icon" aria-hidden="true" />
-          <h2 className="empty-state-title">尚未配置个人歌单</h2>
-          <p className="empty-state-desc">
-            {isOwner ? "你尚未为自己分配歌单" : "房主尚未为你分配歌单，请联系房主分配。"}
-          </p>
-
-          {isOwner && onGoToAssign && (
-            <button
-              type="button"
-              className="primary-button go-to-assign-btn"
-              onClick={onGoToAssign}
-            >
-              前往分配
-            </button>
+          {data.disabledReason === "NETEASE_AUTH_REQUIRED" ? (
+            <>
+              <h2 className="empty-state-title">尚未绑定网易云账号</h2>
+              <p className="empty-state-desc">
+                请先绑定网易云账号，绑定后可在此选择点歌来源歌单。
+              </p>
+              <Link className="primary-button text-link-btn" to="/account">
+                前往账号设置
+              </Link>
+            </>
+          ) : (
+            <>
+              <h2 className="empty-state-title">尚未绑定个人歌单</h2>
+              <p className="empty-state-desc">
+                从你的网易云歌单中挑选一份作为当前房间的点歌来源。
+              </p>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setBindOpen(true)}
+              >
+                绑定歌单
+              </button>
+            </>
           )}
 
           {data.operation && data.operation.status !== "succeeded" && (
@@ -411,10 +425,17 @@ export function PersonalPlaylistPane({
             </p>
           )}
 
-          {data.disabledReason && (
+          {data.disabledReason && data.disabledReason !== "NETEASE_AUTH_REQUIRED" && (
             <p className="field-help">{personalDisabledMessages[data.disabledReason]}</p>
           )}
         </div>
+        <BindPersonalPlaylistDialog
+          open={bindOpen}
+          onOpenChange={setBindOpen}
+          sessionId={sessionId}
+          roomId={roomId}
+          hasPersonalPlaylist={false}
+        />
       </div>
     );
   }
@@ -462,14 +483,23 @@ export function PersonalPlaylistPane({
               type="button"
               className="secondary-button sync-playlist-button"
               title="同步歌单最新歌曲"
-              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "同步歌单"}
+              aria-label={refreshMutation.isPending ? "正在同步歌单…" : "手动刷新"}
               disabled={refreshMutation.isPending}
               onClick={() => refreshMutation.mutate()}
             >
               <RotateCw size={14} className={refreshMutation.isPending ? "spin-icon" : ""} aria-hidden="true" />
-              <span className="sync-btn-text">{refreshMutation.isPending ? "正在同步…" : "同步歌单"}</span>
+              <span className="sync-btn-text">{refreshMutation.isPending ? "正在同步…" : "手动刷新"}</span>
             </button>
           )}
+          <button
+            type="button"
+            className="secondary-button change-playlist-button"
+            title="更换个人歌单"
+            aria-label="更换歌单"
+            onClick={() => setBindOpen(true)}
+          >
+            <span>更换歌单</span>
+          </button>
         </div>
       </header>
 
@@ -553,6 +583,13 @@ export function PersonalPlaylistPane({
                     ? "已有正在处理中的点歌操作，请稍候"
                     : null
         }
+      />
+      <BindPersonalPlaylistDialog
+        open={bindOpen}
+        onOpenChange={setBindOpen}
+        sessionId={sessionId}
+        roomId={roomId}
+        hasPersonalPlaylist={Boolean(playlist)}
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>

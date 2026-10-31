@@ -51,11 +51,14 @@ export const favoritePlaylistCandidatesView = z.strictObject({
 });
 export type FavoritePlaylistCandidatesView = z.infer<typeof favoritePlaylistCandidatesView>;
 
-export const assignPersonalPlaylistCommand = z.strictObject({
+export const bindPersonalPlaylistCommand = z.strictObject({
   playlistId: z.string().min(1),
   idempotencyKey: uuidv7.optional()
 });
-export type AssignPersonalPlaylistCommand = z.infer<typeof assignPersonalPlaylistCommand>;
+export type BindPersonalPlaylistCommand = z.infer<typeof bindPersonalPlaylistCommand>;
+
+export const assignPersonalPlaylistCommand = bindPersonalPlaylistCommand;
+export type AssignPersonalPlaylistCommand = BindPersonalPlaylistCommand;
 
 export const personalPlaylistView = z.strictObject({
   playlist: z.strictObject({
