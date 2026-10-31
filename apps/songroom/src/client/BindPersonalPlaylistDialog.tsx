@@ -15,6 +15,7 @@ export interface BindPersonalPlaylistDialogProps {
   sessionId: string;
   roomId: string;
   hasPersonalPlaylist: boolean;
+  currentPlaylistId?: string | null;
   onSuccess?: () => void;
 }
 
@@ -24,6 +25,7 @@ export function BindPersonalPlaylistDialog({
   sessionId,
   roomId,
   hasPersonalPlaylist,
+  currentPlaylistId,
   onSuccess
 }: BindPersonalPlaylistDialogProps) {
   const queryClient = useQueryClient();
@@ -40,10 +42,10 @@ export function BindPersonalPlaylistDialog({
 
   useEffect(() => {
     if (open) {
-      setSelectedId(null);
+      setSelectedId(currentPlaylistId ?? null);
       setSubmitError("");
     }
-  }, [open]);
+  }, [open, currentPlaylistId]);
 
   const bindMutation = useMutation({
     mutationFn: () => {
@@ -94,25 +96,26 @@ export function BindPersonalPlaylistDialog({
             if (bindMutation.isPending) event.preventDefault();
           }}
         >
-          <div className="destructive-dialog-header">
-            <AlertDialog.Title className="destructive-dialog-title">
-              {title}
-            </AlertDialog.Title>
+          <div className="invite-modal-header">
+            <div>
+              <AlertDialog.Title className="invite-modal-title">
+                {title}
+              </AlertDialog.Title>
+              <AlertDialog.Description className="invite-modal-desc">
+                从你当前已授权网易云账号的收藏歌单、自建歌单（含私密）或“我喜欢的音乐”中选择一个作为当前房间的只读点歌来源。
+              </AlertDialog.Description>
+            </div>
             <AlertDialog.Cancel asChild>
               <button
                 type="button"
-                className="dialog-close-btn"
+                className="invite-modal-close dialog-close-btn"
                 aria-label="关闭"
                 disabled={bindMutation.isPending}
               >
-                <X size={16} aria-hidden="true" />
+                <X size={18} aria-hidden="true" />
               </button>
             </AlertDialog.Cancel>
           </div>
-
-          <AlertDialog.Description className="destructive-dialog-desc">
-            从你当前已授权网易云账号的收藏歌单、自建歌单（含私密）或“我喜欢的音乐”中选择一个作为当前房间的只读点歌来源。
-          </AlertDialog.Description>
 
           <div className="candidate-playlists-body">
             {candidatesQuery.isPending && (
@@ -183,7 +186,12 @@ export function BindPersonalPlaylistDialog({
                                 )}
                               </div>
                               <div className="candidate-playlist-info">
-                                <span className="candidate-playlist-name">{playlist.name}</span>
+                                <div className="candidate-playlist-title-row">
+                                  <span className="candidate-playlist-name">{playlist.name}</span>
+                                  {playlist.id === currentPlaylistId && (
+                                    <span className="current-bound-pill">当前绑定</span>
+                                  )}
+                                </div>
                                 <span className="candidate-playlist-meta">
                                   {playlist.trackCount} 首歌曲
                                   {playlist.creatorNickname ? ` · by ${playlist.creatorNickname}` : ""}

@@ -586,6 +586,7 @@ export function PersonalPlaylistPane({
         sessionId={sessionId}
         roomId={roomId}
         hasPersonalPlaylist={Boolean(playlist)}
+        currentPlaylistId={playlist?.id}
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>

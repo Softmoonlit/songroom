@@ -5361,6 +5361,13 @@ h1 {
   flex: 1;
 }
 
+.candidate-playlist-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .candidate-playlist-name {
   font-weight: 600;
   font-size: var(--font-sm);
@@ -5368,6 +5375,40 @@ h1 {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+.current-bound-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.dialog-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.dialog-close-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text-main);
 }
 
 .candidate-playlist-meta {
