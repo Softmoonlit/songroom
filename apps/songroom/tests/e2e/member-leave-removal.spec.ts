@@ -68,6 +68,9 @@ async function setupMocks(page: Page, role: "owner" | "roommate") {
       role: "owner",
       isSelf: isOwner,
       hasPersonalPlaylist: true,
+      authStatus: "active" as const,
+      canSelect: true,
+      disabledReason: null,
       allowedActions: isOwner ? ["renameNickname"] : [],
       disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
     },
@@ -77,6 +80,9 @@ async function setupMocks(page: Page, role: "owner" | "roommate") {
       role: "roommate",
       isSelf: !isOwner,
       hasPersonalPlaylist: true,
+      authStatus: "active" as const,
+      canSelect: true,
+      disabledReason: null,
       allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
       disabledReasons: isOwner ? { renameNickname: "SELF_ONLY" } : {}
     }
@@ -163,6 +169,9 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
                 role: "owner",
                 isSelf: true,
                 hasPersonalPlaylist: true,
+                authStatus: "active" as const,
+                canSelect: true,
+                disabledReason: null,
                 allowedActions: ["renameNickname"],
                 disabledReasons: {}
               }
@@ -174,6 +183,9 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
                 role: "owner",
                 isSelf: true,
                 hasPersonalPlaylist: true,
+                authStatus: "active" as const,
+                canSelect: true,
+                disabledReason: null,
                 allowedActions: ["renameNickname"],
                 disabledReasons: {}
               },
@@ -183,6 +195,9 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
                 role: "roommate",
                 isSelf: false,
                 hasPersonalPlaylist: true,
+                authStatus: "active" as const,
+                canSelect: true,
+                disabledReason: null,
                 allowedActions: ["removeMember"],
                 disabledReasons: { renameNickname: "SELF_ONLY" }
               }
@@ -208,6 +223,9 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
             role: "owner",
             isSelf: true,
             hasPersonalPlaylist: true,
+            authStatus: "active" as const,
+            canSelect: true,
+            disabledReason: null,
             allowedActions: ["renameNickname"],
             disabledReasons: {}
           }
@@ -221,12 +239,10 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员" }).click();
 
-  // 点击室友小张进入成员详情
-  await page.getByRole("button", { name: "查看室友小张的歌单" }).click();
-  await expect(page.getByText("角色室友")).toBeVisible();
-
-  // 点击“移除成员”
-  const removeBtn = page.getByRole("button", { name: "移除成员" });
+  // 房主直接看到室友小张卡片上的“移除成员”按钮
+  const roommateCard = page.locator(".member-card").filter({ hasText: "室友小张" });
+  await expect(roommateCard).toBeVisible();
+  const removeBtn = roommateCard.getByRole("button", { name: "移除成员" });
   await expect(removeBtn).toBeVisible();
   await removeBtn.click();
 
@@ -251,7 +267,7 @@ test("房主进入成员列表，点击室友显示移除成员按钮及二次�
   await expect(page.getByRole("button", { name: "查看室友小张的歌单" })).toHaveCount(0);
 });
 
-test("房主本人卡片无查看歌单或移除入口；房间设置中不显示退出房间按钮", async ({ page }) => {
+test("房主本人卡片无移除入口；房间设置中不显示退出房间按钮", async ({ page }) => {
   await setupMocks(page, "owner");
 
   await page.goto(`/rooms/${roomId}`);
@@ -260,13 +276,15 @@ test("房主本人卡片无查看歌单或移除入口；房间设置中不显�
   await page.getByRole("button", { name: "房间设置" }).click();
   await expect(page.getByRole("button", { name: "退出房间" })).toHaveCount(0);
 
-  // 本人卡片不提供详情入口，其他成员保留查看歌单按钮。
+  // 本人卡片不提供移除入口，室友卡片提供移除成员按钮。
   await page.getByRole("button", { name: "房间成员" }).click();
   const selfCard = page.locator(".member-card").filter({ hasText: "房主阿林" });
   await expect(selfCard).toBeVisible();
-  await expect(selfCard.getByRole("button", { name: /查看.*的歌单/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "查看室友小张的歌单" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "移除成员" })).toHaveCount(0);
+  await expect(selfCard.getByRole("button", { name: "移除成员" })).toHaveCount(0);
+
+  const roommateCard = page.locator(".member-card").filter({ hasText: "室友小张" });
+  await expect(roommateCard.getByRole("button", { name: "移除成员" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /查看.*的歌单/ })).toHaveCount(0);
 });
 
 test("房主移除成员时发生版本冲突，显示错误提示并保持对话框交互状态", async ({ page }) => {
@@ -286,8 +304,8 @@ test("房主移除成员时发生版本冲突，显示错误提示并保持对�
 
   await page.goto(`/rooms/${roomId}`);
   await page.getByRole("button", { name: "房间成员" }).click();
-  await page.getByRole("button", { name: "查看室友小张的歌单" }).click();
-  await page.getByRole("button", { name: "移除成员" }).click();
+  const roommateCard = page.locator(".member-card").filter({ hasText: "室友小张" });
+  await roommateCard.getByRole("button", { name: "移除成员" }).click();
 
   await page.getByRole("button", { name: "确认移除" }).click();
 

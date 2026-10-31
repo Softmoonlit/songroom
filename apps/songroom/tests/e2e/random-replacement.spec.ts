@@ -52,6 +52,9 @@ async function setupRoom(page: Page, isOwner = true) {
             role: "owner",
             isSelf: isOwner,
             hasPersonalPlaylist: true,
+            authStatus: "active" as const,
+            canSelect: true,
+            disabledReason: null,
             allowedActions: isOwner ? ["renameNickname"] : [],
             disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
           },
@@ -61,6 +64,9 @@ async function setupRoom(page: Page, isOwner = true) {
             role: "roommate",
             isSelf: !isOwner,
             hasPersonalPlaylist: true,
+            authStatus: "active" as const,
+            canSelect: true,
+            disabledReason: null,
             allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
             disabledReasons: {}
           },
@@ -70,6 +76,9 @@ async function setupRoom(page: Page, isOwner = true) {
             role: "roommate",
             isSelf: false,
             hasPersonalPlaylist: false,
+            authStatus: "active" as const,
+            canSelect: false,
+            disabledReason: "NO_PLAYLIST" as const,
             allowedActions: isOwner ? ["removeMember"] : [],
             disabledReasons: {}
           }
@@ -277,7 +286,7 @@ test.describe("公共歌单随机换歌与完整验收 (Ticket 04)", () => {
 
     await expect(disabledRoommateCheckbox).toBeVisible();
     await expect(disabledRoommateCheckbox).toBeDisabled();
-    await expect(modal.getByText("未分配歌单")).toBeVisible();
+    await expect(modal.getByText("未绑定歌单")).toBeVisible();
 
     // 5. 全选 checkbox 初始为未选，且与下方成员复选框在同一垂直 X 坐标列对齐
     const selectAllCheckbox = modal.getByRole("checkbox", { name: "全选参与成员" });

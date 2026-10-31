@@ -1,6 +1,6 @@
 # 成员自主绑定个人歌单与多账号去中心化点歌规范
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 

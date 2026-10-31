@@ -83,6 +83,9 @@ async function setupDialogMocks(page: Page, role: "owner" | "roommate") {
             role: "owner",
             isSelf: isOwner,
             hasPersonalPlaylist: true,
+            authStatus: "active" as const,
+            canSelect: true,
+            disabledReason: null,
             allowedActions: isOwner ? ["renameNickname"] : [],
             disabledReasons: isOwner ? {} : { renameNickname: "SELF_ONLY" }
           },
@@ -92,6 +95,9 @@ async function setupDialogMocks(page: Page, role: "owner" | "roommate") {
             role: "roommate",
             isSelf: !isOwner,
             hasPersonalPlaylist: true,
+            authStatus: "active" as const,
+            canSelect: true,
+            disabledReason: null,
             allowedActions: isOwner ? ["removeMember"] : ["renameNickname"],
             disabledReasons: {}
           }
@@ -229,9 +235,8 @@ test.describe("Ticket 03: 全站破坏性确认弹窗高信噪比规范", () => 
     await page.goto(`/rooms/${roomId}`);
 
     await page.getByRole("button", { name: "房间成员" }).click();
-    await page.getByRole("button", { name: "查看室友小张的歌单" }).click();
-
-    const removeBtn = page.getByRole("button", { name: "移除成员" });
+    const roommateCard = page.locator(".member-card").filter({ hasText: "室友小张" });
+    const removeBtn = roommateCard.getByRole("button", { name: "移除成员" });
     await expect(removeBtn).toBeVisible();
     await removeBtn.click();
 

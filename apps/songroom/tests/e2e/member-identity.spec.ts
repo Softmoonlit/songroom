@@ -14,7 +14,7 @@ async function workspace(page: Page, role = "owner", count: number | null = 10) 
   await page.route("**/api/rooms", route => route.fulfill({ json: { rooms: [{ ...state.room, version: state.version, allowedActions: ["enterRoom"], disabledReasons: {} }], allowedActions: ["openCreateRoom", "openJoin"], disabledReasons: {} } }));
   await page.route(`**/api/rooms/${roomId}`, route => route.fulfill({ json: state }));
   await page.route(`**/api/rooms/${roomId}/members`, route => route.fulfill({ json: {
-    version: state.version, members: [{ id: memberId, nickname: state.room.nickname, role, isSelf: true, hasPersonalPlaylist: false, allowedActions: ["renameNickname"], disabledReasons: {} }],
+    version: state.version, members: [{ id: memberId, nickname: state.room.nickname, role, isSelf: true, hasPersonalPlaylist: false, authStatus: "active", canSelect: false, disabledReason: "NO_PLAYLIST", allowedActions: ["renameNickname"], disabledReasons: {} }],
     allowedActions: state.allowedActions.filter(action => action !== "renameRoom"), disabledReasons: {}
   } }));
   await page.route(`**/api/rooms/${roomId}/invite`, route => route.fulfill({ json: {
@@ -260,9 +260,9 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     await page.getByRole("button", { name: "审批加入申请", exact: true }).click();
     await page.getByRole("button", { name: "批准：室友昵称", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("已批准：室友昵称");
-    await expect(page.getByRole("button", { name: "查看室友昵称的歌单", exact: true })).toBeVisible();
+    await expect(page.locator(".member-card").filter({ hasText: "室友昵称" })).toBeVisible();
     await expect(page.locator(".member-card").filter({ hasText: "房主昵称" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "查看房主昵称的歌单", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /查看.*的歌单/ })).toHaveCount(0);
     await guest.reload();
     await expect(guest.getByRole("status")).toHaveText("申请已获批");
     await guest.getByRole("link", { name: "返回房间列表", exact: true }).click();
@@ -277,10 +277,7 @@ test("完整应用：房主审批后室友无需网易云绑定进入房间并�
     await expect(guest.getByRole("button", { name: "邀请室友" })).toHaveCount(0);
     await expect(guest.getByRole("button", { name: "审批加入申请" })).toHaveCount(0);
     await expect(guest.locator(".member-card").filter({ hasText: "室友昵称" })).toBeVisible();
-    await expect(guest.getByRole("button", { name: "查看室友昵称的歌单", exact: true })).toHaveCount(0);
-    await guest.getByRole("button", { name: "查看房主昵称的歌单", exact: true }).click();
-    await expect(guest.getByRole("region", { name: "成员详情" }).getByRole("button", { name: "保存我的昵称" })).toHaveCount(0);
-    await guest.getByRole("button", { name: "返回成员列表", exact: true }).click();
+    await expect(guest.getByRole("button", { name: /查看.*的歌单/ })).toHaveCount(0);
     await guest.getByRole("button", { name: "房间设置", exact: true }).click();
     await guest.getByRole("region", { name: "房间设置", exact: true }).getByLabel("我的房间昵称", { exact: true }).fill("新昵称");
     await guest.getByRole("region", { name: "房间设置", exact: true }).getByRole("button", { name: "保存我的昵称", exact: true }).click();

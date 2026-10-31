@@ -3970,7 +3970,7 @@ h1 {
   background: var(--bg-subtle);
   font-size: var(--font-xs);
   font-weight: 600;
-  color: var(--text-dim);
+  color: var(--text-muted);
   user-select: none;
 }
 
